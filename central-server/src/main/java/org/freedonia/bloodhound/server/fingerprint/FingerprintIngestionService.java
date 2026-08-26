@@ -36,8 +36,23 @@ public class FingerprintIngestionService {
                     technologies,
                     stringOrNull(entry.get("hostingProvider")),
                     stringOrNull(entry.get("hostingAsn")),
-                    stringOrNull(entry.get("hostingAsnOrg")));
+                    stringOrNull(entry.get("hostingAsnOrg")),
+                    extractStringList(entry.get("thirdPartyOrigins")));
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractStringList(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (Object item : list) {
+            if (item != null) {
+                result.add(String.valueOf(item));
+            }
+        }
+        return result;
     }
 
     @SuppressWarnings("unchecked")

@@ -74,6 +74,23 @@ export function FingerprintPanel({ fingerprint }: { fingerprint: FingerprintEntr
           ))}
         </div>
       )}
+      {fingerprint.thirdPartyOrigins.length > 0 && (
+        <div className="mt-3 border-t border-neon-cyan/10 pt-3">
+          <span className="font-mono text-xs uppercase tracking-widest text-slate-400">
+            Third-party origins trusted ({fingerprint.thirdPartyOrigins.length}):
+          </span>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {fingerprint.thirdPartyOrigins.map((origin) => (
+              <span
+                key={origin}
+                className="rounded border border-neon-amber/30 px-1.5 py-0.5 font-mono text-[10px] text-neon-amber"
+              >
+                {origin}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

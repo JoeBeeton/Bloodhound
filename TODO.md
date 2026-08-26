@@ -192,10 +192,31 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   `DocumentLinkDecisionLogic`/`DocumentMetadataParser`/
   `DocumentMetadataDecisionLogic`/`DocumentFetcher`/`DocumentMetadataModule`.
 
-- **Third-party script/tag-manager inventory.** Info-level signal: how many
-  external origins does a page actually trust (analytics, tag managers,
-  embedded widgets)? Each one is a supply-chain dependency the target may
-  not be tracking itself.
+- ~~Third-party script/tag-manager inventory~~ **Done.** Extension of the
+  existing fingerprinting module rather than a new one, since it's the same
+  kind of signal as the technologies/hosting-provider data
+  `FingerprintModule` already surfaces (informational, not a scored
+  finding) - the module already fetches each host's homepage, so this adds
+  no new network call, just a second pass over the same body. New
+  `ThirdPartyOriginDecisionLogic` extracts distinct external origins from
+  `<script src>`/`<iframe src>` tags, excluding anything that's the target's
+  own root hostname, a known subdomain, or ends with `"." + root hostname`
+  (own-vs-third-party is a heuristic, not exact eTLD+1 resolution - see
+  below). Threaded end to end: new `third_party_origins` JSONB column
+  (`fingerprints` table, V29), `Fingerprint`/`FingerprintSummary`/
+  `FingerprintRepository` updated, frontend `FingerprintEntry` type +
+  `TechHostingPanel`'s `FingerprintPanel` renders a "Third-party origins
+  trusted (N)" badge row alongside the existing technology badges.
+  Live-verified through the full real pipeline: ran an actual scan against
+  github.com through the job queue, and the persisted, API-served result
+  correctly reported `https://github.githubassets.com` as a third-party
+  origin - a real, honest illustration of the heuristic's known limitation
+  (it's GitHub's own asset CDN, just on a different apex domain, so a naive
+  same-apex check can't attribute it back to the target without a full
+  eTLD+1/organizational-ownership resolution this deliberately doesn't
+  attempt) rather than a bug - the same class of "external origin the page
+  trusts" signal real ratings tools report from CSP/script analysis
+  regardless of who actually operates the CDN.
 
 - **Nuclei (ProjectDiscovery) as a Tier 2 module.** Template-based scanning
   for known CVEs/misconfigurations - a lot of overlap with what

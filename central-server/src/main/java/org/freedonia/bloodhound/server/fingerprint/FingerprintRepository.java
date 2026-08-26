@@ -33,6 +33,7 @@ public class FingerprintRepository {
             rs.getString("hosting_provider"),
             rs.getString("hosting_asn"),
             rs.getString("hosting_asn_org"),
+            parseStringList(rs.getString("third_party_origins")),
             rs.getTimestamp("captured_at").toInstant());
 
     public List<Fingerprint> findByTarget(UUID targetId) {
@@ -46,14 +47,16 @@ public class FingerprintRepository {
             List<Technology> technologies,
             String hostingProvider,
             String hostingAsn,
-            String hostingAsnOrg) {
+            String hostingAsnOrg,
+            List<String> thirdPartyOrigins) {
         jdbc.update(
                 """
-                INSERT INTO fingerprints (id, target_id, hostname, technologies, hosting_provider, hosting_asn, hosting_asn_org, captured_at)
-                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, now())
+                INSERT INTO fingerprints (id, target_id, hostname, technologies, hosting_provider, hosting_asn, hosting_asn_org, third_party_origins, captured_at)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?::jsonb, now())
                 ON CONFLICT (target_id, hostname) DO UPDATE
                 SET technologies = EXCLUDED.technologies, hosting_provider = EXCLUDED.hosting_provider,
-                    hosting_asn = EXCLUDED.hosting_asn, hosting_asn_org = EXCLUDED.hosting_asn_org, captured_at = now()
+                    hosting_asn = EXCLUDED.hosting_asn, hosting_asn_org = EXCLUDED.hosting_asn_org,
+                    third_party_origins = EXCLUDED.third_party_origins, captured_at = now()
                 """,
                 UUID.randomUUID(),
                 targetId,
@@ -61,7 +64,8 @@ public class FingerprintRepository {
                 writeJson(technologies),
                 hostingProvider,
                 hostingAsn,
-                hostingAsnOrg);
+                hostingAsnOrg,
+                writeJson(thirdPartyOrigins == null ? List.of() : thirdPartyOrigins));
     }
 
     private List<Technology> parseTechnologies(String json) {
@@ -75,11 +79,22 @@ public class FingerprintRepository {
         }
     }
 
-    private String writeJson(List<Technology> technologies) {
+    private List<String> parseStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
         try {
-            return objectMapper.writeValueAsString(technologies == null ? List.of() : technologies);
+            return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("failed to serialize fingerprint technologies", e);
+            return List.of();
+        }
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value == null ? List.of() : value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("failed to serialize fingerprint data", e);
         }
     }
 }

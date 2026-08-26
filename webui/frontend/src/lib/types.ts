@@ -192,6 +192,8 @@ export interface FingerprintEntry {
   hostingProvider: string | null;
   hostingAsn: string | null;
   hostingAsnOrg: string | null;
+  /** Distinct external origins this hostname's <script>/<iframe> tags actually load from (analytics, tag managers, embed widgets) - not itself a severity signal, just supply-chain visibility. */
+  thirdPartyOrigins: string[];
   capturedAt: string;
 }
 
