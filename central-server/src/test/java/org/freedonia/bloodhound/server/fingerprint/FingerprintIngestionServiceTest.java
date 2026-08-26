@@ -28,7 +28,8 @@ class FingerprintIngestionServiceTest {
                                         List.of(Map.of("name", "WordPress", "category", "CMS", "version", "6.4.2")),
                                 "hostingProvider", "Hetzner Online GmbH",
                                 "hostingAsn", "AS24940",
-                                "hostingAsnOrg", "HETZNER-AS, DE"),
+                                "hostingAsnOrg", "HETZNER-AS, DE",
+                                "thirdPartyOrigins", List.of("https://www.googletagmanager.com")),
                         Map.of(
                                 "hostname", "www.example.com",
                                 "technologies", List.of())));
@@ -41,8 +42,10 @@ class FingerprintIngestionServiceTest {
                 eq(List.of(new Technology("WordPress", "CMS", "6.4.2"))),
                 eq("Hetzner Online GmbH"),
                 eq("AS24940"),
-                eq("HETZNER-AS, DE"));
-        verify(repository).upsert(eq(targetId), eq("www.example.com"), eq(List.of()), eq(null), eq(null), eq(null));
+                eq("HETZNER-AS, DE"),
+                eq(List.of("https://www.googletagmanager.com")));
+        verify(repository)
+                .upsert(eq(targetId), eq("www.example.com"), eq(List.of()), eq(null), eq(null), eq(null), eq(List.of()));
     }
 
     @Test
@@ -64,14 +67,26 @@ class FingerprintIngestionServiceTest {
                         eq(List.of(new Technology("jQuery", "JS_LIBRARY", null))),
                         eq(null),
                         eq(null),
-                        eq(null));
+                        eq(null),
+                        eq(List.of()));
+    }
+
+    @Test
+    void missingThirdPartyOrigins_ingestedAsEmptyList() {
+        Map<String, Object> rawMetadata =
+                Map.of("fingerprints", List.of(Map.of("hostname", "example.com", "technologies", List.of())));
+
+        service.ingest(targetId, rawMetadata);
+
+        verify(repository)
+                .upsert(eq(targetId), eq("example.com"), eq(List.of()), eq(null), eq(null), eq(null), eq(List.of()));
     }
 
     @Test
     void entryWithoutHostname_isSkipped() {
         service.ingest(targetId, Map.of("fingerprints", List.of(Map.of("technologies", List.of()))));
 
-        verify(repository, never()).upsert(any(), any(), any(), any(), any(), any());
+        verify(repository, never()).upsert(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -79,6 +94,6 @@ class FingerprintIngestionServiceTest {
         service.ingest(targetId, null);
         service.ingest(targetId, Map.of());
 
-        verify(repository, never()).upsert(any(), any(), any(), any(), any(), any());
+        verify(repository, never()).upsert(any(), any(), any(), any(), any(), any(), any());
     }
 }

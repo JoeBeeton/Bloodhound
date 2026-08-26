@@ -11,10 +11,17 @@ public record FingerprintSummary(
         String hostingProvider,
         String hostingAsn,
         String hostingAsnOrg,
+        List<String> thirdPartyOrigins,
         Instant capturedAt) {
 
     public static FingerprintSummary from(Fingerprint f) {
         return new FingerprintSummary(
-                f.hostname(), f.technologies(), f.hostingProvider(), f.hostingAsn(), f.hostingAsnOrg(), f.capturedAt());
+                f.hostname(),
+                f.technologies(),
+                f.hostingProvider(),
+                f.hostingAsn(),
+                f.hostingAsnOrg(),
+                f.thirdPartyOrigins(),
+                f.capturedAt());
     }
 }

@@ -16,12 +16,16 @@ import org.freedonia.bloodhound.worker.modules.subdomain.SubdomainDnsResolver;
 import org.springframework.stereotype.Component;
 
 /**
- * Passive technology-stack and hosting-provider fingerprinting for the
- * target's root hostname plus its already-discovered subdomains (handed over
- * capped in the job payload by ScanRunService, since this module has no
- * database access of its own - see ScanContext.jobPayload()). Produces no
- * findings; this is informational context surfaced directly in the UI, not a
- * severity-bearing signal.
+ * Passive technology-stack, hosting-provider, and third-party-origin
+ * fingerprinting for the target's root hostname plus its already-discovered
+ * subdomains (handed over capped in the job payload by ScanRunService, since
+ * this module has no database access of its own - see
+ * ScanContext.jobPayload()). Produces no findings; this is informational
+ * context surfaced directly in the UI, not a severity-bearing signal - "how
+ * many external origins does this page's script/iframe tags actually trust"
+ * (see {@link ThirdPartyOriginDecisionLogic}) is exactly the same kind of
+ * supply-chain visibility as the detected technology list, not a new class
+ * of signal.
  *
  * <p>Uses {@link HostFanOut#runPerHost} for the same host-count-based failure
  * semantics as the other fanned-out Tier 1 modules: an unreachable apex is
@@ -69,12 +73,13 @@ public class FingerprintModule implements ScanModule {
                 SUBDOMAIN_CAP,
                 POOL_SIZE,
                 PER_HOST_TIMEOUT_SECONDS,
-                hostname -> fingerprintOne(hostname, ipsByHost.getOrDefault(hostname, List.of())));
+                hostname -> fingerprintOne(hostname, ipsByHost.getOrDefault(hostname, List.of()), context.hostname(), subdomains));
 
         return new ModuleResult(List.<RawFinding>of(), Map.of("fingerprints", result.perHostResults()));
     }
 
-    private Map<String, Object> fingerprintOne(String hostname, List<String> ips) throws Exception {
+    private Map<String, Object> fingerprintOne(
+            String hostname, List<String> ips, String targetRootHostname, List<String> knownSubdomains) throws Exception {
         TechFetchResult fetched = techFetcher.fetch(hostname);
         List<Technology> technologies = new java.util.ArrayList<>(TechDecisionLogic.decide(fetched));
 
@@ -106,6 +111,9 @@ public class FingerprintModule implements ScanModule {
             }
         }
 
+        List<String> thirdPartyOrigins = ThirdPartyOriginDecisionLogic.extractThirdPartyOrigins(
+                "https://" + hostname + "/", fetched.body(), targetRootHostname, knownSubdomains);
+
         Map<String, Object> entry = new java.util.LinkedHashMap<>();
         entry.put("hostname", hostname);
         entry.put(
@@ -124,6 +132,7 @@ public class FingerprintModule implements ScanModule {
         if (hostingProvider != null) entry.put("hostingProvider", hostingProvider);
         if (hostingAsn != null) entry.put("hostingAsn", hostingAsn);
         if (hostingAsnOrg != null) entry.put("hostingAsnOrg", hostingAsnOrg);
+        entry.put("thirdPartyOrigins", thirdPartyOrigins);
         return entry;
     }
 }

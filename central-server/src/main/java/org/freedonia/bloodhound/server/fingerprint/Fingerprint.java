@@ -12,4 +12,5 @@ public record Fingerprint(
         String hostingProvider,
         String hostingAsn,
         String hostingAsnOrg,
+        List<String> thirdPartyOrigins,
         Instant capturedAt) {}
