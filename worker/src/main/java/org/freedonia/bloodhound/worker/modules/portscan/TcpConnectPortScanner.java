@@ -3,15 +3,16 @@ package org.freedonia.bloodhound.worker.modules.portscan;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.freedonia.bloodhound.worker.modules.common.DualStackResolver;
 
 /**
  * Pure-Java Tier 1 light scan: a concurrent connect attempt per port against
@@ -20,6 +21,15 @@ import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
  * license was incompatible with releasing Bloodhound under Apache-2.0, and
  * this narrow case (no version detection, no scripts - just "is this port
  * open") never needed anything beyond a plain TCP connect anyway.
+ *
+ * <p>Dual-stack: resolves and scans one IPv4 and one IPv6 address (whichever
+ * of each family the host has) independently, rather than letting the JVM's
+ * default address-family preference silently pick just one - a target
+ * exposing something different (or extra) over IPv6 was previously never
+ * checked at all, exactly the blind spot the plan's IPv6-parity item called
+ * out. If a host has multiple A or multiple AAAA records, only the first of
+ * each is used - this mirrors what a single {@code InetAddress.getByName}
+ * call always did before, just once per family instead of once overall.
  */
 public class TcpConnectPortScanner {
 
@@ -32,9 +42,16 @@ public class TcpConnectPortScanner {
     private static final int POOL_SIZE = 20;
     private static final long HARD_TIMEOUT_SECONDS = 60;
 
-    public List<Integer> scan(String hostname) throws ScanModuleException {
-        InetAddress address = resolve(hostname);
+    /** Keys are "IPv4"/"IPv6" - see {@link PortScanDecisionLogic#decide}, which consumes this shape directly. */
+    public Map<String, List<Integer>> scan(String hostname) throws ScanModuleException {
+        Map<String, List<Integer>> result = new LinkedHashMap<>();
+        for (Map.Entry<String, InetAddress> entry : DualStackResolver.resolveOnePerFamily(hostname).entrySet()) {
+            result.put(entry.getKey(), scanAddress(entry.getValue()));
+        }
+        return result;
+    }
 
+    private List<Integer> scanAddress(InetAddress address) {
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(POOL_SIZE, CURATED_PORTS.size()));
         try {
             List<Future<Integer>> futures = new ArrayList<>();
@@ -65,25 +82,6 @@ public class TcpConnectPortScanner {
             return port;
         } catch (Exception e) {
             return null;
-        }
-    }
-
-    /**
-     * Resolved once and the same InetAddress reused for all 35 connect
-     * attempts (rather than each Socket resolving the hostname itself),
-     * both to avoid redundant DNS lookups and so the safety check below
-     * covers every attempt made by this scan - not just the first.
-     */
-    private InetAddress resolve(String hostname) throws ScanModuleException {
-        try {
-            InetAddress address = InetAddress.getByName(hostname);
-            if (SafeAddressValidator.isUnsafeToConnect(address)) {
-                throw new ScanModuleException(
-                        hostname + " resolves to a private/loopback/reserved address - refusing to connect");
-            }
-            return address;
-        } catch (UnknownHostException e) {
-            throw new ScanModuleException(hostname + " could not be resolved", e);
         }
     }
 }

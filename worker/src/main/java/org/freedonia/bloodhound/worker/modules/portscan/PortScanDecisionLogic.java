@@ -1,9 +1,11 @@
 package org.freedonia.bloodhound.worker.modules.portscan;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
@@ -16,9 +18,32 @@ public final class PortScanDecisionLogic {
 
     private PortScanDecisionLogic() {}
 
-    public static List<RawFinding> decide(String hostname, List<Integer> openPorts) {
+    /**
+     * {@code openPortsByFamily} maps an address family label ("IPv4"/"IPv6")
+     * to the ports found open when scanning that family's address - see
+     * {@link TcpConnectPortScanner#scan}, which scans one address per family
+     * a dual-stack host has. A port open on both families still produces a
+     * single finding (same {@code hostname:port} dedup key as before this
+     * method took family into account), but its evidence now records every
+     * family it was actually reached over - e.g. an admin port exposed only
+     * via IPv6 shows {@code addressFamilies: ["IPv6"]}, the exact
+     * previously-invisible-to-this-scanner case this exists to surface.
+     */
+    public static List<RawFinding> decide(String hostname, Map<String, List<Integer>> openPortsByFamily) {
+        Map<Integer, List<String>> familiesByPort = new TreeMap<>();
+        openPortsByFamily.forEach((family, ports) -> {
+            for (Integer port : ports) {
+                familiesByPort.computeIfAbsent(port, p -> new ArrayList<>()).add(family);
+            }
+        });
+
         List<RawFinding> findings = new ArrayList<>();
-        for (Integer port : openPorts) {
+        for (Map.Entry<Integer, List<String>> entry : familiesByPort.entrySet()) {
+            int port = entry.getKey();
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("port", port);
+            evidence.put("addressFamilies", entry.getValue());
+
             if (ADMIN_DB_PORTS.contains(port)) {
                 findings.add(new RawFinding(
                         "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
@@ -27,7 +52,7 @@ public final class PortScanDecisionLogic {
                         "Administrative/database service reachable from the internet",
                         "A port commonly used by a database or remote-administration service was found open and reachable.",
                         hostname + ":" + port,
-                        Map.of("port", port)));
+                        evidence));
             } else if (UNENCRYPTED_MGMT_PORTS.contains(port)) {
                 findings.add(new RawFinding(
                         "PORT_OPEN_UNENCRYPTED_MGMT",
@@ -36,7 +61,7 @@ public final class PortScanDecisionLogic {
                         "Unencrypted management protocol reachable",
                         "A port used by a plaintext management protocol (FTP or Telnet) was found open.",
                         hostname + ":" + port,
-                        Map.of("port", port)));
+                        evidence));
             }
         }
         return findings;

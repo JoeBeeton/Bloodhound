@@ -1,7 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.portscan;
 
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,12 +11,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.findings.RawFinding;
-import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.scanmodule.ModuleResult;
 import org.freedonia.bloodhound.common.scanmodule.ScanContext;
 import org.freedonia.bloodhound.common.scanmodule.ScanModule;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.common.scanmodule.ScanTier;
+import org.freedonia.bloodhound.worker.modules.common.DualStackResolver;
 import org.freedonia.bloodhound.worker.modules.common.PayloadSubdomains;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +45,13 @@ import org.springframework.stereotype.Component;
  * *hosts* now happens via the job queue's normal FOR UPDATE SKIP LOCKED
  * claiming (spread across however many workers are free), not by looping
  * inside one job on one worker.
+ *
+ * <p>Dual-stack: resolves one IPv4 and one IPv6 address per host (see
+ * {@link DualStackResolver}) and runs the full naabu+zgrab2 pipeline against
+ * each independently, roughly doubling this module's cost for a dual-stack
+ * host - an accepted tradeoff for actually covering the address family this
+ * module previously never scanned at all, rather than leaving Tier 2 as a
+ * narrower, IPv4-only pass than Tier 1's light scan.
  */
 @Component
 public class DeepPortScanModule implements ScanModule {
@@ -78,16 +84,27 @@ public class DeepPortScanModule implements ScanModule {
         return new ModuleResult(findings, Map.of("host", host, "findingCount", findings.size()));
     }
 
+    /**
+     * Runs the full naabu-discovery + zgrab2-identification pipeline once
+     * per resolved address family (see {@link DualStackResolver}), rather
+     * than against a single arbitrarily-picked address - a target exposing a
+     * different port surface over IPv6 was previously never scanned at all.
+     * Results are merged before deciding; {@link DeepPortScanDecisionLogic}
+     * unions address-family evidence for any port found open on both.
+     */
     private List<RawFinding> scanOneHost(String hostname) throws ScanModuleException {
-        InetAddress address = resolve(hostname);
-        String ip = address.getHostAddress();
-
-        List<Integer> openPorts = NaabuJsonParser.parseOpenPorts(naabuFetcher.fetchJsonLines(ip));
-        List<PortDetail> details = identifyServices(ip, address, openPorts);
-        return DeepPortScanDecisionLogic.decide(hostname, details);
+        List<PortDetail> allDetails = new ArrayList<>();
+        for (Map.Entry<String, InetAddress> entry : DualStackResolver.resolveOnePerFamily(hostname).entrySet()) {
+            String family = entry.getKey();
+            InetAddress address = entry.getValue();
+            String ip = address.getHostAddress();
+            List<Integer> openPorts = NaabuJsonParser.parseOpenPorts(naabuFetcher.fetchJsonLines(ip));
+            allDetails.addAll(identifyServices(ip, address, family, openPorts));
+        }
+        return DeepPortScanDecisionLogic.decide(hostname, allDetails);
     }
 
-    private List<PortDetail> identifyServices(String ip, InetAddress address, List<Integer> openPorts) {
+    private List<PortDetail> identifyServices(String ip, InetAddress address, String family, List<Integer> openPorts) {
         if (openPorts.isEmpty()) {
             return List.of();
         }
@@ -95,7 +112,7 @@ public class DeepPortScanModule implements ScanModule {
         try {
             List<Future<PortDetail>> futures = new ArrayList<>();
             for (int port : openPorts) {
-                futures.add(pool.submit(() -> identifyOne(ip, address, port)));
+                futures.add(pool.submit(() -> identifyOne(ip, address, family, port)));
             }
             List<PortDetail> details = new ArrayList<>();
             for (int i = 0; i < futures.size(); i++) {
@@ -104,7 +121,7 @@ public class DeepPortScanModule implements ScanModule {
                     details.add(futures.get(i).get(PER_PORT_TIMEOUT_SECONDS, TimeUnit.SECONDS));
                 } catch (Exception e) {
                     log.debug("service identification for {}:{} skipped: {}", ip, port, e.getMessage());
-                    details.add(new PortDetail(port, null, null, null, Map.of()));
+                    details.add(new PortDetail(port, null, null, null, Map.of(), family));
                 }
             }
             return details;
@@ -113,7 +130,7 @@ public class DeepPortScanModule implements ScanModule {
         }
     }
 
-    private PortDetail identifyOne(String ip, InetAddress address, int port) {
+    private PortDetail identifyOne(String ip, InetAddress address, String family, int port) {
         String serviceName = null;
         String serviceProduct = null;
         String serviceVersion = null;
@@ -151,19 +168,6 @@ public class DeepPortScanModule implements ScanModule {
             }
         }
 
-        return new PortDetail(port, serviceName, serviceProduct, serviceVersion, scriptOutputs);
-    }
-
-    private InetAddress resolve(String hostname) throws ScanModuleException {
-        try {
-            InetAddress address = InetAddress.getByName(hostname);
-            if (SafeAddressValidator.isUnsafeToConnect(address)) {
-                throw new ScanModuleException(
-                        hostname + " resolves to a private/loopback/reserved address - refusing to connect");
-            }
-            return address;
-        } catch (UnknownHostException e) {
-            throw new ScanModuleException(hostname + " could not be resolved", e);
-        }
+        return new PortDetail(port, serviceName, serviceProduct, serviceVersion, scriptOutputs, family);
     }
 }

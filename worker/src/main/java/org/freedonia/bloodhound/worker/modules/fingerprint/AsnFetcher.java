@@ -33,17 +33,23 @@ public class AsnFetcher {
         }
     }
 
-    /** Returns {asn, asnOrg} (either or both null if the IP isn't plain IPv4 or a lookup step comes back empty). */
+    /** Returns {asn, asnOrg} (either or both null if the IP is neither plain IPv4 nor IPv6, or a lookup step comes back empty). */
     public AsnLookupResult lookup(String ip) {
         String reversed = AsnDecisionLogic.reverseIpv4(ip);
+        String originZone = "origin.asn.cymru.com";
+        if (reversed == null) {
+            reversed = AsnDecisionLogic.reverseIpv6(ip);
+            originZone = "origin6.asn.cymru.com";
+        }
         if (reversed == null) {
             return new AsnLookupResult(null, null);
         }
-        String originTxt = firstTxt(reversed + ".origin.asn.cymru.com");
+        String originTxt = firstTxt(reversed + "." + originZone);
         String asn = AsnDecisionLogic.parseAsn(originTxt);
         if (asn == null) {
             return new AsnLookupResult(null, null);
         }
+        // Same AS-name zone for both families - it's keyed by ASN, not by IP.
         String asnTxt = firstTxt(asn + ".asn.cymru.com");
         String org = AsnDecisionLogic.parseOrg(asnTxt);
         return new AsnLookupResult(asn, org);
