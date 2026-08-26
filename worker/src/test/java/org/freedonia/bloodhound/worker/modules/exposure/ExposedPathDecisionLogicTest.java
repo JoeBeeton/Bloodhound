@@ -186,6 +186,64 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void envFile_secretShapedContent_alsoTripsLiveSecretDetected() {
+        String body = "DB_PASSWORD=hunter2\naws_access_key_id = AKIAABCDEFGHIJKLMNOP\n";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_ENV_FILE", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_ENV_FILE", "EXPOSURE_LIVE_SECRET_DETECTED");
+        RawFinding secretFinding = findings.stream()
+                .filter(f -> f.ruleId().equals("EXPOSURE_LIVE_SECRET_DETECTED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(secretFinding.severity().name()).isEqualTo("CRITICAL");
+        assertThat(secretFinding.affectedAsset()).isEqualTo("example.com (.env)");
+        assertThat(secretFinding.evidence()).containsEntry("sourceFile", ".env");
+        @SuppressWarnings("unchecked")
+        List<String> patternsFound = (List<String>) secretFinding.evidence().get("patternsFound");
+        assertThat(patternsFound).contains("AWS Access Key ID");
+    }
+
+    @Test
+    void envFile_secretShapedKeyNameButNoLiveLookingValue_onlyEnvFileFinding_noSecretDetected() {
+        String body = "DB_PASSWORD=hunter2\nAPP_NAME=widgets\n";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_ENV_FILE", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_ENV_FILE").doesNotContain("EXPOSURE_LIVE_SECRET_DETECTED");
+    }
+
+    @Test
+    void gitConfig_withCredentialEmbeddedUrl_tripsLiveSecretDetectedWithGitConfigLabel() {
+        String body = "[core]\nrepositoryformatversion = 0\n[remote \"origin\"]\n"
+                + "url = https://deploy:hunter2verylongtoken@github.com/example/repo.git\n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_GIT_CONFIG", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_GIT_CONFIG", "EXPOSURE_LIVE_SECRET_DETECTED");
+        RawFinding secretFinding = findings.stream()
+                .filter(f -> f.ruleId().equals("EXPOSURE_LIVE_SECRET_DETECTED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(secretFinding.affectedAsset()).isEqualTo("example.com (.git/config)");
+    }
+
+    @Test
+    void awsCredentials_withSecretKey_tripsLiveSecretDetectedWithAwsCredentialsLabel() {
+        String body = "[default]\naws_access_key_id = AKIAABCDEFGHIJKLMNOP\n"
+                + "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_AWS_CREDENTIALS", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_AWS_CREDENTIALS", "EXPOSURE_LIVE_SECRET_DETECTED");
+        RawFinding secretFinding = findings.stream()
+                .filter(f -> f.ruleId().equals("EXPOSURE_LIVE_SECRET_DETECTED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(secretFinding.affectedAsset()).isEqualTo("example.com (.aws/credentials)");
+    }
+
+    @Test
     void securityTxtPresent_flaggedInfoAsPositiveSignal() {
         String body = "Contact: mailto:security@example.com\nExpires: 2027-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(

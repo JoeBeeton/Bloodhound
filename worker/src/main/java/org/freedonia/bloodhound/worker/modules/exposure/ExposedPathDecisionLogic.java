@@ -21,6 +21,12 @@ import org.freedonia.bloodhound.common.findings.Severity;
  * catch-all page can never trigger a finding here, since its body can never
  * simultaneously equal the baseline body and contain e.g.
  * {@code "propertySources"}.
+ *
+ * <p>When the .env, .git/config, or AWS-credentials check fires, its
+ * already-fetched body is additionally re-checked by {@link
+ * SecretPatternScanner} for live-looking credential formats - see {@link
+ * #addSecretScanFinding}. No new network calls; this only sharpens "a file
+ * is exposed" into "here's what's actually in it."
  */
 public final class ExposedPathDecisionLogic {
 
@@ -86,10 +92,16 @@ public final class ExposedPathDecisionLogic {
             findings.add(finding("EXPOSURE_ACTUATOR_INDEX", hostname, r.get("EXPOSURE_ACTUATOR_INDEX")));
         }
 
-        addIfMatches(findings, hostname, r, "EXPOSURE_GIT_CONFIG", baselineBody,
-                b -> b.contains("[core]") && b.contains("repositoryformatversion"));
-        addIfMatches(findings, hostname, r, "EXPOSURE_ENV_FILE", baselineBody, ExposedPathDecisionLogic::looksLikeEnvFile);
-        addIfMatches(findings, hostname, r, "EXPOSURE_AWS_CREDENTIALS", baselineBody, b -> b.contains("aws_access_key_id"));
+        if (addIfMatches(findings, hostname, r, "EXPOSURE_GIT_CONFIG", baselineBody,
+                b -> b.contains("[core]") && b.contains("repositoryformatversion"))) {
+            addSecretScanFinding(findings, hostname, r.get("EXPOSURE_GIT_CONFIG"), ".git/config");
+        }
+        if (addIfMatches(findings, hostname, r, "EXPOSURE_ENV_FILE", baselineBody, ExposedPathDecisionLogic::looksLikeEnvFile)) {
+            addSecretScanFinding(findings, hostname, r.get("EXPOSURE_ENV_FILE"), ".env");
+        }
+        if (addIfMatches(findings, hostname, r, "EXPOSURE_AWS_CREDENTIALS", baselineBody, b -> b.contains("aws_access_key_id"))) {
+            addSecretScanFinding(findings, hostname, r.get("EXPOSURE_AWS_CREDENTIALS"), ".aws/credentials");
+        }
         addIfMatches(findings, hostname, r, "EXPOSURE_SWAGGER_UI", baselineBody,
                 b -> b.contains("\"swagger\"") || b.contains("\"openapi\""));
         addIfMatches(findings, hostname, r, "EXPOSURE_GRAPHQL_INTROSPECTION", baselineBody, b -> b.contains("__schema"));
@@ -142,12 +154,41 @@ public final class ExposedPathDecisionLogic {
                 && response.contentType().toLowerCase(Locale.ROOT).contains("octet-stream");
     }
 
-    private static void addIfMatches(
+    private static boolean addIfMatches(
             List<RawFinding> findings, String hostname, Map<String, ProbeResponse> r, String ruleId, String baselineBody,
             Predicate<String> positive) {
         if (matches(r.get(ruleId), baselineBody, positive)) {
             findings.add(finding(ruleId, hostname, r.get(ruleId)));
+            return true;
         }
+        return false;
+    }
+
+    /**
+     * Re-greps a body already fetched (and already found to trip its own
+     * exposure rule) for live-looking secret formats - see
+     * {@link SecretPatternScanner}. Reported as a distinct finding rather
+     * than folded into the parent one, with the source file appended to the
+     * affected asset ({@code hostname + " (" + fileLabel + ")"}) so
+     * .env/.git/config/.aws/credentials findings on the same hostname get
+     * independent dedup keys, matching the alt-port precedent used for
+     * EXPOSURE_DOCKER_API/EXPOSURE_ELASTICSEARCH_UNAUTH above.
+     */
+    private static void addSecretScanFinding(
+            List<RawFinding> findings, String hostname, ProbeResponse response, String fileLabel) {
+        if (response == null || response.body() == null) {
+            return;
+        }
+        List<SecretPatternScanner.Match> matches = SecretPatternScanner.scan(response.body());
+        if (matches.isEmpty()) {
+            return;
+        }
+        List<String> patternNames = matches.stream().map(SecretPatternScanner.Match::patternName).toList();
+        List<String> previews = matches.stream().map(SecretPatternScanner.Match::redactedPreview).toList();
+        findings.add(finding(
+                "EXPOSURE_LIVE_SECRET_DETECTED",
+                hostname + " (" + fileLabel + ")",
+                Map.of("sourceFile", fileLabel, "patternsFound", patternNames, "matchCount", matches.size(), "previews", previews)));
     }
 
     private static void addAltPortIfMatches(
@@ -263,5 +304,10 @@ public final class ExposedPathDecisionLogic {
                     "A Redis instance answered INFO without authentication, allowing full read/write access to stored data.")),
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
-                    "The Consul HTTP API is reachable without authentication.")));
+                    "The Consul HTTP API is reachable without authentication.")),
+            Map.entry("EXPOSURE_LIVE_SECRET_DETECTED", new RuleMeta(Severity.CRITICAL,
+                    "Live-looking secret found in exposed file",
+                    "The contents of an already-exposed file (.env, .git/config, or AWS credentials) contain one "
+                            + "or more strings matching known live-credential formats, confirming the exposed file "
+                            + "carries working-looking secrets, not just configuration structure.")));
 }

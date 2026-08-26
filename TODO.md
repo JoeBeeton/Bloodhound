@@ -72,12 +72,35 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   `NsTakeoverDecisionLogic`/`NsTakeoverChecker` (worker) and
   `SubdomainIngestionService` (central-server).
 
-- **Secret-pattern scanning inside already-exposed files.** The exposure
-  checks already flag that `.env`/`.git/config`/AWS-credential files are
-  *reachable* (`EXPOSURE_ENV_FILE`, `EXPOSURE_GIT_CONFIG`,
-  `EXPOSURE_AWS_CREDENTIALS`); this would grep their actual contents for
-  live-looking key patterns (regex-based, gitleaks-style), turning "a file
-  is exposed" into "here's what's actually in it."
+- ~~Secret-pattern scanning inside already-exposed files~~ **Done.** New
+  `SecretPatternScanner` (worker, hand-written patterns - same reasoning as
+  the Wappalyzer-GPLv3 call on the fingerprinting item: no existing
+  signature database to license-check, so nothing to pull in) re-greps the
+  body `ExposedPathFetcher` already downloaded for `EXPOSURE_ENV_FILE` /
+  `EXPOSURE_GIT_CONFIG` / `EXPOSURE_AWS_CREDENTIALS` - no new network calls -
+  for AWS key formats, private-key blocks, Slack/GitHub/Stripe tokens,
+  credential-embedded URLs, and generic high-entropy `key=value` assignments.
+  A match adds a new `EXPOSURE_LIVE_SECRET_DETECTED` (Critical) finding,
+  reported per source file (`hostname + " (.env)"` etc., same
+  affected-asset-disambiguation trick the alt-port Docker/Elasticsearch
+  checks already use) so an .env and a .git/config on the same host get
+  independent dedup keys. Evidence stores only pattern names and a
+  first-4/last-4-chars redacted preview, never the full matched string -
+  findings are themselves persisted and displayed, so storing the live
+  secret there would just add a second leak surface. Tried to live-verify
+  against the `juiceshop.local` practice target (added a synthetic `/.env`
+  to `juiceshop-proxy/nginx.conf`, confirmed by direct `curl` it served the
+  intended bytes) but the attempt itself proved this module can't be
+  exercised that way: `juiceshop.local` resolves to a private Docker IP,
+  which `SafeAddressValidator`'s SSRF guard correctly refuses to connect to
+  for every Tier 1 HTTP module, not just this one (confirmed `HTTP_HEADERS`/
+  `TLS_ANALYSIS`/`TECH_FINGERPRINT` fail the same way against it already,
+  unrelated to this change) - reverted the nginx fixture rather than leave
+  untestable dead code in place. Verified instead via unit tests built
+  against that exact real response format (`worker/.../SecretPatternScannerTest`,
+  11 cases, plus new `ExposedPathDecisionLogicTest` cases covering all three
+  source files), a full worker+central-server test run, and a real container
+  rebuild/redeploy + Flyway migration (`V27`) applied against live Postgres.
 
 - **IPv6 exposure parity.** The port scanner and ASN lookup are IPv4-only
   right now (see `AsnDecisionLogic.reverseIpv4`). A target can have an
