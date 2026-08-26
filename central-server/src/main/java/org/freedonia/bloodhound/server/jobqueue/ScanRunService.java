@@ -36,7 +36,8 @@ public class ScanRunService {
             "PORT_SCAN_LIGHT",
             "WHOIS",
             "TECH_FINGERPRINT",
-            "TYPOSQUAT_MONITOR");
+            "TYPOSQUAT_MONITOR",
+            "BREACH_CORRELATION");
 
     /**
      * Module types that scan a target's root hostname plus its known
@@ -54,7 +55,10 @@ public class ScanRunService {
      * consumer of it. TYPOSQUAT_MONITOR is excluded for a different reason:
      * lookalike domains are of the brand/root domain itself, not of each
      * individual subdomain, so it always operates on just the target's own
-     * hostname regardless of this list.
+     * hostname regardless of this list. BREACH_CORRELATION is excluded for
+     * the same reason as DNS_POSTURE/WHOIS: breached credentials are tied to
+     * an email address at the domain itself ("user@example.com"), not to
+     * any particular subdomain, so it's a once-per-target check too.
      */
     private static final List<String> SUBDOMAIN_FANOUT_MODULE_TYPES =
             List.of("HTTP_HEADERS", "TLS_ANALYSIS", "EXPOSURE_CHECKS", "PORT_SCAN_LIGHT", "TECH_FINGERPRINT");

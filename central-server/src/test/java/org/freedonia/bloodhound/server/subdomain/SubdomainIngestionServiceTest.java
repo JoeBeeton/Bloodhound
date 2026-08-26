@@ -168,6 +168,46 @@ class SubdomainIngestionServiceTest {
     }
 
     @Test
+    void confirmedNsTakeoverSynthesizesFinding() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("legacy.example.com"));
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "legacy.example.com",
+                        "ipAddresses", List.of("1.2.3.4"),
+                        "source", "CRTSH",
+                        "nsTakeoverConfirmed", true,
+                        "nsTakeoverProvider", "AWS_ROUTE53",
+                        "nsTakeoverNameserver", "ns-123.awsdns-45.com"))),
+                List.of());
+
+        assertThat(findings).hasSize(1);
+        FindingPayload finding = findings.get(0);
+        assertThat(finding.ruleId()).isEqualTo("SUBDOMAIN_NS_DELEGATION_TAKEOVER");
+        assertThat(finding.severity()).isEqualTo("CRITICAL");
+        assertThat(finding.category()).isEqualTo("SUBDOMAIN_HYGIENE");
+        assertThat(finding.affectedAsset()).isEqualTo("legacy.example.com");
+        assertThat(finding.evidence()).containsEntry("provider", "AWS_ROUTE53");
+        assertThat(finding.evidence()).containsEntry("nameserver", "ns-123.awsdns-45.com");
+    }
+
+    @Test
+    void nsMatchedButNotConfirmedTakeover_noFinding() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("legacy.example.com"));
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "legacy.example.com",
+                        "ipAddresses", List.of("1.2.3.4"),
+                        "source", "CRTSH"))),
+                List.of());
+
+        assertThat(findings).isEmpty();
+    }
+
+    @Test
     void cnameMatchedButNotConfirmedDangling_noFindingAndTargetColumnStaysNull() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("claimed.example.com"));
 

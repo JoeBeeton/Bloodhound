@@ -35,20 +35,42 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   `CloudBucketDecisionLogic`/`CloudBucketChecker` (worker) and
   `SubdomainIngestionService` (central-server).
 
-- **Wire up a real `BreachCorrelationSource`.** `NoOpBreachCorrelationSource`
-  is the only implementation that ships - `BreachCorrelationModule` never
-  even calls it when `HIBP_API_KEY` is unset (the common case). The
-  extension point already exists; this is "finish what's started," not new
-  architecture. Have I Been Pwned's domain-search API is the obvious
-  candidate.
+- ~~Wire up a real `BreachCorrelationSource`~~ **Done.**
+  `HibpBreachCorrelationSource` (`@Primary`) implements it against Have I
+  Been Pwned's domain-search API; `BREACH_CORRELATION` is now in
+  `ScanRunService.TIER1_MODULE_TYPES` so every scan enqueues it, and
+  `HIBP_API_KEY` is wired through `docker-compose.yml`/`.env.example`
+  (optional, unset by default - the module still costs nothing without a
+  key, confirmed live: `{"enabled": false}`, zero HTTP calls). **One real
+  limitation, not fully resolvable in code:** HIBP's domain-search endpoint
+  only returns data for domains the operator has separately, manually
+  verified ownership of in their own HIBP account (DNS TXT record, email
+  approval, or their dashboard) - an unverified domain returns HTTP 403
+  regardless of key validity, every time. Handled as "no data" rather than
+  an error, so it never fails a scan, but it does mean this won't produce
+  any findings until that manual, per-domain, account-level step happens -
+  something only the operator can do, outside anything a scan can automate.
+  Also unlike everything else fetch-related in this codebase, **not
+  live-verified against a real subscription** - written strictly to HIBP's
+  documented API contract (no key available to test against for real).
+  Worth a genuine end-to-end check once a subscription + verified domain
+  exist.
 
-- **NS-delegation subdomain takeover detection.** Distinct from the existing
-  CNAME-dangling check (`SUBDOMAIN_DANGLING_CNAME`): a subdomain delegated to
-  a nameserver that's since been deprovisioned (e.g. a deleted Route53
-  hosted zone) can be claimed by someone else entirely. Different attack
-  vector, same severity class as the CNAME case, not currently covered by
-  `DNS_NS_LAME_DELEGATION` (that's about broken answers, not claimable
-  delegation).
+- ~~NS-delegation subdomain takeover detection~~ **Done.** New rule
+  `SUBDOMAIN_NS_DELEGATION_TAKEOVER` (Critical). Reused
+  `DnsZoneFetcher`'s exact "query the claimed nameserver directly for a SOA,
+  see if it answers authoritatively" mechanic (already built for the
+  apex-only `DNS_NS_LAME_DELEGATION` check) - what makes this one different
+  and more severe isn't the query itself, it's checking specifically whether
+  the lame nameserver belongs to a known cloud DNS provider (Route53, Azure
+  DNS, Google Cloud DNS, DigitalOcean), which is what makes a lame answer
+  attacker-*claimable* rather than just misconfigured. Wired into
+  `SubdomainEnumModule` alongside the CNAME/bucket checks (new
+  `SubdomainDnsResolver.resolveNameServers`), same
+  "computed live every run, re-confirmed or resolves" pattern as the other
+  two subdomain-hygiene checks. See
+  `NsTakeoverDecisionLogic`/`NsTakeoverChecker` (worker) and
+  `SubdomainIngestionService` (central-server).
 
 - **Secret-pattern scanning inside already-exposed files.** The exposure
   checks already flag that `.env`/`.git/config`/AWS-credential files are

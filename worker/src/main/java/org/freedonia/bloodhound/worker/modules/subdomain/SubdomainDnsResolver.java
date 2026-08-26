@@ -15,6 +15,7 @@ import org.xbill.DNS.ARecord;
 import org.xbill.DNS.AAAARecord;
 import org.xbill.DNS.CNAMERecord;
 import org.xbill.DNS.Lookup;
+import org.xbill.DNS.NSRecord;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
 import org.xbill.DNS.SimpleResolver;
@@ -102,6 +103,61 @@ public class SubdomainDnsResolver {
             return results;
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Resolves NS records for a batch of hostnames, same bounded-pool shape
+     * as {@link #resolveAll}. Most subdomains have none at all - independent
+     * NS delegation is deliberate and relatively rare (a subdomain handed
+     * off to its own separately-hosted zone, e.g. for a third-party SaaS
+     * integration or organizational separation) - those simply come back
+     * absent from the map, not as an error.
+     */
+    public Map<String, List<String>> resolveNameServers(Collection<String> hostnames) {
+        if (hostnames.isEmpty()) {
+            return Map.of();
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(POOL_SIZE, hostnames.size()));
+        try {
+            Map<String, Future<List<String>>> futures = new LinkedHashMap<>();
+            for (String hostname : hostnames) {
+                futures.put(hostname, pool.submit(() -> resolveNsOne(hostname)));
+            }
+            Map<String, List<String>> results = new LinkedHashMap<>();
+            for (Map.Entry<String, Future<List<String>>> entry : futures.entrySet()) {
+                try {
+                    List<String> ns = entry.getValue().get(PER_LOOKUP_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+                    if (!ns.isEmpty()) {
+                        results.put(entry.getKey(), ns);
+                    }
+                } catch (Exception ignored) {
+                    // no NS records, timed out, or resolution failed - treated the same as "no NS delegation".
+                }
+            }
+            return results;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private List<String> resolveNsOne(String hostname) {
+        try {
+            Lookup lookup = new Lookup(hostname, Type.NS);
+            lookup.setResolver(resolver);
+            Record[] records = lookup.run();
+            if (records == null) {
+                return List.of();
+            }
+            List<String> nameservers = new ArrayList<>();
+            for (Record record : records) {
+                if (record instanceof NSRecord ns) {
+                    nameservers.add(ns.getTarget().toString(true));
+                }
+            }
+            return nameservers;
+        } catch (Exception e) {
+            return List.of();
         }
     }
 
