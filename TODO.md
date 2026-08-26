@@ -102,11 +102,61 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   source files), a full worker+central-server test run, and a real container
   rebuild/redeploy + Flyway migration (`V27`) applied against live Postgres.
 
-- **IPv6 exposure parity.** The port scanner and ASN lookup are IPv4-only
-  right now (see `AsnDecisionLogic.reverseIpv4`). A target can have an
-  equally-exposed IPv6 address that's never checked at all - exactly the
-  kind of blind spot attackers look for precisely because it's
-  under-monitored.
+- ~~IPv6 exposure parity~~ **Done**, plus one real SSRF-guard bug found and
+  fixed along the way. Scoping this turned up that
+  `SafeAddressValidator.isSafeToConnect` did not block IPv6 Unique Local
+  Addresses (`fc00::/7`, almost always seen as `fd00::/8`) - confirmed
+  empirically (`fd12:3456:789a::1` came back `isSiteLocalAddress()=false`,
+  `isLinkLocalAddress()=false`, so it sailed through every call site
+  untouched) - `Inet6Address.isSiteLocalAddress()` only implements the
+  deprecated RFC 1884 `fec0::/10` range, not RFC 4193 ULA. Fixed with an
+  explicit `fc00::/7` byte-range check parallel to the existing IPv4-only
+  0.0.0.0/8 and CGNAT checks, covered by 16 new tests including the exact
+  boundary bytes (`fbff::` still safe, `fe00::` still safe, `fc00::`/`fd00::`
+  both blocked). This was a live gap, not a hypothetical one - any hostname
+  answering with an internal ULA AAAA record (misconfiguration or DNS
+  rebinding) would previously have been treated as a normal public target by
+  every scan module.
+
+  For the two items actually named: `AsnDecisionLogic` gained `reverseIpv6`
+  (Cymru's nibble-reversed `origin6.asn.cymru.com` query format, distinct
+  zone from the IPv4 `origin.asn.cymru.com`), wired into `AsnFetcher.lookup`;
+  `FingerprintModule` now tries every resolved IP in order (not just
+  `ips.get(0)`) so an IPv6-only host gets hosting-provider data instead of
+  none. Live-verified against the real Team Cymru service from inside the
+  actual worker container (post-rebuild): `AsnFetcher.lookup("2001:4860:4860::8888")`
+  correctly returned `AS15169` / `GOOGLE - Google LLC, US`, matching a raw
+  DNS TXT query to the same zone byte-for-byte, and the pre-existing IPv4
+  path (`8.8.8.8` -> same result) still works unchanged.
+
+  Both port scanners (`TcpConnectPortScanner` Tier 1, `DeepPortScanModule`
+  Tier 2) previously resolved a single address via `InetAddress.getByName`
+  and scanned whichever family the JVM's default address-ordering picked -
+  silently never checking the other. New shared `DualStackResolver`
+  (`worker/.../modules/common`) resolves one address per family, validates
+  each independently against `SafeAddressValidator` (a public address of one
+  family isn't discarded just because the other happens to be
+  private/reserved), and fails only if neither family is safe. Both
+  scanners now scan every family they have; `PortScanDecisionLogic`/
+  `DeepPortScanDecisionLogic` union address-family evidence per port rather
+  than reporting duplicates, so a port open on IPv6 only - the actual blind
+  spot this item was about - now surfaces distinctly
+  (`addressFamilies: ["IPv6"]`) instead of not existing at all.
+
+  **Honest limitation**: full end-to-end dual-stack port scanning couldn't
+  be live-verified, because neither this dev sandbox nor the Docker Compose
+  network here has real outbound IPv6 connectivity (`docker-compose.yml`
+  doesn't set `enable_ipv6` on its network, and confirmed via
+  `getent ahostsv6`/`/proc/net/if_inet6` inside a worker container - loopback
+  only, no route). What *is* live-verified: `DualStackResolver` runs
+  correctly end-to-end inside the real container (correctly resolves
+  `google.com`'s IPv4 address, correctly rejects `localhost` outright when
+  no family is safe), and the ASN IPv6 path is fully proven against real
+  infrastructure as above. The actual per-port `Socket.connect` code is
+  unchanged from the already-proven IPv4 path - only which/how-many
+  addresses get fed into it is new - so the residual risk is narrow, but a
+  genuine dual-stack-reachable deployment is worth a real check once one's
+  available.
 
 - **Document metadata leakage.** Author names, internal file paths, and
   software versions embedded in discovered PDFs/Office documents - classic

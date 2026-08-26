@@ -21,6 +21,30 @@ class AsnDecisionLogicTest {
     }
 
     @Test
+    void reverseIpv6_nibbleReversesFullExpandedAddress() {
+        assertThat(AsnDecisionLogic.reverseIpv6("::1"))
+                .isEqualTo("1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0");
+        assertThat(AsnDecisionLogic.reverseIpv6("2001:4860:4860::8888"))
+                .isEqualTo("8.8.8.8.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.6.8.4.0.6.8.4.1.0.0.2");
+        assertThat(AsnDecisionLogic.reverseIpv6("2001:db8::1"))
+                .isEqualTo("1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2");
+    }
+
+    @Test
+    void reverseIpv6_rejectsNonIpv6() {
+        assertThat(AsnDecisionLogic.reverseIpv6("8.8.8.8")).isNull();
+        assertThat(AsnDecisionLogic.reverseIpv6("not-an-ip")).isNull();
+        assertThat(AsnDecisionLogic.reverseIpv6(null)).isNull();
+    }
+
+    @Test
+    void reverseIpv6_ipv4MappedLiteral_normalizedToIpv4_rejected() {
+        // The JDK parses this as an Inet4Address, not a genuine IPv6 address -
+        // must not be nibble-reversed as if it were one.
+        assertThat(AsnDecisionLogic.reverseIpv6("::ffff:10.0.0.1")).isNull();
+    }
+
+    @Test
     void parseAsn_extractsNumberFromOriginLookupFormat() {
         // Real-shaped Cymru origin.asn.cymru.com response.
         assertThat(AsnDecisionLogic.parseAsn("15169 | 8.8.8.0/24 | US | arin | 2000-03-30")).isEqualTo("AS15169");

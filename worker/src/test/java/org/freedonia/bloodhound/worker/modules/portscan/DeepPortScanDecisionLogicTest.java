@@ -10,15 +10,19 @@ import org.junit.jupiter.api.Test;
 class DeepPortScanDecisionLogicTest {
 
     private static PortDetail port(int id) {
-        return new PortDetail(id, null, null, null, Map.of());
+        return new PortDetail(id, null, null, null, Map.of(), "IPv4");
     }
 
     private static PortDetail port(int id, String name, String product, String version) {
-        return new PortDetail(id, name, product, version, Map.of());
+        return new PortDetail(id, name, product, version, Map.of(), "IPv4");
+    }
+
+    private static PortDetail port(int id, String family) {
+        return new PortDetail(id, null, null, null, Map.of(), family);
     }
 
     private static PortDetail portWithScript(int id, String scriptId, String output) {
-        return new PortDetail(id, "ftp", "vsftpd", "3.0.3", Map.of(scriptId, output));
+        return new PortDetail(id, "ftp", "vsftpd", "3.0.3", Map.of(scriptId, output), "IPv4");
     }
 
     @Test
@@ -42,6 +46,7 @@ class DeepPortScanDecisionLogicTest {
         assertThat(finding.severity().name()).isEqualTo("HIGH");
         assertThat(finding.affectedAsset()).isEqualTo("example.com:3306");
         assertThat(finding.evidence()).containsEntry("product", "MySQL").containsEntry("version", "8.0.34");
+        assertThat(finding.evidence()).containsEntry("addressFamilies", List.of("IPv4"));
         assertThat(finding.description()).contains("MySQL 8.0.34");
     }
 
@@ -98,5 +103,40 @@ class DeepPortScanDecisionLogicTest {
         List<RawFinding> findings = DeepPortScanDecisionLogic.decide("example.com", List.of(port(80), port(443)));
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).ruleId()).isEqualTo("NETWORK_FULL_PORT_SURFACE");
+    }
+
+    @Test
+    void samePortOpenOnBothFamilies_singleFindingListingBoth() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "example.com", List.of(port(3389, "IPv4"), port(3389, "IPv6")));
+        List<RawFinding> adminFindings = findings.stream()
+                .filter(f -> f.ruleId().equals("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE"))
+                .toList();
+        assertThat(adminFindings).hasSize(1);
+        assertThat(adminFindings.get(0).evidence()).containsEntry("addressFamilies", List.of("IPv4", "IPv6"));
+        // The full-port-surface count is distinct ports, not one-per-family-entry.
+        RawFinding summary = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_FULL_PORT_SURFACE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(summary.evidence()).containsEntry("openPortCount", 1);
+    }
+
+    @Test
+    void portOpenOnlyOnIpv6_flaggedWithIpv6OnlyEvidence_thePreviouslyInvisibleCase() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide("example.com", List.of(port(6379, "IPv6")));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.evidence()).containsEntry("addressFamilies", List.of("IPv6"));
+    }
+
+    @Test
+    void differentPortsOpenPerFamily_bothReportedSeparately() {
+        List<RawFinding> findings =
+                DeepPortScanDecisionLogic.decide("example.com", List.of(port(3306, "IPv4"), port(23, "IPv6")));
+        assertThat(findings.stream().map(RawFinding::ruleId))
+                .contains("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", "PORT_OPEN_UNENCRYPTED_MGMT");
     }
 }

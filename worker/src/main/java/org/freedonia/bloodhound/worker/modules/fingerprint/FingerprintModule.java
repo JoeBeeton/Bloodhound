@@ -89,11 +89,21 @@ public class FingerprintModule implements ScanModule {
         String hostingProvider = null;
         String hostingAsn = null;
         String hostingAsnOrg = null;
-        if (!ips.isEmpty()) {
-            AsnLookupResult asn = asnFetcher.lookup(ips.get(0));
-            hostingAsn = asn.asn();
-            hostingAsnOrg = asn.asnOrg();
-            hostingProvider = HostingProviderMapper.toFriendlyName(asn.asnOrg());
+        // Tries every resolved IP (both A and AAAA - see SubdomainDnsResolver)
+        // in order, not just the first, and stops at the first one that
+        // actually yields ASN data. Previously this only ever tried ips.get(0),
+        // which - since A records are queried before AAAA - meant an
+        // IPv6-only host got no hosting-provider data at all, and a
+        // dual-stack host's data always reflected its IPv4 hosting even if
+        // that particular address's ASN lookup happened to come back empty.
+        for (String ip : ips) {
+            AsnLookupResult asn = asnFetcher.lookup(ip);
+            if (asn.asn() != null) {
+                hostingAsn = asn.asn();
+                hostingAsnOrg = asn.asnOrg();
+                hostingProvider = HostingProviderMapper.toFriendlyName(asn.asnOrg());
+                break;
+            }
         }
 
         Map<String, Object> entry = new java.util.LinkedHashMap<>();
