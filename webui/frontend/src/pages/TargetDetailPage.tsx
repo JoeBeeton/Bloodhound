@@ -312,11 +312,6 @@ export function TargetDetailPage() {
           <TechHostingPanel targetId={targetId} rootHostname={target?.hostname} />
         </div>
 
-        <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Brand protection</h2>
-        <div className="mb-10">
-          <BrandProtectionPanel targetId={targetId} />
-        </div>
-
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">
             Open findings {findingsQuery.data ? `(${findingsQuery.data.length})` : ""}
@@ -357,6 +352,11 @@ export function TargetDetailPage() {
             onToggle={() => setFindingsExpanded((v) => !v)}
           />
         )}
+
+        <h2 className="mb-3 mt-10 font-mono text-sm uppercase tracking-widest text-slate-400">Brand protection</h2>
+        <div className="mb-10">
+          <BrandProtectionPanel targetId={targetId} />
+        </div>
 
         <div className="mt-10 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
           <div>
