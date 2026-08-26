@@ -81,11 +81,11 @@ public class ScanRunService {
      * {@link #createManualScan}/{@link #createTriggeredScan}. Only {@link
      * #createDeepScan} fans out to these, and only after the caller
      * (TargetController) has confirmed targets.authorization_status =
-     * 'AUTHORIZED' - see TargetAuthorizationController. Both PORT_SCAN_DEEP
-     * and ZAP_ACTIVE_SCAN also scan known subdomains, not just the apex, per
-     * the same rationale as {@link #SUBDOMAIN_FANOUT_MODULE_TYPES}.
+     * 'AUTHORIZED' - see TargetAuthorizationController. PORT_SCAN_DEEP,
+     * ZAP_ACTIVE_SCAN, and NUCLEI_SCAN all scan known subdomains, not just
+     * the apex, per the same rationale as {@link #SUBDOMAIN_FANOUT_MODULE_TYPES}.
      */
-    private static final List<String> TIER2_MODULE_TYPES = List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN");
+    private static final List<String> TIER2_MODULE_TYPES = List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN");
 
     /**
      * Meaningfully tighter than {@link #TIER1_SUBDOMAIN_CAP}: a single deep
