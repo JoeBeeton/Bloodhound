@@ -37,7 +37,8 @@ public class ScanRunService {
             "WHOIS",
             "TECH_FINGERPRINT",
             "TYPOSQUAT_MONITOR",
-            "BREACH_CORRELATION");
+            "BREACH_CORRELATION",
+            "DOCUMENT_METADATA");
 
     /**
      * Module types that scan a target's root hostname plus its known
@@ -59,9 +60,12 @@ public class ScanRunService {
      * the same reason as DNS_POSTURE/WHOIS: breached credentials are tied to
      * an email address at the domain itself ("user@example.com"), not to
      * any particular subdomain, so it's a once-per-target check too.
+     * DOCUMENT_METADATA is included: a linked handbook/whitepaper leaking
+     * author info is just as likely to live on a subdomain's homepage as on
+     * the apex.
      */
-    private static final List<String> SUBDOMAIN_FANOUT_MODULE_TYPES =
-            List.of("HTTP_HEADERS", "TLS_ANALYSIS", "EXPOSURE_CHECKS", "PORT_SCAN_LIGHT", "TECH_FINGERPRINT");
+    private static final List<String> SUBDOMAIN_FANOUT_MODULE_TYPES = List.of(
+            "HTTP_HEADERS", "TLS_ANALYSIS", "EXPOSURE_CHECKS", "PORT_SCAN_LIGHT", "TECH_FINGERPRINT", "DOCUMENT_METADATA");
 
     /**
      * Capped because a target can have hundreds of subdomains (e.g.
