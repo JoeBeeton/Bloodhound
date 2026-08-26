@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [master]
 
+# Cancels an in-progress run for the same branch/PR when a newer commit lands,
+# so pushing twice in quick succession doesn't burn CI minutes finishing a
+# run whose result is already stale.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend tests (Gradle)
