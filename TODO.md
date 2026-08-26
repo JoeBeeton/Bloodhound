@@ -218,14 +218,47 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   trusts" signal real ratings tools report from CSP/script analysis
   regardless of who actually operates the CDN.
 
-- **Nuclei (ProjectDiscovery) as a Tier 2 module.** Template-based scanning
-  for known CVEs/misconfigurations - a lot of overlap with what
-  `CVE_CORRELATION` does passively, but nuclei actually confirms
-  exploitability against the live target rather than inferring it from a
-  detected version string, which is a real step up in signal quality for
-  the findings it produces. License checked up front this time: MIT,
-  confirmed against nuclei's own `LICENSE.md` - no repeat of the nmap
-  situation. Belongs in Tier 2, not Tier 1: nuclei templates send real
-  probes/payloads (the same category of intrusiveness as `ZAP_ACTIVE_SCAN`),
-  so this needs the same `authorization_status = AUTHORIZED` gate as the
-  existing Tier 2 modules, not a bare addition to the passive scan set.
+- ~~Nuclei (ProjectDiscovery) as a Tier 2 module~~ **Done.** New
+  `worker/.../modules/nuclei` package (`NucleiFetcher`/`NucleiResultParser`/
+  `NucleiFindingMapper`/`NucleiActiveScanModule`), wired into
+  `ScanRunService.TIER2_MODULE_TYPES` alongside `PORT_SCAN_DEEP`/
+  `ZAP_ACTIVE_SCAN` - same authorization-gated `POST /targets/{id}/scan/deep`
+  flow, no new endpoint needed. License re-verified against the actual repos
+  (not just trusted from memory, per this project's standing rule since the
+  nmap situation): both the nuclei engine and the separately-licensed
+  `nuclei-templates` corpus are MIT. Findings are self-describing
+  (`NUCLEI_` + template-id as rule_id, same precedent as `ZAP_ALERT_*` -
+  no rules_catalog seed rows needed, category `WEB_APP`, outside
+  `ScoringEngine`'s weight table).
+
+  Two real issues found and fixed while building this, both before ever
+  running against real infrastructure:
+  1. **A genuine SSRF gap.** Nuclei runs as a direct subprocess with real
+     outbound network access (unlike `ZapActiveScanModule`, where the
+     connection is made by the separate ZAP container, outside this
+     codebase's own address-validation path) - the first draft handed it a
+     bare hostname with no safety check at all. Fixed by adding
+     `SafeAddressValidator.requireSafeIfResolvable` to `NucleiFetcher` before
+     invoking the binary (can't pre-resolve to an IP the way
+     `DeepPortScanModule` does for naabu/zgrab2, since nuclei needs the real
+     hostname for correct virtual-host/SNI/Host-header behavior) -
+     live-verified this actually blocks: pointed it at `juiceshop.local`
+     (private Docker IP) and confirmed a clean refusal.
+  2. **`-disable-update-check` silently breaks `-update-templates`** - the
+     Dockerfile's first attempt at baking `nuclei-templates` into the image
+     at build time combined both flags and produced an empty, nonexistent
+     templates directory with no error at all (confirmed empirically:
+     `docker build` failed downstream trying to `COPY` a directory that was
+     never created). Not documented anywhere obvious - found by testing the
+     real Docker build, not by reading nuclei's docs. Fixed by only using
+     `-disable-update-check` in the runtime scan invocation, never at
+     build-time template-install.
+
+  Live-verified end to end from inside the deployed worker container: a
+  real ~8-minute scan (487s) against `scanme.nmap.org` using the full
+  13,619-template corpus baked into the image correctly found 26 real
+  matches (17 after dedup), including **CVE-2023-48795 (the SSH Terrapin
+  Attack)** at Medium severity - exactly the "confirms exploitability
+  against the live target" signal step-up this item was about, not
+  something `CVE_CORRELATION`'s passive version-string inference could have
+  produced.

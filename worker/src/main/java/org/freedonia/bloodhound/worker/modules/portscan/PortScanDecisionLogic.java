@@ -40,9 +40,15 @@ public final class PortScanDecisionLogic {
         List<RawFinding> findings = new ArrayList<>();
         for (Map.Entry<Integer, List<String>> entry : familiesByPort.entrySet()) {
             int port = entry.getKey();
+            // Sorted for deterministic evidence: openPortsByFamily is frequently a
+            // Map.of(...) at call sites (TcpConnectPortScanner via LinkedHashMap is fine,
+            // but tests and any future caller aren't guaranteed to be), whose iteration
+            // order is unspecified - without sorting, the SAME input data could produce
+            // ["IPv4","IPv6"] or ["IPv6","IPv4"] on different runs.
+            List<String> addressFamilies = entry.getValue().stream().sorted().toList();
             Map<String, Object> evidence = new LinkedHashMap<>();
             evidence.put("port", port);
-            evidence.put("addressFamilies", entry.getValue());
+            evidence.put("addressFamilies", addressFamilies);
 
             if (ADMIN_DB_PORTS.contains(port)) {
                 findings.add(new RawFinding(

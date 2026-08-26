@@ -51,6 +51,33 @@ FROM golang:1.24-bookworm AS zgrab2
 ARG ZGRAB2_VERSION=v1.0.0
 RUN go install "github.com/zmap/zgrab2/cmd/zgrab2@${ZGRAB2_VERSION}"
 
+# nuclei (ProjectDiscovery, MIT) - Tier 2 template-based vulnerability
+# scanning, see NucleiFetcher/NucleiActiveScanModule. Same prebuilt-binary
+# pattern as subfinder/naabu above. Both the engine and the separately
+# licensed nuclei-templates corpus baked in below were license-checked
+# against each repo's actual license (LICENSE.md / GitHub-reported license)
+# before adding - both MIT.
+#
+# Templates are fetched and pinned into the image at build time, not
+# fetched/updated at scan time - reproducible builds, and no runtime
+# dependency on GitHub being reachable mid-scan (NucleiFetcher passes
+# -disable-update-check and points -t at the exact directory baked in here).
+FROM ghcr.io/graalvm/jdk-community:21 AS nuclei
+WORKDIR /tmp/nuclei
+RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+ARG NUCLEI_VERSION=3.11.1
+RUN curl -fsSL -o nuclei.zip \
+      "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" \
+    && unzip nuclei.zip nuclei \
+    && chmod +x nuclei
+#
+# -disable-update-check must NOT be combined with -update-templates here -
+# confirmed empirically (silently does nothing, no error, no directory
+# created) - that flag is only appropriate for the runtime scan invocation
+# (see NucleiFetcher) to skip nuclei's own update check on every scan, not
+# for this one-time template-install step.
+RUN ./nuclei -update-templates -ud /tmp/nuclei-templates
+
 FROM ghcr.io/graalvm/jdk-community:21
 WORKDIR /app
 
@@ -59,6 +86,8 @@ RUN microdnf install -y ca-certificates && microdnf clean all
 COPY --from=subfinder /tmp/subfinder/subfinder /usr/local/bin/subfinder
 COPY --from=naabu /tmp/naabu/naabu /usr/local/bin/naabu
 COPY --from=zgrab2 /go/bin/zgrab2 /usr/local/bin/zgrab2
+COPY --from=nuclei /tmp/nuclei/nuclei /usr/local/bin/nuclei
+COPY --from=nuclei /tmp/nuclei-templates /opt/nuclei-templates
 
 # zgrab2 refuses to start without a blocklist file and defaults to looking
 # for one under $HOME/.config/zgrab2/ - there's no such thing in this image
