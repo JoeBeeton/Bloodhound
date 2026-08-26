@@ -26,10 +26,11 @@ import org.springframework.stereotype.Service;
  * re-confirms takeover-eligibility live on every scan (unlike "new", which
  * is a one-time database fact), so a dangling finding only keeps
  * reappearing - and only stays OPEN - for as long as it keeps being
- * reconfirmed run over run. EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING follows the
- * same re-confirmed-live pattern as SUBDOMAIN_DANGLING_CNAME, for the same
- * reason - both come from a live check the worker redoes every run, not a
- * one-time database fact.
+ * reconfirmed run over run. EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING and
+ * SUBDOMAIN_NS_DELEGATION_TAKEOVER both follow the same re-confirmed-live
+ * pattern as SUBDOMAIN_DANGLING_CNAME, for the same reason - all three come
+ * from a live check the worker redoes every run, not a one-time database
+ * fact.
  */
 @Service
 public class SubdomainIngestionService {
@@ -115,6 +116,22 @@ public class SubdomainIngestionService {
                                 + "allows anyone to list its full contents without authentication.",
                         hostname,
                         Map.of("provider", bucketProvider, "checkUrl", bucketCheckUrl)));
+            }
+
+            boolean nsTakeoverConfirmed = Boolean.TRUE.equals(entry.get("nsTakeoverConfirmed"));
+            if (nsTakeoverConfirmed) {
+                String nsProvider = String.valueOf(entry.get("nsTakeoverProvider"));
+                String nsHostname = String.valueOf(entry.get("nsTakeoverNameserver"));
+                combined.add(new FindingPayload(
+                        "SUBDOMAIN_NS_DELEGATION_TAKEOVER",
+                        "CRITICAL",
+                        "SUBDOMAIN_HYGIENE",
+                        "Dangling NS delegation - possible subdomain takeover",
+                        "This subdomain is delegated to " + nsProvider + " nameserver " + nsHostname
+                                + ", which does not answer authoritatively for it - the corresponding hosted zone "
+                                + "appears to be deprovisioned or never created, and anyone who notices can claim it.",
+                        hostname,
+                        Map.of("provider", nsProvider, "nameserver", nsHostname)));
             }
         }
         return combined;

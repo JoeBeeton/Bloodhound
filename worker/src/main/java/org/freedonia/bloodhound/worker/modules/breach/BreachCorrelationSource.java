@@ -4,10 +4,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * One provider of breach-correlation data for a domain (e.g. Have I Been
- * Pwned's domain search). No implementation of this interface ships in
- * Bloodhound - see NoOpBreachCorrelationSource and BreachCorrelationModule
- * for why, and for how an operator would plug a real one in.
+ * One provider of breach-correlation data for a domain. {@link
+ * HibpBreachCorrelationSource} (Have I Been Pwned) is the real
+ * implementation that ships; {@link NoOpBreachCorrelationSource} is the
+ * inert fallback - see both, and {@link BreachCorrelationModule}, for how
+ * they fit together.
  */
 public interface BreachCorrelationSource {
 

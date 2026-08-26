@@ -17,22 +17,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Milestone 10 stretch item, built exactly as the plan calls for: plumbing
- * for an optional breach-data correlation check, safely inert by default so
- * it can ship without a paid API subscription. Registered as a ScanModule
- * bean like every other module (so ScanModuleRegistry can dispatch it if
- * asked to), but central-server's ScanRunService never includes
- * "BREACH_CORRELATION" in the Tier 1 module list it fans a scan out to - so
- * this module never actually runs against a real scan unless an operator
- * deliberately wires it in.
- *
- * <p>To enable this module for real: (1) implement BreachCorrelationSource
- * against a real provider (e.g. Have I Been Pwned's domain-search API) as a
- * second @Component - Spring will need a @Primary/@Qualifier if
- * NoOpBreachCorrelationSource should no longer be the one injected here; (2)
- * set the HIBP_API_KEY env var (or whatever the real provider needs) on the
- * worker; (3) add "BREACH_CORRELATION" to ScanRunService.TIER1_MODULE_TYPES
- * on central-server so scans actually enqueue this job type.
+ * Optional breach-data correlation check, safely inert without an API key
+ * so it ships without requiring a paid subscription. Now fully wired for
+ * real: {@link HibpBreachCorrelationSource} implements
+ * {@link BreachCorrelationSource} against Have I Been Pwned (its own
+ * javadoc covers a real limitation worth reading - domain-search only
+ * returns data for domains the operator has separately, manually verified
+ * ownership of in their HIBP account), "BREACH_CORRELATION" is in
+ * ScanRunService.TIER1_MODULE_TYPES so every scan enqueues this job type,
+ * and {@code HIBP_API_KEY} is wired through docker-compose.yml. The only
+ * remaining step is operator-side and can't be automated: set a real
+ * {@code HIBP_API_KEY} in {@code .env} (commented out, empty by default in
+ * {@code .env.example}) once a subscription exists. With no key configured
+ * - the default, and the common case for most deployments - this module
+ * costs nothing: it returns immediately below without making any HTTP call
+ * at all.
  */
 @Component
 public class BreachCorrelationModule implements ScanModule {
