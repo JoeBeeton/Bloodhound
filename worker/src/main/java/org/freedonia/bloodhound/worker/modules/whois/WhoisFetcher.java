@@ -1,0 +1,102 @@
+package org.freedonia.bloodhound.worker.modules.whois;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * RDAP first (structured JSON, reliable to parse), falling back to raw port-43
+ * WHOIS only when RDAP isn't available for the TLD - free-text WHOIS format
+ * is notoriously inconsistent across registries, so RDAP is preferred
+ * wherever it exists.
+ */
+public class WhoisFetcher {
+
+    private static final Logger log = LoggerFactory.getLogger(WhoisFetcher.class);
+    private static final String BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json";
+    private static final Duration TIMEOUT = Duration.ofSeconds(8);
+    private static final int WHOIS_PORT = 43;
+    private static final int SOCKET_TIMEOUT_MS = 8000;
+
+    private final HttpClient client =
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+
+    public WhoisFields fetch(String hostname) throws ScanModuleException {
+        String tld = tldOf(hostname);
+        WhoisFields viaRdap = tryRdap(hostname, tld);
+        if (viaRdap != null) {
+            return viaRdap;
+        }
+        log.info("RDAP unavailable for .{}, falling back to raw WHOIS for {}", tld, hostname);
+        return tryRawWhoisFallback(hostname, tld);
+    }
+
+    private WhoisFields tryRdap(String hostname, String tld) {
+        try {
+            String bootstrapJson = get(BOOTSTRAP_URL);
+            String rdapBase = RdapResponseParser.findRdapBaseUrl(bootstrapJson, tld);
+            if (rdapBase == null) {
+                return null;
+            }
+            String base = rdapBase.endsWith("/") ? rdapBase : rdapBase + "/";
+            String domainJson = get(base + "domain/" + hostname);
+            WhoisFields fields = RdapResponseParser.parseDomainResponse(domainJson);
+            return fields.expiryDate() == null && fields.registrar() == null ? null : fields;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private WhoisFields tryRawWhoisFallback(String hostname, String tld) throws ScanModuleException {
+        try {
+            String ianaResponse = queryWhoisServer("whois.iana.org", tld);
+            String referralServer = RawWhoisTextParser.parseReferralServer(ianaResponse);
+            if (referralServer == null) {
+                throw new ScanModuleException("no WHOIS referral server found for TLD ." + tld);
+            }
+            String domainResponse = queryWhoisServer(referralServer, hostname);
+            return RawWhoisTextParser.parse(domainResponse);
+        } catch (ScanModuleException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ScanModuleException("WHOIS lookup failed for " + hostname, e);
+        }
+    }
+
+    private String queryWhoisServer(String server, String query) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(server, WHOIS_PORT), SOCKET_TIMEOUT_MS);
+            socket.setSoTimeout(SOCKET_TIMEOUT_MS);
+            socket.getOutputStream().write((query + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private String get(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(TIMEOUT)
+                .header("User-Agent", "Bloodhound-ASM/1.0 (+passive surface scan)")
+                .GET()
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IOException("HTTP " + response.statusCode() + " from " + url);
+        }
+        return response.body();
+    }
+
+    static String tldOf(String hostname) {
+        int lastDot = hostname.lastIndexOf('.');
+        return lastDot < 0 ? hostname : hostname.substring(lastDot + 1);
+    }
+}

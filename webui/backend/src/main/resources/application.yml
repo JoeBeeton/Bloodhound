@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: webui
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+bloodhound:
+  central-server-url: ${CENTRAL_SERVER_URL}

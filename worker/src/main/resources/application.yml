@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: worker
+
+server:
+  port: 8081
+
+bloodhound:
+  central-server-url: ${CENTRAL_SERVER_URL:http://localhost:8080}
+  poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:5000}
+  worker:
+    api-key: ${WORKER_API_KEY}
+    # Claimed jobs execute sequentially within one poll cycle (see JobPollingLoop),
+    # not concurrently. A capacity above 1 means a second claimed job's lease clock
+    # starts ticking while it's still waiting its turn, unprotected by any
+    # heartbeat until execution actually reaches it - so 1 is the safe default;
+    # raise it only alongside making dispatch genuinely concurrent.
+    capacity: ${WORKER_CAPACITY:1}
+    heartbeat-interval-ms: ${WORKER_HEARTBEAT_INTERVAL_MS:90000}
+    hibp-api-key: ${HIBP_API_KEY:}
+    zap:
+      base-url: ${ZAP_BASE_URL:http://zap:8080}
+      api-key: ${ZAP_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

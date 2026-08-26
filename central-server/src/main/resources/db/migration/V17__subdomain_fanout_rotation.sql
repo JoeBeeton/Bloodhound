@@ -1,0 +1,16 @@
+-- Fixes a real coverage bug: ScanRunService.buildSubdomainPayload capped a
+-- target's subdomain list by reading SubdomainRepository.findHostnames (no
+-- ORDER BY, collected into a HashSet before truncation) and taking the first
+-- N. For a target with more subdomains than the cap, this selected the same
+-- arbitrary hash-order subset on every single scan, forever - subdomains
+-- outside that subset never got included in fanned-out Tier 1/Tier 2 module
+-- work, no matter how many times the target was rescanned.
+--
+-- last_scanned_at tracks when a hostname was last actually included in a
+-- fanned-out scan payload - distinct from last_seen_at, which tracks when
+-- subdomain-enumeration/discovery last confirmed the hostname still
+-- resolves. Null means "never included in a fanout payload", which sorts
+-- first (highest priority) in the new ORDER BY last_scanned_at ASC NULLS
+-- FIRST selection query, giving every subdomain a genuine turn over enough
+-- scan cycles instead of permanently starving whatever fell outside the cap.
+ALTER TABLE subdomains ADD COLUMN last_scanned_at timestamptz;

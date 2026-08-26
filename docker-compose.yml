@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  central-server:
+    build:
+      context: .
+      dockerfile: central-server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      WORKER_API_KEY: ${WORKER_API_KEY}
+      BOOTSTRAP_ORG_NAME: ${BOOTSTRAP_ORG_NAME}
+      BOOTSTRAP_ORG_SLUG: ${BOOTSTRAP_ORG_SLUG}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      BLOODHOUND_SCHEDULER_INTERVAL_MS: ${BLOODHOUND_SCHEDULER_INTERVAL_MS:-300000}
+      SAML_SP_BASE_URL: ${SAML_SP_BASE_URL:-http://localhost:8080}
+      SAML_WEBUI_CALLBACK_URL: ${SAML_WEBUI_CALLBACK_URL:-http://localhost:8090/sso/callback}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-5000}
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-90000}
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    depends_on:
+      - central-server
+    environment:
+      CENTRAL_SERVER_URL: ${CENTRAL_SERVER_URL}
+      WORKER_API_KEY: ${WORKER_API_KEY}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS}
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-90000}
+      ZAP_BASE_URL: http://zap:8080
+      ZAP_API_KEY: ${ZAP_API_KEY}
+    # Scale ad hoc with: docker compose up --scale worker=3
+    # (deploy.replicas is a swarm-mode construct and is intentionally not
+    # used here so a plain `docker compose up` never errors on it.)
+
+  # Tier 2 active-scan engine (OWASP ZAP), REST API only - internal network
+  # only, no host port. Worker is the only thing that talks to it. The
+  # api.addrs.addr.* config is required even on an internal network: ZAP's
+  # API otherwise rejects requests whose source IP isn't in its permitted
+  # list, which by default excludes container-network peers.
+  zap:
+    image: zaproxy/zap-stable
+    command: >
+      zap.sh -daemon -host 0.0.0.0 -port 8080
+      -config api.disablekey=false
+      -config api.key=${ZAP_API_KEY}
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+
+  # Deliberately-vulnerable practice target (github.com/juice-shop/juice-shop)
+  # for exercising Tier 2 active scanning safely - never point ZAP_ACTIVE_SCAN
+  # or PORT_SCAN_DEEP at real third-party infrastructure. Exposed on host port
+  # 3001 too so it can be browsed directly.
+  juice-shop:
+    image: bkimminich/juice-shop
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+
+  # Fronts juice-shop on standard port 80 under a normal-looking hostname
+  # (juiceshop.local) so it can be registered as a Bloodhound target and
+  # scanned by every module exactly like a real domain - see
+  # juiceshop-proxy/nginx.conf for why this exists.
+  juiceshop-proxy:
+    image: nginx:alpine
+    depends_on:
+      - juice-shop
+    volumes:
+      - ./juiceshop-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      default:
+        aliases:
+          - juiceshop.local
+
+  # Real test SAML IdP (SimpleSAMLphp-based) for exercising SSO end to end -
+  # never point production org SAML config at this, it's a practice/dev
+  # identity provider only, same spirit as juice-shop/zap for Tier 2 scanning.
+  # Default test user: user1 / user1pass (email: user1@example.com). SP
+  # entity ID/ACS URL below must match what DbRelyingPartyRegistrationRepository
+  # generates for the bootstrap org (registration_id = its slug, i.e.
+  # BOOTSTRAP_ORG_SLUG below) given SAML_SP_BASE_URL above - if either
+  # changes, update both.
+  saml-test-idp:
+    image: kristophjunge/test-saml-idp
+    environment:
+      SIMPLESAMLPHP_SP_ENTITY_ID: ${SAML_SP_BASE_URL:-http://localhost:8080}/saml2/service-provider-metadata/${BOOTSTRAP_ORG_SLUG}
+      SIMPLESAMLPHP_SP_ASSERTION_CONSUMER_SERVICE: ${SAML_SP_BASE_URL:-http://localhost:8080}/login/saml2/sso/${BOOTSTRAP_ORG_SLUG}
+    ports:
+      - "8091:8080"
+
+  webui:
+    build:
+      context: .
+      dockerfile: webui/Dockerfile
+    depends_on:
+      - central-server
+    environment:
+      CENTRAL_SERVER_URL: ${CENTRAL_SERVER_URL}
+    ports:
+      - "8090:8080"
+
+volumes:
+  pgdata:

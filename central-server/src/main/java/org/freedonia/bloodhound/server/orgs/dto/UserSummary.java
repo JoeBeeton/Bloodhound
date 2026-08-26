@@ -1,0 +1,11 @@
+package org.freedonia.bloodhound.server.orgs.dto;
+
+import java.util.UUID;
+import org.freedonia.bloodhound.server.orgs.User;
+
+public record UserSummary(UUID id, String email, String displayName, String role, String status, UUID organizationId) {
+    public static UserSummary from(User user) {
+        return new UserSummary(
+                user.id(), user.email(), user.displayName(), user.role(), user.status(), user.organizationId());
+    }
+}

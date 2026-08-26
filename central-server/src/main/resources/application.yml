@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: central-server
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/bloodhound}
+    username: ${SPRING_DATASOURCE_USERNAME:bloodhound}
+    password: ${SPRING_DATASOURCE_PASSWORD:bloodhound}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+bloodhound:
+  jwt:
+    signing-key: ${JWT_SIGNING_KEY}
+    access-token-ttl-minutes: ${JWT_ACCESS_TOKEN_TTL_MINUTES:15}
+    refresh-token-ttl-days: ${JWT_REFRESH_TOKEN_TTL_DAYS:30}
+  bootstrap:
+    org-name: ${BOOTSTRAP_ORG_NAME:}
+    org-slug: ${BOOTSTRAP_ORG_SLUG:}
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  worker:
+    api-key: ${WORKER_API_KEY:}
+    # Same env vars/defaults a worker itself uses (see worker/application.yml's
+    # poll-interval-ms and heartbeat-interval-ms) - shared here purely so the
+    # online/offline staleness threshold in WorkersController stays in sync if an
+    # operator changes either. Both matter: a worker heartbeats via /jobs/claim every
+    # poll-interval-ms while idle, but while busy on one long-running job (e.g. ZAP's
+    # active scan) it doesn't call /jobs/claim again until that job finishes - its
+    # only presence signal during that time is the slower per-job
+    # heartbeat-interval-ms ping (see JobLifecycleService.heartbeat).
+    expected-poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:5000}
+    expected-job-heartbeat-interval-ms: ${WORKER_HEARTBEAT_INTERVAL_MS:90000}
+  jobqueue:
+    lease-minutes: ${JOBQUEUE_LEASE_MINUTES:5}
+    reaper-interval-ms: ${JOBQUEUE_REAPER_INTERVAL_MS:30000}
+  saml:
+    # Must be the address the *browser* uses to reach central-server (not the
+    # container-network hostname) - it's embedded in the AuthnRequest as the
+    # ACS URL the browser's own POST-binding form submission targets. See
+    # DbRelyingPartyRegistrationRepository's Javadoc for the full reasoning.
+    sp-base-url: ${SAML_SP_BASE_URL:http://localhost:8080}
+    webui-callback-url: ${SAML_WEBUI_CALLBACK_URL:http://localhost:8090/sso/callback}
+  notifications:
+    # The browser-facing app's own address, for links inside Slack messages (e.g.
+    # "View in Bloodhound") - deliberately a separate property from saml.sp-base-url
+    # above even though both are "our own public URL" config, because they're
+    # genuinely different addresses: sp-base-url is central-server's own address
+    # (SAML's ACS endpoint lives there), this is webui's (what a human actually opens).
+    app-base-url: ${NOTIFICATIONS_APP_BASE_URL:http://localhost:8090}

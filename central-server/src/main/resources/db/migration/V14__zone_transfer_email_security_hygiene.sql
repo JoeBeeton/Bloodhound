@@ -1,0 +1,53 @@
+-- Competitive-research-recommended Tier 1 batch: DNS zone-transfer (AXFR)
+-- testing, modern email-security records (MTA-STS/TLS-RPT/BIMI), best-effort
+-- DKIM detection, CT-unexpected-issuer monitoring (deferred since the
+-- original TLS module design - the crt.sh infrastructure it needs already
+-- existed via CrtShSource), and small previously-deferred subdomain-hygiene
+-- checks (wildcard DNS, stale/non-resolving subdomains, lame NS delegation).
+
+INSERT INTO rules_catalog (rule_id, category, default_severity, title, description, remediation_advice, weight) VALUES
+('DNS_ZONE_TRANSFER_ALLOWED', 'DNS', 'CRITICAL',
+ 'DNS zone transfer (AXFR) allowed',
+ 'This nameserver answered an unauthenticated zone transfer request, disclosing the domain''s complete DNS zone - every subdomain, internal hostname, and record it holds - in a single query.',
+ 'Disable unauthenticated zone transfers (AXFR) on this nameserver, restricting them to specific, authenticated secondary servers only.',
+ 1.5),
+('DNS_NS_LAME_DELEGATION', 'DNS', 'MEDIUM',
+ 'Lame NS delegation',
+ 'This nameserver is listed as authoritative for the domain but did not answer authoritatively for its zone, indicating a stale or misconfigured delegation.',
+ 'Remove the non-authoritative nameserver from the domain''s NS records, or fix its zone configuration so it answers authoritatively.',
+ 1.0),
+('EMAIL_MTA_STS_MISSING', 'DNS', 'MEDIUM',
+ 'MTA-STS not fully enforced',
+ 'Either the _mta-sts DNS TXT record or the https://mta-sts.<domain>/.well-known/mta-sts.txt policy file is missing, so inbound mail servers have no way to enforce TLS when delivering mail to this domain.',
+ 'Publish both the _mta-sts TXT record and a valid MTA-STS policy file to require TLS for inbound mail delivery.',
+ 1.0),
+('EMAIL_TLS_RPT_MISSING', 'DNS', 'LOW',
+ 'TLS-RPT not configured',
+ 'No _smtp._tls TXT record was found, so this domain receives no reports when other mail servers fail to negotiate TLS while delivering mail to it.',
+ 'Publish a TLS-RPT TXT record pointing at an address or endpoint that should receive TLS delivery failure reports.',
+ 0.75),
+('EMAIL_BIMI_ABSENT', 'DNS', 'INFO',
+ 'No BIMI record published',
+ 'No default._bimi TXT record was found. BIMI lets supporting mail clients display a verified brand logo next to authenticated mail from this domain - its absence is a maturity signal, not a vulnerability.',
+ 'Consider publishing a BIMI record (requires DMARC enforcement and, for most providers, a Verified Mark Certificate) to improve brand visibility in supporting mail clients.',
+ 0.0),
+('DNS_DKIM_NOT_DETECTED', 'DNS', 'LOW',
+ 'No DKIM record found at common selector names',
+ 'No DKIM TXT record was found at any commonly-used selector name (default, google, selector1, selector2, k1, dkim). DKIM selector names are arbitrary, so this is a best-effort check - a real DKIM setup using an uncommon selector would not be detected by this probe.',
+ 'Confirm DKIM signing is configured for this domain''s outbound mail; if it already is under a non-standard selector, no action is needed.',
+ 0.5),
+('TLS_CT_UNEXPECTED_ISSUER', 'TLS', 'MEDIUM',
+ 'Certificate issued by an unrecognized CA',
+ 'The presented certificate was issued by a Certificate Authority outside a curated list of major, well-known public CAs. This can be entirely legitimate, but is also a pattern seen with MITM interception, phishing infrastructure impersonating this domain, or a misconfigured/compromised issuance pipeline.',
+ 'Confirm the issuing CA is expected and authorized; if not, investigate how the certificate was issued and consider revoking it.',
+ 1.0),
+('SUBDOMAIN_WILDCARD_DNS', 'SUBDOMAIN_HYGIENE', 'INFO',
+ 'Wildcard DNS detected',
+ 'This zone resolves arbitrary, non-existent subdomains, which means passive subdomain enumeration results for this target may include false positives and should be interpreted with that in mind.',
+ 'No action required; this is contextual information about how to interpret this target''s subdomain inventory, not a vulnerability.',
+ 0.0),
+('SUBDOMAIN_STALE_NOT_RESOLVING', 'SUBDOMAIN_HYGIENE', 'LOW',
+ 'Subdomain no longer resolving',
+ 'This subdomain was previously discovered and tracked but no longer resolves to any IP address, which may indicate abandoned infrastructure or a dangling DNS record.',
+ 'Remove the stale DNS record if the subdomain is genuinely decommissioned, or investigate why it stopped resolving if it should still be live.',
+ 0.5);

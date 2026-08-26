@@ -1,0 +1,227 @@
+package org.freedonia.bloodhound.server.jobqueue;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
+
+/**
+ * Owns the scan_jobs queue table, in particular the claim query - the one
+ * piece of this whole system where getting the SQL exactly right matters
+ * most. See {@link #claim} for the FOR UPDATE SKIP LOCKED mechanics.
+ */
+@Repository
+public class ScanJobRepository {
+
+    private static final RowMapper<ScanJob> ROW_MAPPER = (rs, rowNum) -> new ScanJob(
+            UUID.fromString(rs.getString("id")),
+            UUID.fromString(rs.getString("scan_run_id")),
+            UUID.fromString(rs.getString("target_id")),
+            rs.getString("module_type"),
+            rs.getString("status"),
+            rs.getShort("priority"),
+            rs.getTimestamp("run_after").toInstant(),
+            rs.getString("claimed_by"),
+            rs.getTimestamp("claimed_at") != null ? rs.getTimestamp("claimed_at").toInstant() : null,
+            rs.getTimestamp("lease_expires_at") != null ? rs.getTimestamp("lease_expires_at").toInstant() : null,
+            rs.getInt("attempt_count"),
+            rs.getInt("max_attempts"),
+            rs.getString("payload"),
+            rs.getString("result_metadata"),
+            rs.getString("error_detail"),
+            rs.getTimestamp("created_at").toInstant());
+
+    private final JdbcTemplate jdbc;
+
+    public ScanJobRepository(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    public ScanJob insert(UUID scanRunId, UUID targetId, String moduleType, String payloadJson) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO scan_jobs (id, scan_run_id, target_id, module_type, payload) VALUES (?, ?, ?, ?, ?::jsonb)",
+                id,
+                scanRunId,
+                targetId,
+                moduleType,
+                payloadJson);
+        return findById(id).orElseThrow();
+    }
+
+    /**
+     * Inserts a job already in its terminal COMPLETE state - for scan_runs
+     * whose "work" is computed synchronously by central-server itself rather
+     * than dispatched to a worker (e.g. VulnerabilityCorrelationScheduler's
+     * per-target finding synthesis), where there's no claim/execute/report
+     * lifecycle to model, just a bookkeeping row so
+     * {@link ScanRunService#checkAndCompleteRun} finds a real terminal job
+     * and completes the run/triggers scoring, the same as every other run.
+     */
+    public ScanJob insertComplete(UUID scanRunId, UUID targetId, String moduleType) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO scan_jobs (id, scan_run_id, target_id, module_type, status) VALUES (?, ?, ?, ?, 'COMPLETE')",
+                id,
+                scanRunId,
+                targetId,
+                moduleType);
+        return findById(id).orElseThrow();
+    }
+
+    public Optional<ScanJob> findById(UUID id) {
+        return jdbc.query("SELECT * FROM scan_jobs WHERE id = ?", ROW_MAPPER, id).stream()
+                .findFirst();
+    }
+
+    public List<ScanJob> findByScanRunId(UUID scanRunId) {
+        return jdbc.query("SELECT * FROM scan_jobs WHERE scan_run_id = ? ORDER BY created_at", ROW_MAPPER, scanRunId);
+    }
+
+    /**
+     * Atomically claims up to {@code capacity} PENDING, due jobs for this
+     * worker. The CTE + FOR UPDATE SKIP LOCKED + UPDATE ... RETURNING pattern
+     * is a single statement, so it's already atomic without needing an
+     * explicit transaction: concurrent callers each lock a disjoint row set
+     * (SKIP LOCKED) and only the rows *this* statement locked get updated and
+     * returned - no two workers can ever be handed the same job.
+     */
+    public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes) {
+        String sql =
+                """
+                WITH claimed AS (
+                    SELECT id FROM scan_jobs
+                    WHERE status = 'PENDING' AND run_after <= now()
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT ?
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE scan_jobs sj
+                SET status = 'CLAIMED', claimed_by = ?, claimed_at = now(),
+                    lease_expires_at = now() + make_interval(mins => ?)
+                FROM claimed
+                WHERE sj.id = claimed.id
+                RETURNING sj.*
+                """;
+        return jdbc.query(sql, ROW_MAPPER, capacity, workerId, leaseMinutes);
+    }
+
+    /** Returns true iff a matching, still-leased job was found and extended. */
+    public boolean heartbeat(UUID id, String workerId, int leaseMinutes) {
+        int updated = jdbc.update(
+                "UPDATE scan_jobs SET status = CASE WHEN status = 'CLAIMED' THEN 'RUNNING' ELSE status END, "
+                        + "lease_expires_at = now() + make_interval(mins => ?) "
+                        + "WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
+                leaseMinutes,
+                id,
+                workerId);
+        return updated == 1;
+    }
+
+    /** Returns true iff a matching claimed job was found and marked COMPLETE. */
+    public boolean complete(UUID id, String workerId, String resultMetadataJson) {
+        int updated = jdbc.update(
+                "UPDATE scan_jobs SET status = 'COMPLETE', result_metadata = ?::jsonb "
+                        + "WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
+                resultMetadataJson,
+                id,
+                workerId);
+        return updated == 1;
+    }
+
+    /**
+     * Returns the job's new terminal-or-retry status ("PENDING" or "FAILED"),
+     * or empty if no matching claimed job was found (unknown id / wrong
+     * worker / already terminal).
+     */
+    public Optional<String> fail(UUID id, String workerId, String errorDetail) {
+        Optional<ScanJob> jobOpt = jdbc.query(
+                        "SELECT * FROM scan_jobs WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
+                        ROW_MAPPER,
+                        id,
+                        workerId)
+                .stream()
+                .findFirst();
+        if (jobOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        ScanJob job = jobOpt.get();
+        int nextAttempt = job.attemptCount() + 1;
+        if (nextAttempt < job.maxAttempts()) {
+            // Retry backoff: without this, a job that fails fast (e.g. an immediate DNS
+            // resolution error) gets reset straight to PENDING and is picked up again on
+            // the worker's very next poll cycle (a few seconds later) - all 3 attempts of
+            // a doomed-to-fail job then burn through in well under a minute, hammering an
+            // already-unreachable target for no benefit. backoffSeconds grows with attempt
+            // number (30s, 120s, capped at 300s) - distinct from the lease reaper's own
+            // retry path below, which handles jobs that got stuck/timed out rather than
+            // ones that explicitly reported failure.
+            jdbc.update(
+                    "UPDATE scan_jobs SET status = 'PENDING', claimed_by = NULL, claimed_at = NULL, "
+                            + "lease_expires_at = NULL, attempt_count = ?, error_detail = ?, "
+                            + "run_after = now() + make_interval(secs => ?) WHERE id = ?",
+                    nextAttempt,
+                    errorDetail,
+                    backoffSeconds(nextAttempt),
+                    id);
+            return Optional.of("PENDING");
+        }
+        jdbc.update(
+                "UPDATE scan_jobs SET status = 'FAILED', attempt_count = ?, error_detail = ? WHERE id = ?",
+                nextAttempt,
+                errorDetail,
+                id);
+        return Optional.of("FAILED");
+    }
+
+    /** 30s after the 1st failure, 120s after the 2nd, capped at 300s for any later attempt. */
+    static int backoffSeconds(int nextAttempt) {
+        return switch (nextAttempt) {
+            case 1 -> 30;
+            case 2 -> 120;
+            default -> 300;
+        };
+    }
+
+    /** One job whose lease expired without a heartbeat/result - see {@link #reapExpiredLeases}. */
+    public record ReapedJob(UUID jobId, UUID scanRunId, String newStatus, String workerId) {}
+
+    /**
+     * Resets or fails jobs whose lease expired without a heartbeat/result.
+     * Returns every reaped job (not just ones that went FAILED) so the caller
+     * can close out each one's in-flight attempt row as TIMED_OUT_REAPED
+     * regardless of whether it's getting retried or is now terminal.
+     */
+    public List<ReapedJob> reapExpiredLeases() {
+        // claimed_by is captured via the `expired` CTE *before* the UPDATE runs, since
+        // the retry branch nulls the column out - RETURNING alone would only ever see
+        // the post-update (already-NULL) value for a retried job, losing which worker
+        // actually held it. Same CTE-snapshot-before-UPDATE shape claim() already uses.
+        String sql =
+                """
+                WITH expired AS (
+                    SELECT id, claimed_by FROM scan_jobs
+                    WHERE status IN ('CLAIMED', 'RUNNING') AND lease_expires_at < now()
+                )
+                UPDATE scan_jobs sj
+                SET status = CASE WHEN attempt_count + 1 < max_attempts THEN 'PENDING' ELSE 'FAILED' END,
+                    claimed_by = CASE WHEN attempt_count + 1 < max_attempts THEN NULL ELSE sj.claimed_by END,
+                    claimed_at = CASE WHEN attempt_count + 1 < max_attempts THEN NULL ELSE sj.claimed_at END,
+                    lease_expires_at = CASE WHEN attempt_count + 1 < max_attempts THEN NULL ELSE sj.lease_expires_at END,
+                    attempt_count = attempt_count + 1,
+                    error_detail = 'lease expired without heartbeat/result'
+                FROM expired
+                WHERE sj.id = expired.id
+                RETURNING sj.id, sj.scan_run_id, sj.status, expired.claimed_by AS original_claimed_by
+                """;
+        return jdbc.query(
+                sql,
+                (rs, rowNum) -> new ReapedJob(
+                        UUID.fromString(rs.getString("id")),
+                        UUID.fromString(rs.getString("scan_run_id")),
+                        rs.getString("status"),
+                        rs.getString("original_claimed_by")));
+    }
+}

@@ -1,0 +1,102 @@
+Bloodhound
+Copyright 2026 Bloodhound Contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties. The notices
+below cover components built into Bloodhound's Docker images or bundled
+into its frontend/backend artifacts, listed by which service ships them.
+This is an attribution notice, not a claim that any of these projects are
+affiliated with or endorse Bloodhound.
+
+================================================================================
+central-server, worker, webui-backend (JVM dependencies)
+================================================================================
+
+  Spring Boot / Spring Framework / Spring Security     Apache License 2.0
+    Copyright the original author or authors.
+    https://spring.io
+
+  Spring Security SAML2 Service Provider / OpenSAML    Apache License 2.0
+    Copyright the Shibboleth Consortium.
+    https://shibboleth.net
+
+  Flyway (flyway-core, flyway-database-postgresql)     Apache License 2.0
+    Copyright Red Gate Software Ltd.
+    https://flywaydb.org
+
+  PostgreSQL JDBC Driver                                BSD 2-Clause License
+    Copyright the PostgreSQL Global Development Group.
+    https://jdbc.postgresql.org
+
+  jjwt (jjwt-api, jjwt-impl, jjwt-jackson)              Apache License 2.0
+    Copyright jsonwebtoken.io
+    https://github.com/jwtk/jjwt
+
+  dnsjava                                               BSD 3-Clause License
+    Copyright the dnsjava project.
+    https://github.com/dnsjava/dnsjava
+
+  Jackson Databind                                      Apache License 2.0
+    Copyright FasterXML, LLC.
+    https://github.com/FasterXML/jackson-databind
+
+  SLF4J                                                 MIT License
+    Copyright QOS.ch.
+    https://www.slf4j.org
+
+  Logback Classic                                       EPL 1.0 / LGPL 2.1
+    Copyright QOS.ch.
+    https://logback.qos.ch
+
+================================================================================
+worker (bundled CLI tools and their base image)
+================================================================================
+
+  GraalVM Community Edition JDK 21 (runtime base image) GPL v2 with the
+    Copyright Oracle and/or its affiliates.                Classpath Exception
+    https://www.graalvm.org
+
+  subfinder                                             MIT License
+    Copyright ProjectDiscovery, Inc.
+    https://github.com/projectdiscovery/subfinder
+
+  naabu                                                 MIT License
+    Copyright ProjectDiscovery, Inc.
+    https://github.com/projectdiscovery/naabu
+
+  zgrab2                                                Apache License 2.0 / ISC
+    Copyright the ZMap Project / Regents of the
+    University of Michigan.
+    https://github.com/zmap/zgrab2
+
+================================================================================
+webui/frontend (npm dependencies bundled into the built SPA)
+================================================================================
+
+  React, react-dom                                      MIT License
+    Copyright Meta Platforms, Inc. and affiliates.
+    https://react.dev
+
+  react-router-dom                                      MIT License
+    Copyright Remix Software Inc.
+    https://reactrouter.com
+
+  @tanstack/react-query                                 MIT License
+    Copyright Tanner Linsley.
+    https://tanstack.com/query
+
+  recharts                                               MIT License
+    Copyright the recharts group.
+    https://recharts.org
+
+  Tailwind CSS                                          MIT License
+    Copyright Tailwind Labs, Inc.
+    https://tailwindcss.com
+
+--------------------------------------------------------------------------------
+
+Full license texts for the above are available from each project's own
+repository. A complete dependency-and-version inventory, including runtime
+network services Bloodhound calls out to (which carry terms of service
+rather than a software license), is maintained separately from this file.

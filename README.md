@@ -1,0 +1,161 @@
+# Bloodhound
+
+Bloodhound is an External Attack Surface Monitoring (ASM) platform. It
+continuously discovers what an organization's internet-facing footprint
+actually looks like, scores its security posture over time, and tracks that
+score against competitor and watchlist domains — so "are we more or less
+exposed than we were last month, and how do we compare to the market" has a
+real, continuously-updated answer instead of a once-a-year pentest snapshot.
+
+![Dashboard overview — attack surface score, top open findings, recent scan activity](docs/screenshots/dashboard.png)
+
+## The problem it solves
+
+Most organizations don't have an accurate picture of their own external
+attack surface. Subdomains get spun up and forgotten, TLS certificates
+expire silently, DNS records drift out of best practice, admin consoles and
+debug endpoints get exposed by accident, and none of it surfaces until
+something goes wrong. Point-in-time security assessments catch a slice of
+this once; they don't catch what changes the following week.
+
+Bloodhound runs that discovery-and-assessment loop continuously and
+automatically, and — because attack surface monitoring is explicitly about
+watching *other* organizations' infrastructure too, not just your own — it
+does so under a two-tier scanning model that keeps that legal:
+
+- **Tier 1 (passive/OSINT)** runs against *any* tracked target, including
+  competitor or watchlist domains you don't own, with no prior agreement
+  needed — the same techniques a normal browser/DNS client already performs,
+  plus a light, polite TCP-connect port sweep.
+- **Tier 2 (active)** — full-port-range scanning and OWASP ZAP active
+  scanning, which send genuine attack payloads — only ever runs against a
+  target with an explicit, logged authorization attestation. There is no way
+  to point Tier 2 at a target without that gate passing first.
+
+![Targets list — own, competitor, and watchlist domains tracked side by side](docs/screenshots/targets.png)
+
+## What it actually checks
+
+- **Subdomain hygiene** — continuous discovery (certificate transparency +
+  passive DNS sources), dangling-CNAME/subdomain-takeover detection,
+  stale/non-resolving subdomains.
+- **DNS posture** — SPF/DMARC/DKIM, CAA, DNSSEC, MX/NS delegation health,
+  zone-transfer exposure.
+- **TLS/certificates** — expiry, weak protocols/ciphers, HSTS, and
+  certificate-transparency monitoring that auto-triggers a full rescan when
+  a new certificate for an unknown subdomain shows up.
+- **HTTP headers & tech fingerprinting** — CSP/X-Frame-Options/etc.,
+  cookie flags, passive technology detection.
+- **Network exposure** — unexpected admin/database ports reachable from the
+  internet, plaintext management protocols.
+- **Misconfiguration/exposure checks** — Actuator endpoints, `.git`/`.env`
+  leaks, exposed admin consoles, unauthenticated data stores, and more.
+- **WHOIS/RDAP** — registrar/expiry monitoring, registrant changes.
+- **Typosquat monitoring** — lookalike-domain registration tracking.
+- **CVE correlation** — fingerprinted software versions cross-referenced
+  against NVD, OSV, and CISA's Known Exploited Vulnerabilities catalog.
+- **Deep scan (Tier 2)** — full 1–65535 port discovery, best-effort service
+  identification, and OWASP ZAP active scanning (SQLi/XSS/path-traversal
+  probes) for authorized targets.
+
+![Open findings — severity, category, evidence, and score impact per finding](docs/screenshots/target-detail-findings.png)
+
+Every finding rolls up into a 0–100 score per category and overall (A–F
+grade), tracked over time, with a compare view for plotting your own domains
+against competitors/watchlist targets on the same chart, and a run-over-run
+findings diff (new / resolved / unchanged / severity-changed).
+
+![Target detail — category score breakdown, trend chart, and Tier 2 authorization](docs/screenshots/target-detail-score.png)
+
+![Compare — own domains plotted against competitor/watchlist targets on the same chart](docs/screenshots/compare.png)
+
+## Architecture
+
+```
+Browser --HTTPS--> webui (Spring Boot: serves the React SPA, login proxy)
+                       |
+                       v  REST/JSON (JWT)
+                  central-server (API, auth, job orchestration,
+                                  scoring/diff engine, sole DB access)
+                       |  JDBC                    ^ REST (job claim/heartbeat/result)
+                       v                           |
+                   postgres                    worker x N (stateless, scoped API
+                                                key only, claims jobs, runs scan
+                                                modules, reports results back)
+```
+
+Only `central-server` ever touches Postgres. Workers and `webui` hold no
+database credentials — workers authenticate with a scoped, revocable API
+key and only claim/report jobs, which bounds the blast radius of a worker
+that's actively scanning untrusted third-party infrastructure. The job
+queue itself is Postgres-backed (`SELECT ... FOR UPDATE SKIP LOCKED`), so
+workers scale horizontally with no separate message broker.
+
+![Scans — live worker status and scan history across every target](docs/screenshots/scans.png)
+
+## Deploying it
+
+**Prerequisites:** Docker and Docker Compose.
+
+```bash
+git clone <this repo>
+cd bloodhound
+cp .env.example .env
+```
+
+Edit `.env` and generate real values for every `<generate-with-...>`
+placeholder (the file tells you the exact command for each, e.g.
+`openssl rand -base64 48`). Central-server refuses to start if
+`JWT_SIGNING_KEY` is missing or too short, and warns loudly on startup if
+any secret is still an example placeholder — don't ignore that warning in
+anything reachable beyond your own machine.
+
+```bash
+docker compose up -d --build
+```
+
+This brings up Postgres, `central-server`, one `worker`, and `webui`.
+Postgres's schema is created automatically on first boot (Flyway), along
+with a bootstrap organization and admin user from the `BOOTSTRAP_*`
+variables in `.env`.
+
+Once everything's healthy:
+
+- **App**: http://localhost:8090 — log in with `BOOTSTRAP_ADMIN_EMAIL` /
+  `BOOTSTRAP_ADMIN_PASSWORD` from your `.env`.
+- **API** (central-server, mainly for the worker fleet and direct API use):
+  http://localhost:8080
+
+### Scaling workers
+
+```bash
+docker compose up -d --scale worker=5
+```
+
+Workers are stateless and claim jobs via `FOR UPDATE SKIP LOCKED`, so any
+number can run concurrently with no coordination needed beyond Postgres
+itself.
+
+### Trying Tier 2 (active scanning) safely
+
+Tier 2 needs a target with `authorization_status = AUTHORIZED`, set via an
+explicit attestation in the UI — there's no bare toggle. To try it out
+without pointing active scanning at anyone else's infrastructure, the
+compose file includes a deliberately-vulnerable practice target
+(`juice-shop`, fronted by `juiceshop-proxy` on `juiceshop.local` so it
+behaves like a normal domain to every scan module) — register that as a
+target, authorize it, and run a deep scan against it.
+
+### Optional dev/test fixtures
+
+`juice-shop`/`juiceshop-proxy` (the Tier 2 practice target above) and
+`saml-test-idp` (a practice SAML identity provider for exercising SSO
+end-to-end) are included for local development and evaluation. Neither
+should be part of a production deployment — strip them from the compose
+file, and bind `central-server`'s port to the internal Docker network only
+rather than the host, before deploying anywhere beyond a trusted machine.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). Third-party attributions are
+in [NOTICE](NOTICE).

@@ -1,0 +1,216 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ErrorState } from "../components/ErrorState";
+import { Modal } from "../components/Modal";
+import { Shell } from "../components/Shell";
+import { apiFetch } from "../lib/apiClient";
+import { useAuth } from "../lib/useAuth";
+
+interface ScimTokenSummary {
+  id: string;
+  label: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+interface CreatedToken {
+  id: string;
+  label: string;
+  token: string;
+  createdAt: string;
+}
+
+interface ScimTokensResponse {
+  scimBaseUrl: string;
+  tokens: ScimTokenSummary[];
+}
+
+async function fetchTokens(orgId: string): Promise<ScimTokensResponse> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/scim-tokens`);
+  if (!res.ok) throw new Error("Failed to load SCIM tokens.");
+  return res.json();
+}
+
+async function createToken(orgId: string, label: string): Promise<CreatedToken> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/scim-tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) throw new Error("Failed to create SCIM token.");
+  return res.json();
+}
+
+async function revokeToken(orgId: string, tokenId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/scim-tokens/${tokenId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to revoke SCIM token.");
+}
+
+function MetadataField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mb-3">
+      <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-slate-400">{label}</p>
+      <code className="block break-all rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-neon-cyan">{value}</code>
+    </div>
+  );
+}
+
+export function AdminScimPage() {
+  const { user } = useAuth();
+  const orgId = user?.organizationId ?? "";
+  const queryClient = useQueryClient();
+  const [label, setLabel] = useState("");
+  const [created, setCreated] = useState<CreatedToken | null>(null);
+
+  const tokensQuery = useQuery({ queryKey: ["admin-scim-tokens", orgId], queryFn: () => fetchTokens(orgId), enabled: !!orgId });
+
+  const createMutation = useMutation({
+    mutationFn: () => createToken(orgId, label),
+    onSuccess: (token) => {
+      setCreated(token);
+      setLabel("");
+      queryClient.invalidateQueries({ queryKey: ["admin-scim-tokens", orgId] });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (tokenId: string) => revokeToken(orgId, tokenId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-scim-tokens", orgId] }),
+  });
+
+  return (
+    <Shell>
+      <div className="mx-auto w-full max-w-4xl px-6 py-10">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
+            <h1 className="font-display text-2xl font-bold text-neon-cyan">SCIM Provisioning</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link to="/admin/sso" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+              SSO →
+            </Link>
+            <Link to="/admin/slack" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+              Slack →
+            </Link>
+            <Link to="/admin/users" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+              Users →
+            </Link>
+            <Link to="/dashboard" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+              ← Dashboard
+            </Link>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-lg border border-neon-cyan/20 bg-panel/60 p-5">
+          <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-neon-cyan">Give this to your identity provider</h2>
+          <p className="mb-4 font-mono text-xs text-slate-400">
+            Paste this base URL plus a generated bearer token below into your IdP's SCIM provisioning
+            configuration (Okta, Azure AD, etc.) to let it push user create/update/deactivate events to Bloodhound.
+          </p>
+          {tokensQuery.data && <MetadataField label="SCIM Base URL" value={tokensQuery.data.scimBaseUrl} />}
+        </div>
+
+        <div className="mb-6 rounded-lg border border-neon-magenta/20 bg-panel/60 p-5">
+          <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-neon-magenta">Generate a bearer token</h2>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              createMutation.mutate();
+            }}
+            className="flex gap-3"
+          >
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Okta production"
+              required
+              className="flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
+            />
+            <button
+              type="submit"
+              disabled={createMutation.isPending}
+              className="shrink-0 rounded bg-neon-magenta/90 px-4 py-2 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
+            >
+              {createMutation.isPending ? "Generating…" : "Generate token"}
+            </button>
+          </form>
+          {createMutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to generate token.</p>}
+        </div>
+
+        <div className="rounded-lg border border-slate-700 bg-panel/60 p-5">
+          <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-300">Tokens</h2>
+          {tokensQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
+          {tokensQuery.isError && <ErrorState message="Failed to load SCIM tokens." onRetry={() => tokensQuery.refetch()} />}
+          {tokensQuery.data && tokensQuery.data.tokens.length === 0 && (
+            <p className="font-mono text-sm text-slate-500">No SCIM tokens yet — generate one above to get started.</p>
+          )}
+          {tokensQuery.data && tokensQuery.data.tokens.length > 0 && (
+            <table className="w-full text-left font-mono text-xs">
+              <thead>
+                <tr className="border-b border-slate-700 text-slate-500">
+                  <th className="pb-2">Label</th>
+                  <th className="pb-2">Created</th>
+                  <th className="pb-2">Status</th>
+                  <th className="pb-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {tokensQuery.data.tokens.map((t) => (
+                  <tr key={t.id} className="border-b border-slate-800">
+                    <td className="py-2 text-slate-200">{t.label}</td>
+                    <td className="py-2 text-slate-400">{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="py-2">
+                      {t.revokedAt ? (
+                        <span className="text-slate-500">Revoked</span>
+                      ) : (
+                        <span className="text-neon-cyan">Active</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {!t.revokedAt && (
+                        <button
+                          onClick={() => revokeMutation.mutate(t.id)}
+                          className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {created && (
+        <Modal title="SCIM token generated" onClose={() => setCreated(null)}>
+          <p className="mb-3 text-sm text-slate-300">
+            Paste this bearer token into your IdP's SCIM configuration alongside the base URL above.
+          </p>
+          <div className="mb-1 flex items-center gap-2 rounded border border-neon-amber/40 bg-void/60 px-3 py-2">
+            <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">{created.token}</code>
+            <button
+              onClick={() => navigator.clipboard?.writeText(created.token)}
+              className="shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+            >
+              Copy
+            </button>
+          </div>
+          <p className="mb-4 font-mono text-xs text-severity-critical">
+            This token is shown once and cannot be retrieved again — copy it now.
+          </p>
+          <button
+            onClick={() => setCreated(null)}
+            className="w-full rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10"
+          >
+            Done
+          </button>
+        </Modal>
+      )}
+    </Shell>
+  );
+}
