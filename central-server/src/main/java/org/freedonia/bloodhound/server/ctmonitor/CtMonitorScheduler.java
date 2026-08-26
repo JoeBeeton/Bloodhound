@@ -45,8 +45,14 @@ public class CtMonitorScheduler {
             return;
         }
         log.info("CT monitor sweep: enqueuing CT_CHECK for {} active target(s)", activeTargets.size());
+        int skipped = 0;
         for (Target target : activeTargets) {
-            scanRunService.createCtCheckRun(target.id());
+            if (scanRunService.createCtCheckRun(target.id()).isEmpty()) {
+                skipped++;
+            }
+        }
+        if (skipped > 0) {
+            log.info("CT monitor sweep: skipped {} target(s) that already had a CT_CHECK queued", skipped);
         }
     }
 }

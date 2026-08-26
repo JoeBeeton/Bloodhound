@@ -26,7 +26,10 @@ import org.springframework.stereotype.Service;
  * re-confirms takeover-eligibility live on every scan (unlike "new", which
  * is a one-time database fact), so a dangling finding only keeps
  * reappearing - and only stays OPEN - for as long as it keeps being
- * reconfirmed run over run.
+ * reconfirmed run over run. EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING follows the
+ * same re-confirmed-live pattern as SUBDOMAIN_DANGLING_CNAME, for the same
+ * reason - both come from a live check the worker redoes every run, not a
+ * one-time database fact.
  */
 @Service
 public class SubdomainIngestionService {
@@ -97,6 +100,21 @@ public class SubdomainIngestionService {
                                 + "unclaimed, allowing an attacker to claim it and serve content from this subdomain.",
                         hostname,
                         Map.of("cnameTarget", cnameTarget, "service", danglingService)));
+            }
+
+            boolean bucketPubliclyListable = Boolean.TRUE.equals(entry.get("bucketPubliclyListable"));
+            if (bucketPubliclyListable) {
+                String bucketProvider = String.valueOf(entry.get("bucketProvider"));
+                String bucketCheckUrl = String.valueOf(entry.get("bucketCheckUrl"));
+                combined.add(new FindingPayload(
+                        "EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING",
+                        "CRITICAL",
+                        "EXPOSURE",
+                        "Publicly listable cloud storage bucket",
+                        "This subdomain's CNAME points directly at a " + bucketProvider + " storage bucket that "
+                                + "allows anyone to list its full contents without authentication.",
+                        hostname,
+                        Map.of("provider", bucketProvider, "checkUrl", bucketCheckUrl)));
             }
         }
         return combined;

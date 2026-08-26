@@ -9,9 +9,16 @@ import java.util.regex.Pattern;
 /**
  * Pure interpretation of an already-fetched response into a technology list -
  * no network calls, fully unit-testable. A deliberately bounded, curated
- * signature catalog (~28 entries) covering the most common real-world CMSs,
- * frameworks, JS libraries, CDNs and analytics tools - not an attempt to
- * replicate Wappalyzer's multi-thousand-entry database. Matches are
+ * signature catalog covering the most common real-world CMSs, frameworks,
+ * JS libraries, CDNs and analytics tools - not an attempt to replicate
+ * Wappalyzer's multi-thousand-entry database (whose fingerprint data is
+ * GPLv3-licensed in any case - see both of its current upstream sources,
+ * enthec/webappanalyzer and HTTPArchive/wappalyzer - so reusing it here
+ * would conflict with this project's Apache-2.0 license the same way nmap's
+ * did; every signature below is independently written against publicly
+ * observable, objective facts about how each technology's own output is
+ * structured, not derived from anyone's proprietary/copyleft database).
+ * Matches are
  * deduplicated by technology name (a page can trigger the same signature via
  * more than one path, e.g. both a cookie and a generator tag for WordPress).
  */
@@ -56,28 +63,63 @@ public final class TechDecisionLogic {
         // not from any header - extracted from the original-case body since
         // the version digits themselves are case-insensitive but nearby
         // attribute text isn't guaranteed to survive lowercasing cleanly.
+        // x-redirect-by is set by WordPress's own canonical-URL redirect (e.g. a bare domain
+        // redirecting to www., or vice versa) - confirmed live against a real target where it
+        // was the *only* WordPress signal available at all: the destination page itself had no
+        // generator tag, no wp-content reference, nothing, evidently a heavily de-branded/headless
+        // setup. Requires TechFetcher's redirect-chain-aware fetch (see its own javadoc) - a plain
+        // final-response-only fetch never sees this header, since it lives on the redirect hop.
         addWithVersion(found,
                 cookiesLower.contains("wordpress_logged_in") || cookiesLower.contains("wp-settings")
-                        || bodyLower.contains("wp-content/") || bodyLower.contains("generator\" content=\"wordpress"),
+                        || bodyLower.contains("wp-content/") || bodyLower.contains("generator\" content=\"wordpress")
+                        || "wordpress".equals(headers.getOrDefault("x-redirect-by", "").toLowerCase()),
                 "WordPress", Technology.CMS,
                 extractVersion(result.body() == null ? "" : result.body(), "WordPress ([\\d.]+)"));
-        addIf(found, bodyLower.contains("drupal.settings") || bodyLower.contains("generator\" content=\"drupal"),
-                "Drupal", Technology.CMS);
+        // Drupal's generator tag carries only the major version ("Drupal 10 (https://www.drupal.org)"),
+        // never a precise minor/patch - coarser than the other version captures here, but still
+        // genuinely useful for CVE correlation, which is commonly major-version-scoped anyway.
+        addWithVersion(found, bodyLower.contains("drupal.settings") || bodyLower.contains("generator\" content=\"drupal"),
+                "Drupal", Technology.CMS, extractVersion(result.body() == null ? "" : result.body(), "Drupal (\\d+)"));
+        // Joomla strips the version number from its generator tag by default since Joomla 3.x -
+        // name-only detection is genuinely the ceiling for this signal on a normally-configured site.
         addIf(found, bodyLower.contains("generator\" content=\"joomla"), "Joomla", Technology.CMS);
         addIf(found, bodyLower.contains("cdn.shopify.com") || bodyLower.contains("shopify.theme"), "Shopify", Technology.CMS);
         addIf(found, bodyLower.contains("static.squarespace.com") || bodyLower.contains("squarespace_context"),
                 "Squarespace", Technology.CMS);
         addIf(found, bodyLower.contains("wixstatic.com") || bodyLower.contains("wix.com/services"), "Wix", Technology.CMS);
+        // No generator tag or any other passive version signal exists for Magento - name-only,
+        // same ceiling as Joomla above.
+        addIf(found, headers.containsKey("x-magento-cache-debug") || bodyLower.contains("mage-cache-storage")
+                        || bodyLower.contains("mage.cookies"),
+                "Magento", Technology.CMS);
+        addWordPressPluginsAndThemes(found, result.body());
 
-        // JS frameworks/libraries.
-        addIf(found, bodyLower.contains("jquery"), "jQuery", Technology.JS_LIBRARY);
+        // JS frameworks/libraries. Version, where captured, comes from the CDN path or filename
+        // (both jsDelivr/cdnjs-style "libname/X.Y.Z/..." or "libname@X.Y.Z" and the version query
+        // string WordPress's own enqueue system appends to self-hosted copies, "libname.min.js?ver=X.Y.Z")
+        // - a bundled/minified file with neither carries no reliable passive version signal at all.
+        String bodyRaw = result.body() == null ? "" : result.body();
+        addWithVersion(found, bodyLower.contains("jquery"), "jQuery", Technology.JS_LIBRARY,
+                firstNonNull(
+                        extractVersion(bodyRaw, "(?:^|/)jquery[-/]([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)"),
+                        extractVersion(bodyRaw, "(?:^|/)jquery(?:\\.min)?\\.js\\?\\S*?ver=([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)")));
         addIf(found, bodyLower.contains("data-reactroot") || bodyLower.contains("react-dom"), "React", Technology.JS_LIBRARY);
         addIf(found, bodyLower.contains("__next_data__"), "Next.js", Technology.FRAMEWORK);
         addIf(found, bodyLower.contains("data-v-") || bodyLower.contains("__vue__") || bodyLower.contains("vue.js"),
                 "Vue.js", Technology.JS_LIBRARY);
         addIf(found, bodyLower.contains("ng-version"), "Angular", Technology.JS_LIBRARY);
-        addIf(found, bodyLower.contains("bootstrap.min.css") || bodyLower.contains("bootstrap.min.js") || bodyLower.contains("bootstrap.bundle"),
-                "Bootstrap", Technology.JS_LIBRARY);
+        // Anchored to "/bootstrap" as the actual filename stem, not a bare substring, for both
+        // presence and version - confirmed for real against jaja.co.uk: Trustpilot's widget
+        // script is literally named "tp.widget.bootstrap.min.js?ver=1.0" (Trustpilot's own
+        // widget-init naming, nothing to do with Twitter Bootstrap). The original unanchored
+        // bodyLower.contains("bootstrap.min.js") matched that filename as a plain substring -
+        // wrong not just about the version, but about Bootstrap being present at all.
+        addWithVersion(found,
+                matchesAnchored(bodyLower, "(?:^|/)bootstrap(?:\\.bundle)?(?:\\.min)?\\.(?:css|js)"),
+                "Bootstrap", Technology.JS_LIBRARY,
+                firstNonNull(
+                        extractVersion(bodyRaw, "(?:^|/)bootstrap(?:@|/)([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)"),
+                        extractVersion(bodyRaw, "(?:^|/)bootstrap(?:\\.bundle)?(?:\\.min)?\\.(?:css|js)\\?\\S*?ver=([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)")));
         addIf(found, bodyLower.contains("font-awesome") || bodyLower.contains("fontawesome"), "Font Awesome", Technology.JS_LIBRARY);
 
         // Analytics / third-party embeds.
@@ -97,6 +139,49 @@ public final class TechDecisionLogic {
         if (matched) {
             found.putIfAbsent(name, new Technology(name, category, null));
         }
+    }
+
+    /**
+     * WordPress enqueues every plugin/theme asset with a {@code ?ver=X.Y.Z}
+     * query string by default (its own cache-busting convention, not
+     * something Bloodhound has to guess at) - so a plugin/theme slug plus
+     * version is sitting in plain sight in the page source for any
+     * WordPress site that hasn't deliberately stripped it. Each is reported
+     * as its own {@link Technology} entry (informational - see
+     * FingerprintModule's own javadoc for why this module never emits
+     * findings directly), distinct from CVE-correlated WordPress core:
+     * mapping individual plugin slugs to NVD CPE products isn't attempted
+     * here - ProductSlugMapper stays a small, curated, verified list, and
+     * there are tens of thousands of plugin slugs, not a handful.
+     */
+    private static final Pattern WP_PLUGIN_ASSET =
+            Pattern.compile("wp-content/plugins/([a-zA-Z0-9_-]+)/[^\"'\\s]*\\?\\S*?ver=([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)");
+    private static final Pattern WP_THEME_ASSET =
+            Pattern.compile("wp-content/themes/([a-zA-Z0-9_-]+)/[^\"'\\s]*\\?\\S*?ver=([\\d]+\\.[\\d]+(?:\\.[\\d]+)?)");
+
+    private static void addWordPressPluginsAndThemes(Map<String, Technology> found, String body) {
+        if (body == null || body.isBlank()) {
+            return;
+        }
+        addAllMatches(found, WP_PLUGIN_ASSET, body, "WordPress Plugin: ");
+        addAllMatches(found, WP_THEME_ASSET, body, "WordPress Theme: ");
+    }
+
+    private static void addAllMatches(Map<String, Technology> found, Pattern pattern, String body, String namePrefix) {
+        Matcher matcher = pattern.matcher(body);
+        while (matcher.find()) {
+            String name = namePrefix + matcher.group(1);
+            found.putIfAbsent(name, new Technology(name, Technology.CMS, matcher.group(2)));
+        }
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
+    }
+
+    /** Like {@link String#contains} but the match must sit at a path-segment boundary (start of the string or right after a "/"), not anywhere inside a longer unrelated filename. */
+    private static boolean matchesAnchored(String body, String pattern) {
+        return body != null && Pattern.compile(pattern).matcher(body).find();
     }
 
     private static void addWithVersion(

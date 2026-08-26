@@ -8,6 +8,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -60,6 +62,57 @@ public final class SafeHttpGet {
             Optional<String> location = response.headers().firstValue("location");
             if (location.isEmpty()) {
                 return response;
+            }
+            currentUrl = uri.resolve(location.get()).toString();
+        }
+        throw new IOException("exceeded " + maxRedirects + " redirects following " + url);
+    }
+
+    /**
+     * A response together with the union of every hop's headers along the
+     * way, not just the final destination's - lowercased, later hops
+     * overwriting earlier ones on key conflict. {@link #get} discards
+     * intermediate-hop headers entirely, which is right for its callers
+     * (they want the final page), but a redirect response can itself carry
+     * a genuine fingerprinting signal a scanner cares about - confirmed for
+     * real against a live target: WordPress's canonical-URL redirect sets
+     * {@code X-Redirect-By: WordPress} on the 301 itself, a strong signal
+     * that never appears anywhere in the final destination page's own
+     * headers or body.
+     */
+    public record RedirectChainResult<T>(HttpResponse<T> response, Map<String, String> allHopHeaders) {}
+
+    public static <T> RedirectChainResult<T> getWithRedirectChainHeaders(
+            HttpClient client,
+            String url,
+            Duration requestTimeout,
+            String userAgent,
+            HttpResponse.BodyHandler<T> bodyHandler,
+            int maxRedirects)
+            throws IOException, InterruptedException {
+        Map<String, String> allHopHeaders = new LinkedHashMap<>();
+        String currentUrl = url;
+        for (int hop = 0; hop <= maxRedirects; hop++) {
+            URI uri = URI.create(currentUrl);
+            requireSafeHost(uri.getHost());
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(requestTimeout)
+                    .header("User-Agent", userAgent)
+                    .GET()
+                    .build();
+            HttpResponse<T> response = client.send(request, bodyHandler);
+            response.headers().map().forEach((name, values) -> {
+                if (!values.isEmpty()) {
+                    allHopHeaders.put(name.toLowerCase(), values.get(0));
+                }
+            });
+            int status = response.statusCode();
+            if (status < 300 || status >= 400) {
+                return new RedirectChainResult<>(response, allHopHeaders);
+            }
+            Optional<String> location = response.headers().firstValue("location");
+            if (location.isEmpty()) {
+                return new RedirectChainResult<>(response, allHopHeaders);
             }
             currentUrl = uri.resolve(location.get()).toString();
         }

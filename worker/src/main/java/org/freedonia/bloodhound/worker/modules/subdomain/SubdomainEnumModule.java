@@ -17,15 +17,18 @@ import org.springframework.stereotype.Component;
 /**
  * Aggregates every configured SubdomainSource (crt.sh + subfinder as of
  * Milestone 6b), resolves current IPs and CNAME targets for what it finds,
- * runs dangling-CNAME/takeover confirmation, and hands the full raw list to
- * central-server via ModuleResult.rawMetadata() rather than emitting
- * "new subdomain" findings itself - "is this hostname new" is a
- * database-backed question only central-server can answer (see
+ * runs dangling-CNAME/takeover confirmation plus cloud-storage-bucket
+ * public-listing confirmation (see CloudBucketChecker - same CNAME data,
+ * a different check: "unclaimed" vs "claimed but publicly readable"), and
+ * hands the full raw list to central-server via ModuleResult.rawMetadata()
+ * rather than emitting "new subdomain" findings itself - "is this hostname
+ * new" is a database-backed question only central-server can answer (see
  * SubdomainIngestionService), so this module stays a stateless
  * fetch-and-aggregate step, matching the fetch/parse testability split used
- * by the other Tier 1 modules. Dangling-CNAME confirmation, by contrast,
- * needs no cross-run state - it's a pure function of this run's live DNS +
- * HTTP data - so it's computed here and reported directly per-hostname.
+ * by the other Tier 1 modules. Dangling-CNAME and bucket-listing confirmation,
+ * by contrast, need no cross-run state - both are pure functions of this
+ * run's live DNS + HTTP data - so they're computed here and reported
+ * directly per-hostname.
  *
  * A source failing entirely (e.g. crt.sh's documented flakiness, or
  * subfinder's binary being unavailable) does not fail the module as long as
@@ -40,11 +43,13 @@ public class SubdomainEnumModule implements ScanModule {
     private final List<SubdomainSource> sources;
     private final SubdomainDnsResolver dnsResolver;
     private final DanglingCnameChecker cnameChecker;
+    private final CloudBucketChecker bucketChecker;
 
     public SubdomainEnumModule(List<SubdomainSource> sources) {
         this.sources = sources;
         this.dnsResolver = new SubdomainDnsResolver();
         this.cnameChecker = new DanglingCnameChecker();
+        this.bucketChecker = new CloudBucketChecker();
     }
 
     @Override
@@ -87,6 +92,7 @@ public class SubdomainEnumModule implements ScanModule {
         Map<String, List<String>> resolvedIps = dnsResolver.resolveAll(discovered);
         Map<String, String> cnames = dnsResolver.resolveCnames(discovered);
         Map<String, DanglingCnameChecker.Result> cnameChecks = cnameChecker.checkAll(cnames);
+        Map<String, CloudBucketChecker.Result> bucketChecks = bucketChecker.checkAll(cnames);
 
         List<Map<String, Object>> subdomainEntries = new ArrayList<>();
         for (String hostname : discovered) {
@@ -100,6 +106,13 @@ public class SubdomainEnumModule implements ScanModule {
                 entry.put("cnameTarget", cnameCheck.cnameTarget());
                 entry.put("danglingConfirmed", cnameCheck.confirmedDangling());
                 entry.put("danglingService", cnameCheck.matchedService());
+            }
+
+            CloudBucketChecker.Result bucketCheck = bucketChecks.get(hostname);
+            if (bucketCheck != null) {
+                entry.put("bucketProvider", bucketCheck.provider().name());
+                entry.put("bucketCheckUrl", bucketCheck.checkUrl());
+                entry.put("bucketPubliclyListable", bucketCheck.publiclyListable());
             }
             subdomainEntries.add(entry);
         }
