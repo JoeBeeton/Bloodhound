@@ -44,7 +44,12 @@ import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
  */
 public class NucleiFetcher {
 
-    private static final long HARD_TIMEOUT_SECONDS = 600; // 10 minutes
+    // Live-verified against scanme.nmap.org: a full-corpus scan took 487s (81% of the
+    // previous 600s budget) against a fairly simple two-service host - a busier real
+    // target (more open ports/paths, more templates matching and triggering multi-request
+    // extraction) could plausibly run longer, so this carries headroom above that
+    // observed case rather than being tuned tight to it.
+    private static final long HARD_TIMEOUT_SECONDS = 1200; // 20 minutes
     private static final String TEMPLATES_DIR = "/opt/nuclei-templates";
 
     public String scanJsonLines(String hostname) throws ScanModuleException {
