@@ -81,6 +81,25 @@ public class ScanJobRepository {
     }
 
     /**
+     * True if this target already has a not-yet-finished job of this module
+     * type sitting in the queue (PENDING, CLAIMED, or RUNNING) - used by
+     * callers that dispatch on their own fixed schedule (CtMonitorScheduler)
+     * to skip enqueuing a redundant duplicate rather than piling another one
+     * on top of a job that hasn't been picked up yet. COMPLETE/FAILED don't
+     * count - those are finished, a fresh job for the next cycle is exactly
+     * the point.
+     */
+    public boolean existsNonTerminal(UUID targetId, String moduleType) {
+        Boolean exists = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM scan_jobs WHERE target_id = ? AND module_type = ? "
+                        + "AND status IN ('PENDING', 'CLAIMED', 'RUNNING'))",
+                Boolean.class,
+                targetId,
+                moduleType);
+        return Boolean.TRUE.equals(exists);
+    }
+
+    /**
      * Atomically claims up to {@code capacity} PENDING, due jobs for this
      * worker. The CTE + FOR UPDATE SKIP LOCKED + UPDATE ... RETURNING pattern
      * is a single statement, so it's already atomic without needing an

@@ -2,34 +2,38 @@
 
 Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth doing that haven't been picked up yet.
 
-- **WordPress fingerprinting + version-based vulnerability correlation.**
-  `TechDecisionLogic` (worker `modules/fingerprint`) doesn't currently detect
-  WordPress at all - no check for `/wp-json/`, `wp-content`/`wp-includes`
-  paths, the `<meta name="generator" content="WordPress X.Y.Z">` tag, or
-  `readme.html`'s version string. Add a detection path that identifies
-  WordPress and extracts its version the same way other technologies are
-  reported (`Technology(name, category, version)`), and this plugs straight
-  into the vulnerability pipeline that already exists for it -
-  `ProductSlugMapper` already maps `"WordPress"` to NVD's `wordpress` CPE
-  product slug, so once a versioned WordPress `Technology` is emitted,
-  `VulnerabilityCorrelationScheduler`/`CVE_CORRELATION` should pick it up
-  with no further wiring. Also worth considering while building this:
-  plugin/theme version disclosure (a very common real-world WordPress
-  exposure) is a natural follow-on, not just core version.
+- ~~WordPress fingerprinting, JS library fingerprinting, other CMS
+  fingerprinting~~ **Done.** Turned out WordPress core detection + version +
+  CVE-slug mapping already existed when this item was written (an
+  assumption I should have verified before adding it, not just checking
+  code by grep) - the real remaining gaps were plugin/theme version
+  disclosure (now detected via WordPress's own `?ver=` asset-enqueue
+  convention, reported as separate `Technology` entries per plugin/theme),
+  jQuery/Bootstrap version extraction (were name-only), Magento detection
+  (was entirely missing), and Drupal major-version extraction. Checked
+  Wappalyzer as the obvious OSS fingerprint-database option first - its
+  data is GPLv3 (both `enthec/webappanalyzer` and `HTTPArchive/wappalyzer`,
+  verified against each repo's actual `LICENSE` file), same class of
+  conflict as nmap, so every new signature is hand-written against publicly
+  observable facts instead. `ProductSlugMapper` gained jQuery/Bootstrap/
+  Drupal entries; per-plugin CVE-slug mapping for WordPress plugins was
+  deliberately left out (thousands of slugs, doesn't scale the way mapping
+  a handful of platforms does) - worth its own properly-scoped item if
+  picked up later.
 
-- **Client-side JS library fingerprinting.** Same pattern as the WordPress
-  item above: detect jQuery/Bootstrap/etc. versions from script tags/CDN
-  URLs in `TechDecisionLogic`, emit a versioned `Technology`, and the
-  existing CVE correlation pipeline picks it up for free.
-
-- **Other CMS platform fingerprinting** (Drupal, Joomla, Magento). Same
-  detection pattern and payoff as WordPress - `ProductSlugMapper` would need
-  a slug entry for each, same as it already has for WordPress.
-
-- **Cloud storage bucket misconfiguration checks** (public S3/GCS/Azure Blob
-  buckets, discovered via passive DNS/CT correlation - no brute-forcing).
-  This was in the original design as a stretch item and never got built.
-  Common, severe finding class that's currently a blind spot.
+- ~~Cloud storage bucket misconfiguration checks~~ **Done.** CNAME-based
+  discovery (a subdomain aliased directly to a bucket - the "passive DNS
+  correlation" the original design called for), scoped to AWS S3 and Google
+  Cloud Storage - deliberately **not** Azure Blob Storage: Azure's
+  custom-domain mapping is account-level, not container-level, so the CNAME
+  target alone never identifies which container to check, and guessing
+  would cross into the brute-forcing this deliberately avoids. New rule
+  `EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING` (Critical), wired through the same
+  "computed live every run, re-confirmed or resolves" pattern
+  `SUBDOMAIN_DANGLING_CNAME` already uses - same underlying CNAME data,
+  different question (unclaimed vs. claimed-but-publicly-readable). See
+  `CloudBucketDecisionLogic`/`CloudBucketChecker` (worker) and
+  `SubdomainIngestionService` (central-server).
 
 - **Wire up a real `BreachCorrelationSource`.** `NoOpBreachCorrelationSource`
   is the only implementation that ships - `BreachCorrelationModule` never

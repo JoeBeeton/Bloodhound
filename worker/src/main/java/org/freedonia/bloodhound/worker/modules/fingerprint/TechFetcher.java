@@ -4,8 +4,6 @@ import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
@@ -17,7 +15,12 @@ import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
  * against are not adversarially huge, and every other module in this project
  * uses the same timeout-based bounding rather than a custom size-limited body
  * subscriber. Redirects are followed manually via SafeHttpGet (SSRF guard:
- * see HttpHeaderFetcher's javadoc for why Redirect.NORMAL is not safe here).
+ * see HttpHeaderFetcher's javadoc for why Redirect.NORMAL is not safe here) -
+ * specifically {@link SafeHttpGet#getWithRedirectChainHeaders}, not the
+ * plain {@code get}, since a redirect hop's own headers can themselves be a
+ * real fingerprinting signal (confirmed live: WordPress's canonical-URL
+ * redirect sets {@code X-Redirect-By: WordPress} on the 301 itself, never
+ * repeated anywhere in the final page).
  */
 public class TechFetcher {
 
@@ -41,8 +44,38 @@ public class TechFetcher {
         }
     }
 
-    private HttpResponse<String> get(String url) throws IOException, InterruptedException {
-        return SafeHttpGet.get(
+    /**
+     * A second, targeted GET for WordPress's REST API discovery document
+     * ({@code /wp-json/}) - only ever called by FingerprintModule once
+     * WordPress has already been positively identified from the homepage
+     * fetch above, so this doesn't add a second request to every single
+     * scanned host, just the ones actually worth it. Returns null on any
+     * failure (unreachable, non-200, whatever) rather than throwing - this
+     * is a best-effort enrichment on top of an already-successful
+     * fingerprint, not something that should fail the whole host.
+     *
+     * <p>Confirmed live to work even on WordPress installs that otherwise
+     * strip every other fingerprinting signal (no generator tag, no
+     * wp-content/wp-includes references anywhere in the page): {@code
+     * /wp-json/} is enabled by default and left reachable far more often
+     * than not, since disabling it breaks the block editor and most modern
+     * plugins that depend on it - a much bigger deal for a site owner to
+     * break than removing a meta tag.
+     */
+    public String fetchWpJson(String hostname) {
+        try {
+            return get("https://" + hostname + "/wp-json/").response().body();
+        } catch (Exception httpsFailure) {
+            try {
+                return get("http://" + hostname + "/wp-json/").response().body();
+            } catch (Exception httpFailure) {
+                return null;
+            }
+        }
+    }
+
+    private SafeHttpGet.RedirectChainResult<String> get(String url) throws IOException, InterruptedException {
+        return SafeHttpGet.getWithRedirectChainHeaders(
                 client,
                 url,
                 Duration.ofSeconds(8),
@@ -51,17 +84,12 @@ public class TechFetcher {
                 MAX_REDIRECTS);
     }
 
-    private TechFetchResult toResult(HttpResponse<String> response) {
-        Map<String, String> headers = new LinkedHashMap<>();
-        response.headers().map().forEach((name, values) -> {
-            if (!values.isEmpty()) {
-                headers.put(name.toLowerCase(), values.get(0));
-            }
-        });
+    private TechFetchResult toResult(SafeHttpGet.RedirectChainResult<String> result) {
+        HttpResponse<String> response = result.response();
         String body = response.body();
         if (body != null && body.length() > BODY_CHAR_CAP) {
             body = body.substring(0, BODY_CHAR_CAP);
         }
-        return new TechFetchResult(headers, response.headers().allValues("set-cookie"), body == null ? "" : body);
+        return new TechFetchResult(result.allHopHeaders(), response.headers().allValues("set-cookie"), body == null ? "" : body);
     }
 }

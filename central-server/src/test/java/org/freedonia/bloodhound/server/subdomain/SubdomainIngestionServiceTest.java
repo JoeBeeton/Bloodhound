@@ -125,6 +125,49 @@ class SubdomainIngestionServiceTest {
     }
 
     @Test
+    void publiclyListableBucketSynthesizesExposureFinding() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("assets.example.com"));
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "assets.example.com",
+                        "ipAddresses", List.of("1.2.3.4"),
+                        "source", "CRTSH",
+                        "bucketProvider", "AWS_S3",
+                        "bucketCheckUrl", "https://example-assets.s3.amazonaws.com/",
+                        "bucketPubliclyListable", true))),
+                List.of());
+
+        assertThat(findings).hasSize(1);
+        FindingPayload finding = findings.get(0);
+        assertThat(finding.ruleId()).isEqualTo("EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING");
+        assertThat(finding.severity()).isEqualTo("CRITICAL");
+        assertThat(finding.category()).isEqualTo("EXPOSURE");
+        assertThat(finding.affectedAsset()).isEqualTo("assets.example.com");
+        assertThat(finding.evidence()).containsEntry("provider", "AWS_S3");
+        assertThat(finding.evidence()).containsEntry("checkUrl", "https://example-assets.s3.amazonaws.com/");
+    }
+
+    @Test
+    void bucketMatchedButNotPubliclyListable_noExposureFinding() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("assets.example.com"));
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "assets.example.com",
+                        "ipAddresses", List.of("1.2.3.4"),
+                        "source", "CRTSH",
+                        "bucketProvider", "AWS_S3",
+                        "bucketCheckUrl", "https://example-assets.s3.amazonaws.com/",
+                        "bucketPubliclyListable", false))),
+                List.of());
+
+        assertThat(findings).isEmpty();
+    }
+
+    @Test
     void cnameMatchedButNotConfirmedDangling_noFindingAndTargetColumnStaysNull() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("claimed.example.com"));
 

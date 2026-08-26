@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.jobqueue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.compound.CompoundRiskAnalysisService;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
@@ -258,11 +259,25 @@ public class ScanRunService {
      * per check - CT_CHECK never changes findings, so that snapshot is
      * always identical to the one before it. Accepted as simpler than adding
      * a "lightweight run" flag to skip scoring for this one run type.
+     *
+     * <p>Skips creating a new run/job entirely - returns empty - if this
+     * target already has a not-yet-finished CT_CHECK sitting in the queue
+     * (PENDING/CLAIMED/RUNNING). CtMonitorScheduler fires on its own fixed
+     * wall-clock interval regardless of whether the queue has caught up on
+     * the previous sweep (worker capacity contention, a central-server
+     * restart re-triggering @Scheduled's immediate first run, etc.), and
+     * without this guard that piles up duplicate CT_CHECK jobs for the same
+     * target rather than just widening the gap until the next check - purely
+     * wasted queue/worker/crt.sh load for a module that gains nothing from
+     * running twice before the first attempt has even finished.
      */
-    public ScanRun createCtCheckRun(UUID targetId) {
+    public Optional<ScanRun> createCtCheckRun(UUID targetId) {
+        if (scanJobRepository.existsNonTerminal(targetId, "CT_CHECK")) {
+            return Optional.empty();
+        }
         ScanRun run = scanRunRepository.insert(targetId, "CT_CHECK", null);
         scanJobRepository.insert(run.id(), targetId, "CT_CHECK", "{}");
-        return run;
+        return Optional.of(run);
     }
 
     /**

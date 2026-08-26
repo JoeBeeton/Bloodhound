@@ -76,7 +76,15 @@ public class FingerprintModule implements ScanModule {
 
     private Map<String, Object> fingerprintOne(String hostname, List<String> ips) throws Exception {
         TechFetchResult fetched = techFetcher.fetch(hostname);
-        List<Technology> technologies = TechDecisionLogic.decide(fetched);
+        List<Technology> technologies = new java.util.ArrayList<>(TechDecisionLogic.decide(fetched));
+
+        // A second, targeted request - only made once WordPress is already confirmed from the
+        // homepage fetch above, so this doesn't cost every non-WordPress host an extra request -
+        // see TechFetcher#fetchWpJson for why this reliably finds installed plugins even on sites
+        // that strip every other WordPress signal.
+        if (technologies.stream().anyMatch(t -> t.name().equals("WordPress"))) {
+            technologies.addAll(WordPressRestApiDecisionLogic.decide(techFetcher.fetchWpJson(hostname)));
+        }
 
         String hostingProvider = null;
         String hostingAsn = null;
