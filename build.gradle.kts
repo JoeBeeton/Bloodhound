@@ -2,6 +2,15 @@ plugins {
     java
     id("org.springframework.boot") version "3.4.1" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
+    // SBOM generation (CycloneDX Software Foundation, Apache-2.0 - build-time
+    // tooling only, never shipped in a runtime artifact, so the license bar
+    // here is lower than for runtime dependencies, but it's Apache-2.0
+    // anyway). Applied once at root: this build's default "aggregate" mode
+    // produces one CycloneDX SBOM covering every subproject's dependencies
+    // (bloodhound-common, central-server, worker, webui/backend) rather than
+    // one per deployable - simplest useful default; split into per-module
+    // SBOMs later if per-container-image provenance is ever needed.
+    id("org.cyclonedx.bom") version "3.4.1"
 }
 
 allprojects {
