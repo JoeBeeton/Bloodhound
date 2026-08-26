@@ -158,10 +158,39 @@ Backlog of concrete, not-yet-scheduled work. Not a roadmap - just things worth d
   genuine dual-stack-reachable deployment is worth a real check once one's
   available.
 
-- **Document metadata leakage.** Author names, internal file paths, and
-  software versions embedded in discovered PDFs/Office documents - classic
-  OSINT technique, Tier 1-safe (passive fetch + metadata parse), but a new
-  module family rather than an extension of an existing one.
+- ~~Document metadata leakage~~ **Done.** New module family
+  (`worker/.../modules/documents`), Tier 1: fetches each host's homepage
+  (root + known subdomains, same `HostFanOut` pattern as the other fanned-out
+  modules), extracts up to 5 linked PDF/Office document URLs
+  (`DocumentLinkDecisionLogic`, regex-based `href` extraction, genuinely
+  passive - only looks at a page this module already fetched for itself, no
+  further crawling), downloads each (bounded to 20MB), and parses embedded
+  author/editor metadata. License-checked before adding, both confirmed
+  Apache-2.0 against their actual `LICENSE` files: Apache PDFBox (PDF) and
+  Apache POI (`poi-ooxml`, for .docx/.xlsx/.pptx). Legacy binary Office
+  (.doc/.xls/.ppt) metadata turned out not to need `poi-scratchpad` at all -
+  `SummaryInformation`/`DocumentSummaryInformation` are a generic OLE2
+  compound-file convention, not Word/Excel/PowerPoint-specific, so POI's
+  format-agnostic HPSF property-set API (already in the base `poi` artifact
+  pulled in transitively) reads them directly without going through any of
+  the format-specific text extractors. Two new rules:
+  `EXPOSURE_DOCUMENT_METADATA_AUTHOR_INFO` (Info - author/editor/application
+  names, useful for phishing pretexts or username enumeration) and
+  `EXPOSURE_DOCUMENT_METADATA_PATH_LEAK` (Medium - an internal filesystem
+  path found in any metadata field, most commonly a DOCX/PPTX "Template"
+  property like `C:\Users\jdoe\AppData\Roaming\Microsoft\Templates\Normal.dotm`
+  - a well-known real-world leak class, more concretely useful to an
+  attacker than a bare name). Format is sniffed from magic bytes, not
+  trusted from the URL's extension. Live-verified against real
+  infrastructure from inside the deployed worker container: fetched a real
+  arXiv PDF (765KB) over the network via the actual `DocumentFetcher`,
+  parsed it with the actual `DocumentMetadataParser`, and got a real
+  synthesized `EXPOSURE_DOCUMENT_METADATA_AUTHOR_INFO` finding out of its
+  genuine LaTeX/acmart producer string; separately ran a full scan through
+  the real job queue against github.com (41 hosts) and confirmed
+  `DOCUMENT_METADATA` completes cleanly with no errors. See
+  `DocumentLinkDecisionLogic`/`DocumentMetadataParser`/
+  `DocumentMetadataDecisionLogic`/`DocumentFetcher`/`DocumentMetadataModule`.
 
 - **Third-party script/tag-manager inventory.** Info-level signal: how many
   external origins does a page actually trust (analytics, tag managers,
