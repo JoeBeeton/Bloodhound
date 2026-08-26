@@ -97,6 +97,7 @@ webui/frontend (npm dependencies bundled into the built SPA)
 --------------------------------------------------------------------------------
 
 Full license texts for the above are available from each project's own
-repository. A complete dependency-and-version inventory, including runtime
+repository. A complete dependency-and-version inventory is generated on
+every CI run as a CycloneDX SBOM (see .github/workflows/ci.yml); external
 network services Bloodhound calls out to (which carry terms of service
-rather than a software license), is maintained separately from this file.
+rather than a software license) are tracked in THIRD_PARTY_SERVICES.md.

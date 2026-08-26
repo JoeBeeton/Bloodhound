@@ -157,5 +157,7 @@ rather than the host, before deploying anywhere beyond a trusted machine.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE). Third-party attributions are
-in [NOTICE](NOTICE).
+Apache License 2.0 — see [LICENSE](LICENSE). Third-party software
+attributions are in [NOTICE](NOTICE); external network services the
+running application calls out to are in
+[THIRD_PARTY_SERVICES.md](THIRD_PARTY_SERVICES.md).
