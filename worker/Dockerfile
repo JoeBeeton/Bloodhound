@@ -23,10 +23,17 @@ RUN ./gradlew :worker:bootJar --no-daemon -x test
 FROM ghcr.io/graalvm/jdk-community:21 AS subfinder
 WORKDIR /tmp/subfinder
 RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+# Checksum-verified, not just version-pinned - a security review noted this was fetched via curl
+# with no signature/checksum check at all, unlike zgrab2 below (go install gets module-proxy
+# checksum verification for free). ProjectDiscovery publishes a sha256 checksums file alongside
+# every release; verified against it here before the archive is ever unzipped.
 ARG SUBFINDER_VERSION=2.15.0
-RUN curl -fsSL -o subfinder.zip \
+RUN curl -fsSL -O \
       "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_amd64.zip" \
-    && unzip subfinder.zip subfinder \
+    && curl -fsSL -o subfinder_checksums.txt \
+      "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_checksums.txt" \
+    && grep " subfinder_${SUBFINDER_VERSION}_linux_amd64.zip\$" subfinder_checksums.txt | sha256sum -c - \
+    && unzip "subfinder_${SUBFINDER_VERSION}_linux_amd64.zip" subfinder \
     && chmod +x subfinder
 
 # naabu (ProjectDiscovery, MIT) - same prebuilt-binary pattern as subfinder
@@ -36,10 +43,16 @@ RUN curl -fsSL -o subfinder.zip \
 FROM ghcr.io/graalvm/jdk-community:21 AS naabu
 WORKDIR /tmp/naabu
 RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+# Checksum-verified - same reasoning as subfinder above. naabu's checksums file (unlike
+# subfinder's/nuclei's) doesn't embed the version in its filename - confirmed against the actual
+# release assets, not guessed.
 ARG NAABU_VERSION=2.6.1
-RUN curl -fsSL -o naabu.zip \
+RUN curl -fsSL -O \
       "https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VERSION}/naabu_${NAABU_VERSION}_linux_amd64.zip" \
-    && unzip naabu.zip naabu \
+    && curl -fsSL -o naabu_checksums.txt \
+      "https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VERSION}/naabu-checksums.txt" \
+    && grep " naabu_${NAABU_VERSION}_linux_amd64.zip\$" naabu_checksums.txt | sha256sum -c - \
+    && unzip "naabu_${NAABU_VERSION}_linux_amd64.zip" naabu \
     && chmod +x naabu
 
 # zgrab2 (ZMap project, Apache-2.0) - best-effort service identification on
@@ -65,10 +78,14 @@ RUN go install "github.com/zmap/zgrab2/cmd/zgrab2@${ZGRAB2_VERSION}"
 FROM ghcr.io/graalvm/jdk-community:21 AS nuclei
 WORKDIR /tmp/nuclei
 RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+# Checksum-verified - same reasoning as subfinder above.
 ARG NUCLEI_VERSION=3.11.1
-RUN curl -fsSL -o nuclei.zip \
+RUN curl -fsSL -O \
       "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" \
-    && unzip nuclei.zip nuclei \
+    && curl -fsSL -o nuclei_checksums.txt \
+      "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_checksums.txt" \
+    && grep " nuclei_${NUCLEI_VERSION}_linux_amd64.zip\$" nuclei_checksums.txt | sha256sum -c - \
+    && unzip "nuclei_${NUCLEI_VERSION}_linux_amd64.zip" nuclei \
     && chmod +x nuclei
 #
 # -disable-update-check must NOT be combined with -update-templates here -
