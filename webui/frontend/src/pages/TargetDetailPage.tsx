@@ -87,6 +87,19 @@ async function fetchScoreHistory(targetId: string): Promise<ScoreSnapshot[]> {
 // Cap the initial render and let the analyst expand on demand.
 const DISPLAY_CAP = 25;
 
+/** Quick-jump nav for this page - it's the longest single-column screen in the app (Tier 2
+ * authorization -> posture -> tech -> findings -> brand protection -> subdomains -> diff, each
+ * its own fetch/section), so a sticky in-page nav is a genuine navigation aid, not decoration. */
+const SECTIONS: { id: string; label: string }[] = [
+  { id: "authorization", label: "Authorization" },
+  { id: "posture", label: "Posture" },
+  { id: "tech", label: "Tech & Hosting" },
+  { id: "findings", label: "Findings" },
+  { id: "brand", label: "Brand" },
+  { id: "subdomains", label: "Subdomains" },
+  { id: "diff", label: "Diff" },
+];
+
 // Mirrors ScanRunService's TIER1_SUBDOMAIN_CAP / TIER2_SUBDOMAIN_CAP on
 // central-server - purely informational text here, the real caps are
 // enforced server-side when building each scan's job payload.
@@ -236,6 +249,20 @@ export function TargetDetailPage() {
           </Link>
         </div>
 
+        {target && (
+          <nav className="sticky top-0 z-10 mb-8 flex flex-wrap gap-x-5 gap-y-1 border-b border-neon-cyan/10 bg-void/90 py-2 backdrop-blur-sm">
+            {SECTIONS.map((s) => (
+              <a
+                key={s.id}
+                href={`#${s.id}`}
+                className="font-mono text-[11px] uppercase tracking-widest text-slate-500 transition hover:text-neon-cyan"
+              >
+                {s.label}
+              </a>
+            ))}
+          </nav>
+        )}
+
         <div className="mb-8 flex flex-col gap-3 rounded-lg border border-neon-cyan/20 bg-panel/80 p-4">
           <div className="flex items-center gap-4">
             {status && (
@@ -313,24 +340,30 @@ export function TargetDetailPage() {
           </div>
         )}
 
-        <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Tier 2 authorization</h2>
+        <h2 id="authorization" className="mb-3 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
+          Tier 2 authorization
+        </h2>
         <div className="mb-10">
           <AuthorizationPanel targetId={targetId} />
         </div>
 
-        <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Security posture</h2>
+        <h2 id="posture" className="mb-3 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
+          Security posture
+        </h2>
         <div className="mb-10 grid gap-4 sm:grid-cols-2">
           <CategoryBreakdown categoryScores={scoreHistoryQuery.data?.at(-1)?.categoryScores} />
           <ScoreTrendChart history={scoreHistoryQuery.data} />
         </div>
 
-        <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Technology &amp; hosting</h2>
+        <h2 id="tech" className="mb-3 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
+          Technology &amp; hosting
+        </h2>
         <div className="mb-10">
           <TechHostingPanel targetId={targetId} rootHostname={target?.hostname} />
         </div>
 
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">
+          <h2 id="findings" className="scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
             Open findings {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
           </h2>
           {findingsQuery.data && findingsQuery.data.items.length > 1 && (
@@ -371,12 +404,14 @@ export function TargetDetailPage() {
           />
         )}
 
-        <h2 className="mb-3 mt-10 font-mono text-sm uppercase tracking-widest text-slate-400">Brand protection</h2>
+        <h2 id="brand" className="mb-3 mt-10 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
+          Brand protection
+        </h2>
         <div className="mb-10">
           <BrandProtectionPanel targetId={targetId} realDomainHostname={target?.hostname ?? ""} />
         </div>
 
-        <div className="mt-10 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
+        <div id="subdomains" className="mt-10 scroll-mt-14 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
           <div>
             <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">
               Subdomains {subdomainsQuery.data ? `(${subdomainsQuery.data.length})` : ""}
@@ -393,7 +428,7 @@ export function TargetDetailPage() {
           </Link>
         </div>
 
-        <h2 className="mb-3 mt-10 font-mono text-sm uppercase tracking-widest text-slate-400">
+        <h2 id="diff" className="mb-3 mt-10 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
           Compare with previous scan
         </h2>
         <FindingDiffView targetId={targetId} runId={scoreHistoryQuery.data?.at(-1)?.scanRunId} />
