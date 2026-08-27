@@ -324,6 +324,7 @@ export interface DashboardStats {
 export interface DashboardSummary {
   ownTargets: Target[];
   topFindings: OrgFinding[];
+  recentFindings: OrgFinding[];
   recentActivity: RecentActivity[];
   stats: DashboardStats;
 }
