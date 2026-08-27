@@ -57,6 +57,24 @@ public class RefreshTokenRepository {
         jdbc.update("UPDATE refresh_tokens SET revoked_at = now() WHERE id = ?", id);
     }
 
+    /**
+     * Conditional revoke that reports whether THIS call was actually the one that flipped
+     * {@code revoked_at} - used by the refresh-rotation path to close a race a security review
+     * found: AuthenticationService#refresh previously read the token, checked {@code revokedAt()
+     * == null}, and only revoked it several lines later as a separate statement, so two
+     * concurrent refreshes of the same still-valid token could both pass the check before either
+     * committed its revoke, forking the session into two valid lineages instead of triggering the
+     * theft response. The {@code WHERE revoked_at IS NULL} condition makes the UPDATE itself the
+     * point of truth: whichever caller's statement actually executes first wins (returns true),
+     * and the loser's UPDATE affects zero rows (returns false) because Postgres serializes
+     * concurrent UPDATEs to the same row via row-level locking - there is no window between
+     * "check" and "act" left to race, because there's only one statement.
+     */
+    public boolean tryRevoke(UUID id) {
+        int updated = jdbc.update("UPDATE refresh_tokens SET revoked_at = now() WHERE id = ? AND revoked_at IS NULL", id);
+        return updated > 0;
+    }
+
     public void linkReplacement(UUID oldId, UUID newId) {
         jdbc.update("UPDATE refresh_tokens SET replaced_by_token_id = ? WHERE id = ?", newId, oldId);
     }
