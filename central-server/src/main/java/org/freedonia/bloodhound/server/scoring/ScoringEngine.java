@@ -47,10 +47,10 @@ public final class ScoringEngine {
     private static final List<String> SEVERITY_ORDER = List.of("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO");
 
     /** The nth (0-indexed) finding of a given severity within one category counts at this factor to the power of n. */
-    private static final BigDecimal DIMINISHING_FACTOR = new BigDecimal("0.7");
+    static final BigDecimal DIMINISHING_FACTOR = new BigDecimal("0.7");
 
-    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
-    private static final int SCALE = 2;
+    static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+    static final int SCALE = 2;
 
     private ScoringEngine() {}
 
@@ -60,13 +60,23 @@ public final class ScoringEngine {
             categoryScores.put(category, scoreCategory(openFindings, category, ruleWeights));
         }
 
+        BigDecimal overall = overallFromCategoryScores(categoryScores);
+        return new ScoreResult(overall, gradeFor(overall), categoryScores, countBySeverity(openFindings));
+    }
+
+    /**
+     * Package-visible so {@link ScoreImpactCalculator} can recompute just the
+     * overall score after substituting one category's hypothetical score,
+     * without needing to reconstruct a whole hypothetical findings list and
+     * pay for a full {@link #compute} - reused rather than duplicated so the
+     * rounding behavior can never drift between the two call sites.
+     */
+    static BigDecimal overallFromCategoryScores(Map<String, BigDecimal> categoryScores) {
         BigDecimal overall = BigDecimal.ZERO;
         for (String category : CATEGORIES) {
             overall = overall.add(categoryScores.get(category).multiply(CATEGORY_WEIGHTS.get(category)));
         }
-        overall = overall.setScale(SCALE, RoundingMode.HALF_UP);
-
-        return new ScoreResult(overall, gradeFor(overall), categoryScores, countBySeverity(openFindings));
+        return overall.setScale(SCALE, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal scoreCategory(
@@ -77,27 +87,80 @@ public final class ScoringEngine {
 
         BigDecimal totalDeduction = BigDecimal.ZERO;
         for (Map.Entry<String, List<Finding>> entry : bySeverity.entrySet()) {
-            BigDecimal severityPoints = SEVERITY_POINTS.getOrDefault(entry.getKey(), BigDecimal.ZERO);
-            // Deterministic tie-break for which finding lands in which discount
-            // slot: highest rule-weight first (ties broken by ruleId), so the
-            // most-heavily-weighted offenders are the ones scored at full
-            // strength rather than an arbitrary/DB-order-dependent one.
-            List<Finding> group = entry.getValue().stream()
-                    .sorted(Comparator
-                            .comparing((Finding f) -> ruleWeights.getOrDefault(f.ruleId(), BigDecimal.ONE))
-                            .reversed()
-                            .thenComparing(Finding::ruleId))
-                    .toList();
-            for (int n = 0; n < group.size(); n++) {
-                Finding finding = group.get(n);
-                BigDecimal weight = ruleWeights.getOrDefault(finding.ruleId(), BigDecimal.ONE);
-                BigDecimal discount = DIMINISHING_FACTOR.pow(n);
-                totalDeduction = totalDeduction.add(severityPoints.multiply(weight).multiply(discount));
+            List<Finding> group = ranked(entry.getValue(), ruleWeights);
+            for (BigDecimal contribution : contributionsForRanked(group, entry.getKey(), ruleWeights)) {
+                totalDeduction = totalDeduction.add(contribution);
             }
         }
 
-        BigDecimal raw = ONE_HUNDRED.subtract(totalDeduction);
-        return clamp(raw).setScale(SCALE, RoundingMode.HALF_UP);
+        return clampAndRound(ONE_HUNDRED.subtract(totalDeduction));
+    }
+
+    /**
+     * Deterministic tie-break for which finding lands in which discount
+     * slot: highest rule-weight first (ties broken by ruleId), so the
+     * most-heavily-weighted offenders are the ones scored at full strength
+     * rather than an arbitrary/DB-order-dependent one. Package-visible so
+     * {@link ScoreImpactCalculator} can look up a specific finding's rank
+     * without duplicating this ordering - it must never drift from what
+     * {@link #scoreCategory} actually uses.
+     */
+    static List<Finding> ranked(List<Finding> severityGroup, Map<String, BigDecimal> ruleWeights) {
+        return severityGroup.stream()
+                .sorted(Comparator
+                        .comparing((Finding f) -> ruleWeights.getOrDefault(f.ruleId(), BigDecimal.ONE))
+                        .reversed()
+                        .thenComparing(Finding::ruleId))
+                .toList();
+    }
+
+    /**
+     * {@code 0.7^n} rounds to 0.00 (at the 2-decimal scale everything is
+     * ultimately rounded to) once n passes roughly 130, since 0.7^130 is
+     * already on the order of 1e-21 - far below anything a severityPoints*weight
+     * multiplier (bounded in practice to double digits) could push back above
+     * a hundredth. Ranks beyond this are exact zeroes, not approximations.
+     */
+    private static final int DIMINISHING_FACTOR_NEGLIGIBLE_RANK = 130;
+
+    /**
+     * Precision bound for {@code 0.7^n} itself. {@link BigDecimal#pow(int)}
+     * with no MathContext computes an EXACT result - for 0.7 that means a
+     * BigDecimal with n digits of scale, so at n in the tens of thousands
+     * (confirmed live: a real target with a single category+severity group
+     * that large) computing and then summing those exact powers becomes
+     * catastrophically expensive BigInteger arithmetic, independent of - and
+     * far worse than - the O(n) vs O(n^2) question this method's caller
+     * otherwise cares about. 34 significant digits is far beyond what could
+     * ever be observable after the final 2-decimal-place rounding.
+     */
+    private static final java.math.MathContext POW_PRECISION = java.math.MathContext.DECIMAL128;
+
+    /**
+     * Element {@code n} is {@code severityPoints * weight * 0.7^n} for the
+     * nth entry of an already-{@link #ranked} group - package-visible so
+     * {@link ScoreImpactCalculator} can get each finding's individual
+     * discounted contribution (needed to compute a hypothetical "this finding
+     * removed" total without re-summing the whole group) from the exact same
+     * formula {@link #scoreCategory} uses.
+     */
+    static List<BigDecimal> contributionsForRanked(
+            List<Finding> rankedGroup, String severity, Map<String, BigDecimal> ruleWeights) {
+        BigDecimal severityPoints = SEVERITY_POINTS.getOrDefault(severity, BigDecimal.ZERO);
+        List<BigDecimal> contributions = new java.util.ArrayList<>(rankedGroup.size());
+        for (int n = 0; n < rankedGroup.size(); n++) {
+            if (n >= DIMINISHING_FACTOR_NEGLIGIBLE_RANK) {
+                contributions.add(BigDecimal.ZERO);
+                continue;
+            }
+            BigDecimal weight = ruleWeights.getOrDefault(rankedGroup.get(n).ruleId(), BigDecimal.ONE);
+            contributions.add(severityPoints.multiply(weight).multiply(DIMINISHING_FACTOR.pow(n, POW_PRECISION)));
+        }
+        return contributions;
+    }
+
+    static BigDecimal clampAndRound(BigDecimal value) {
+        return clamp(value).setScale(SCALE, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal clamp(BigDecimal value) {
