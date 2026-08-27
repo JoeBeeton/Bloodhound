@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,23 @@ import org.slf4j.LoggerFactory;
  * alerts ZAP has found <i>so far</i> rather than throwing away partial
  * results - same "report what you found" philosophy as subdomain enum's
  * per-source cap and every other subprocess wrapper's hard process timeout.
+ *
+ * <p>SSRF guard: unlike every other outbound-fetch class in this codebase
+ * (SafeHttpGet, NucleiFetcher, TlsFetcher, ExposedPathFetcher), the actual
+ * TCP connect here happens inside the separate {@code zap} container, not in
+ * this process - same "hands a hostname to a sidecar" shape as
+ * TyposquatScreenshotter, and the same reason this needs its own check:
+ * without it, ZAP could be pointed at internal infrastructure by hostname
+ * (e.g. central-server's actuator endpoints, or postgres) and would happily
+ * fire genuine SQLi/XSS/path-traversal payloads at it - categorically worse
+ * than a passive fetch landing somewhere internal. {@link
+ * SafeAddressValidator#requireSafeIfResolvable} is checked twice, not once:
+ * immediately (closing the base case) and again right before the active-scan
+ * phase specifically, since spidering alone can run for minutes and ascan is
+ * where the real attack payloads actually fire - re-checking narrows the
+ * DNS-rebinding window around the genuinely dangerous phase, though (like
+ * every other re-resolve-based check in this codebase) it can't close a
+ * rebind racing the individual request itself, a documented residual gap.
  */
 public class ZapScanRunner {
 
@@ -53,6 +71,7 @@ public class ZapScanRunner {
 
     /** Runs the full spider+ascan workflow against {@code hostname} and returns the raw /JSON/core/view/alerts/ response body. */
     public String runFullScan(String hostname) throws ScanModuleException {
+        requireSafeHost(hostname);
         Instant deadline = Instant.now().plus(TOTAL_BUDGET);
 
         // HTTPS first, HTTP fallback - the same order every other HTTP-fetching module in this
@@ -72,6 +91,10 @@ public class ZapScanRunner {
         }
         String targetUrl = spidered.targetUrl();
 
+        // Re-checked here, not just once at entry: spidering alone can run for minutes, and this
+        // is the point where ZAP starts firing genuine attack payloads - the highest-value place
+        // to narrow the DNS-rebinding window, even though it can't close it entirely.
+        requireSafeHost(hostname);
         String ascanId = call("/JSON/ascan/action/scan/", Map.of("url", targetUrl, "recurse", "true"))
                 .path("scan").asText();
         boolean ascanFinished = pollUntilComplete("active scan", () -> ascanStatusPercent(ascanId), deadline);
@@ -187,5 +210,13 @@ public class ZapScanRunner {
 
     private static String encode(String value) {
         return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
+    }
+
+    private static void requireSafeHost(String hostname) throws ScanModuleException {
+        try {
+            SafeAddressValidator.requireSafeIfResolvable(hostname);
+        } catch (Exception e) {
+            throw new ScanModuleException("refusing to actively scan " + hostname + ": " + e.getMessage(), e);
+        }
     }
 }
