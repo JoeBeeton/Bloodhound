@@ -160,6 +160,34 @@ describe("buildGraph", () => {
     expect(graph.links).toContainEqual({ source: "hub", target: "worker:w2", kind: "structural" });
   });
 
+  it("a worker's node label is its real per-replica hostname, split out of the combined workerId, with its actuator port as the sub-label", () => {
+    // Real shape from WorkerApplication#workerId: InetAddress hostname (a Docker container id in
+    // practice) + "-" + an 8-hex-char random suffix disambiguating replicas.
+    const w = worker({ workerId: "07cdfd745cfd-1c493827" });
+    const graph = buildGraph([], new Map(), [w]);
+
+    const node = graph.nodes.find((n) => n.id === "worker:07cdfd745cfd-1c493827")!;
+    expect(node.label).toBe("07cdfd745cfd");
+    expect(node.subLabel).toBe(":8081");
+    expect(node.fullWorkerId).toBe("07cdfd745cfd-1c493827");
+  });
+
+  it("a worker id that doesn't match the expected hostname-suffix shape falls back to showing it whole, rather than mangling it", () => {
+    const w = worker({ workerId: "not-the-expected-shape" });
+    const graph = buildGraph([], new Map(), [w]);
+
+    const node = graph.nodes.find((n) => n.id === "worker:not-the-expected-shape")!;
+    expect(node.label).toBe("not-the-expected-shape");
+  });
+
+  it("the platform singleton nodes (hub, database, webui) each carry their real docker-compose hostname:port as a sub-label", () => {
+    const graph = buildGraph([], new Map());
+
+    expect(graph.nodes.find((n) => n.id === "hub")!.subLabel).toBe("central-server:8080");
+    expect(graph.nodes.find((n) => n.id === "database")!.subLabel).toBe("postgres:5432");
+    expect(graph.nodes.find((n) => n.id === "webui")!.subLabel).toBe("webui:8080");
+  });
+
   it("a BUSY worker scanning a target that's in this graph gets a distinct 'scanning' link straight to it", () => {
     const t = target({ id: "t1" });
     const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", targetHostname: "example.com" });
