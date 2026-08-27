@@ -275,6 +275,57 @@ class TechDecisionLogicTest {
     }
 
     @Test
+    void iisServerHeader_versionIsCaptured() {
+        TechFetchResult result = new TechFetchResult(Map.of("server", "Microsoft-IIS/10.0"), List.of(), "");
+        Technology iis = TechDecisionLogic.decide(result).stream()
+                .filter(t -> t.name().equals("IIS"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(iis.version()).isEqualTo("10.0");
+        assertThat(iis.category()).isEqualTo(Technology.WEB_SERVER);
+    }
+
+    @Test
+    void unrecognizedServerHeaderWithVersion_stillSurfacedGenerically() {
+        // Real gap found live: GitHub.com's edge and other bespoke server products have no
+        // dedicated signature above, and were being silently dropped rather than reported.
+        TechFetchResult result = new TechFetchResult(Map.of("server", "openresty/1.21.4.1"), List.of(), "");
+        Technology server = TechDecisionLogic.decide(result).stream()
+                .filter(t -> t.name().equals("openresty"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(server.version()).isEqualTo("1.21.4.1");
+        assertThat(server.category()).isEqualTo(Technology.WEB_SERVER);
+    }
+
+    @Test
+    void unrecognizedServerHeaderWithoutVersion_reportedNameOnly() {
+        TechFetchResult result = new TechFetchResult(Map.of("server", "GitHub.com"), List.of(), "");
+        Technology server = TechDecisionLogic.decide(result).stream()
+                .filter(t -> t.name().equals("GitHub.com"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(server.version()).isNull();
+        assertThat(server.category()).isEqualTo(Technology.WEB_SERVER);
+    }
+
+    @Test
+    void cloudflareServerHeader_notAlsoReportedAsAGenericWebServer() {
+        TechFetchResult result = new TechFetchResult(Map.of("server", "cloudflare"), List.of(), "");
+        List<Technology> found = TechDecisionLogic.decide(result);
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).name()).isEqualTo("Cloudflare");
+        assertThat(found.get(0).category()).isEqualTo(Technology.CDN);
+    }
+
+    @Test
+    void nginxServerHeader_notAlsoReportedGenerically() {
+        TechFetchResult result = new TechFetchResult(Map.of("server", "nginx/1.25.3"), List.of(), "");
+        List<Technology> found = TechDecisionLogic.decide(result);
+        assertThat(found.stream().filter(t -> t.category().equals(Technology.WEB_SERVER)).count()).isEqualTo(1);
+    }
+
+    @Test
     void pluginAssetWithoutVersionQueryString_isNotReported() {
         // No ?ver= means no version signal to report at all - not worth a versionless
         // plugin entry when the slug alone (visible in every WordPress asset path

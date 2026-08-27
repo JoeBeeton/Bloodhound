@@ -44,9 +44,11 @@ public final class TechDecisionLogic {
                 extractVersion(serverRaw, "nginx/([\\d.]+)"));
         addWithVersion(found, server.contains("apache"), "Apache", Technology.WEB_SERVER,
                 extractVersion(serverRaw, "Apache/([\\d.]+)"));
-        addIf(found, server.contains("iis"), "IIS", Technology.WEB_SERVER);
+        addWithVersion(found, server.contains("iis"), "IIS", Technology.WEB_SERVER,
+                extractVersion(serverRaw, "IIS/([\\d.]+)"));
         addIf(found, server.contains("cloudflare"), "Cloudflare", Technology.CDN);
         addIf(found, headers.containsKey("cf-ray") || bodyLower.contains("cdn-cgi/"), "Cloudflare", Technology.CDN);
+        addGenericWebServer(found, server, serverRaw);
 
         // Language runtime / framework, from X-Powered-By and cookie names.
         String poweredByRaw = headers.getOrDefault("x-powered-by", "");
@@ -138,6 +140,41 @@ public final class TechDecisionLogic {
     private static void addIf(Map<String, Technology> found, boolean matched, String name, String category) {
         if (matched) {
             found.putIfAbsent(name, new Technology(name, category, null));
+        }
+    }
+
+    private static final Pattern GENERIC_SERVER_PRODUCT_VERSION = Pattern.compile("^([A-Za-z][\\w.+-]*)/([\\d][\\w.-]*)");
+
+    /**
+     * Any Server header value not already matched by one of the named signatures above still gets
+     * surfaced rather than silently dropped - confirmed live against real tracked targets that this
+     * was a genuine coverage gap, not a hypothetical one: GitHub.com's edge discloses a bare
+     * {@code Server: GitHub.com} and gets dropped entirely today, the same as any other bespoke or
+     * less-common server product (LiteSpeed, openresty, Caddy, Kestrel, gunicorn, ...) none of which
+     * has (or needs) its own dedicated signature. Version is still captured wherever the header
+     * follows the standard "Product/X.Y.Z" convention (e.g. "openresty/1.21.4.1"); a bare product
+     * name with no slash (like GitHub's) is still worth reporting name-only, same as Joomla/Magento
+     * above. Deliberately excludes anything already claimed by a more specific signature (nginx,
+     * Apache, IIS) or by the Cloudflare CDN check just above - re-adding those under a second,
+     * cruder name would be redundant, not additive.
+     */
+    private static void addGenericWebServer(Map<String, Technology> found, String serverLower, String serverRaw) {
+        if (serverRaw.isBlank()
+                || serverLower.contains("cloudflare")
+                || serverLower.contains("nginx")
+                || serverLower.contains("apache")
+                || serverLower.contains("iis")) {
+            return;
+        }
+        String token = serverRaw.split("[\\s(]")[0];
+        if (token.isBlank()) {
+            return;
+        }
+        Matcher m = GENERIC_SERVER_PRODUCT_VERSION.matcher(token);
+        if (m.find()) {
+            found.putIfAbsent(m.group(1), new Technology(m.group(1), Technology.WEB_SERVER, m.group(2)));
+        } else {
+            found.putIfAbsent(token, new Technology(token, Technology.WEB_SERVER, null));
         }
     }
 
