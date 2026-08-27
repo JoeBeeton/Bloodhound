@@ -6,6 +6,7 @@ import { GradeBadge } from "../components/GradeBadge";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
+import { colorForTargetType } from "../lib/attackSurfaceGraph";
 import type { ScanRunDetail, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
 
@@ -70,6 +71,7 @@ export function TargetsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
   const [showRemoved, setShowRemoved] = useState(false);
+  const [search, setSearch] = useState("");
   const targetsQuery = useQuery({
     queryKey: ["targets", showRemoved],
     queryFn: () => fetchTargets(showRemoved),
@@ -145,6 +147,21 @@ export function TargetsPage() {
           </div>
         </div>
 
+        {targetsQuery.data && targetsQuery.data.length > 5 && (
+          <div className="relative mb-4">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs text-slate-500">
+              ⌕
+            </span>
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter by hostname…"
+              className="w-full rounded border border-slate-700 bg-void py-2 pl-8 pr-3 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+            />
+          </div>
+        )}
+
         <form
           onSubmit={handleSubmit}
           className="mb-8 flex flex-col gap-3 rounded-lg border border-neon-cyan/20 bg-panel/80 p-4 sm:flex-row sm:items-end"
@@ -190,13 +207,19 @@ export function TargetsPage() {
 
         <div className="flex flex-col gap-3">
           {(() => {
-            const visible = showRemoved
+            const byRemoved = showRemoved
               ? (targetsQuery.data?.filter((t) => !t.isActive) ?? [])
               : (targetsQuery.data ?? []);
+            const needle = search.trim().toLowerCase();
+            const visible = needle ? byRemoved.filter((t) => t.hostname.toLowerCase().includes(needle)) : byRemoved;
             if (targetsQuery.data && visible.length === 0) {
               return (
                 <p className="font-mono text-sm text-slate-400">
-                  {showRemoved ? "No removed targets." : "No targets yet — add one above to start monitoring."}
+                  {needle
+                    ? `No targets match "${search.trim()}".`
+                    : showRemoved
+                      ? "No removed targets."
+                      : "No targets yet — add one above to start monitoring."}
                 </p>
               );
             }
@@ -335,7 +358,18 @@ function TargetRow({
       }`}
     >
       <div>
-        <Link to={`/targets/${target.id}`} className="font-mono text-sm text-slate-200 hover:text-neon-cyan hover:underline">
+        <Link
+          to={`/targets/${target.id}`}
+          className="flex items-center gap-2 font-mono text-sm text-slate-200 hover:text-neon-cyan hover:underline"
+        >
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full"
+            style={{
+              backgroundColor: colorForTargetType(target.targetType),
+              boxShadow: `0 0 6px ${colorForTargetType(target.targetType)}`,
+            }}
+            aria-hidden="true"
+          />
           {target.hostname}
         </Link>
         <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
