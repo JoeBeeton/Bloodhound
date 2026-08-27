@@ -13,19 +13,32 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Documents the read-only external data API at /swagger-ui.html - springdoc
  * generates the actual endpoint/schema listing by scanning controllers, this
- * just supplies the top-level info and the apiKey security scheme so "Try it
- * out" in the UI (and any generated client) knows to send a bearer token
- * minted by {@code POST /api/v1/api-keys}.
+ * just supplies the top-level info and the security schemes so "Try it out"
+ * in the UI (and any generated client) knows what bearer token each group of
+ * endpoints actually expects.
  *
  * <p>This describes every controller springdoc finds, including ones an API
  * key can't actually call (write endpoints, admin routes) - the spec is a
  * map of the whole REST API, not a promise of what a given credential can
  * reach; SecurityConfig's allowlist is the actual enforcement point.
+ *
+ * <p>Two bearer schemes, not one: a live API review caught that the single
+ * global {@code ApiKeyAuth} requirement below made the generated spec claim
+ * every operation - including {@code /api/v1/auth/**} (login itself) and
+ * {@code /api/v1/api-keys*} (which {@link org.freedonia.bloodhound.server.apikey.ApiKeyController}'s
+ * own {@code @Tag} already says requires a JWT session, "not usable with an
+ * API key itself") - accepts or requires an API key. {@code JwtSessionAuth}
+ * documents the other real bearer credential (a session access token from
+ * {@code POST /api/v1/auth/login}) so operations that actually need one can
+ * say so instead of inheriting the API-key requirement by default. Neither
+ * scheme changes runtime enforcement - see SecurityConfig - only what the
+ * docs claim.
  */
 @Configuration
 public class OpenApiConfig {
 
     private static final String API_KEY_SCHEME = "ApiKeyAuth";
+    public static final String JWT_SESSION_SCHEME = "JwtSessionAuth";
 
     @Bean
     public OpenAPI bloodhoundOpenApi() {
@@ -57,6 +70,17 @@ public class OpenApiConfig {
                                         .scheme("bearer")
                                         .bearerFormat("bhk_...")
                                         .description(
-                                                "An API key minted by POST /api/v1/api-keys, sent as a bearer token.")));
+                                                "An API key minted by POST /api/v1/api-keys, sent as a bearer token."))
+                        .addSecuritySchemes(
+                                JWT_SESSION_SCHEME,
+                                new SecurityScheme()
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")
+                                        .description(
+                                                "A session access token from POST /api/v1/auth/login - NOT an API "
+                                                        + "key. Endpoints requiring this scheme reject an API key "
+                                                        + "even though both are sent the same way "
+                                                        + "('Authorization: Bearer <token>').")));
     }
 }
