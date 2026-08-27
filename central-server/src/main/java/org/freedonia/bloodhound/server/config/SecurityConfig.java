@@ -1,6 +1,8 @@
 package org.freedonia.bloodhound.server.config;
 
 import jakarta.servlet.http.HttpServletResponse;
+import org.freedonia.bloodhound.server.apikey.ApiKeyAuthFilter;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.auth.CustomUserDetailsService;
 import org.freedonia.bloodhound.server.auth.JwtAuthenticationFilter;
 import org.freedonia.bloodhound.server.auth.JwtService;
@@ -12,6 +14,7 @@ import org.freedonia.bloodhound.server.scim.ScimTokenRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -31,7 +34,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * (the worker-facing job queue) requires the separate X-Worker-Api-Key
  * mechanism and ROLE_WORKER specifically; every other route requires a user
  * JWT with one of ADMIN/ANALYST/VIEWER - so worker keys and user JWTs can
- * never satisfy each other's routes.
+ * never satisfy each other's routes. Self-service read-only API keys (see
+ * apikey.ApiKeyController/ApiKeyAuthFilter) authenticate the same "Authorization:
+ * Bearer" header as a JWT but grant only ROLE_API_KEY, which this chain only
+ * ever accepts for GET requests against an explicit data-retrieval allowlist.
  */
 @Configuration
 @EnableMethodSecurity
@@ -87,7 +93,8 @@ public class SecurityConfig {
             HttpSecurity http,
             JwtService jwtService,
             WorkerCredentialRepository workerCredentialRepository,
-            ScimTokenRepository scimTokenRepository)
+            ScimTokenRepository scimTokenRepository,
+            ApiKeyRepository apiKeyRepository)
             throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -97,7 +104,13 @@ public class SecurityConfig {
                                 "/actuator/health/**",
                                 "/api/v1/auth/**",
                                 "/api/v1/public/**",
-                                "/error")
+                                "/error",
+                                // The OpenAPI spec + Swagger UI for the read-only external API
+                                // (see apikey.ApiKeyController) - documentation only, no data, same
+                                // as any public API reference (Stripe/GitHub docs are public too).
+                                "/swagger-ui.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**")
                         .permitAll()
                         .requestMatchers("/api/v1/jobs/**")
                         .hasRole("WORKER")
@@ -106,6 +119,21 @@ public class SecurityConfig {
                         // satisfy /scim/v2/** - same isolation principle as ROLE_WORKER above.
                         .requestMatchers("/scim/v2/**")
                         .hasRole("SCIM")
+                        // ROLE_API_KEY (see apikey.ApiKeyAuthFilter) is deliberately never added to the
+                        // plain anyRequest() rule below - this GET-only allowlist of data-retrieval
+                        // routes is the ONLY way an API key can ever satisfy a request, enforced at the
+                        // filter-chain level so it holds regardless of any individual controller's own
+                        // logic. Never add a non-GET matcher here.
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/targets/**",
+                                "/api/v1/dashboard",
+                                "/api/v1/compare",
+                                "/api/v1/findings",
+                                "/api/v1/runs/**",
+                                "/api/v1/rules-catalog",
+                                "/api/v1/scans/**")
+                        .hasAnyRole("ADMIN", "ANALYST", "VIEWER", "API_KEY")
                         .anyRequest()
                         .hasAnyRole("ADMIN", "ANALYST", "VIEWER"))
                 // Without this, Spring Security's default entry point returns 403 for
@@ -128,7 +156,8 @@ public class SecurityConfig {
                         new WorkerApiKeyAuthFilter(workerCredentialRepository),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
-                        new ScimTokenAuthFilter(scimTokenRepository), UsernamePasswordAuthenticationFilter.class);
+                        new ScimTokenAuthFilter(scimTokenRepository), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new ApiKeyAuthFilter(apiKeyRepository), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

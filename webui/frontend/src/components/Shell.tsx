@@ -46,6 +46,9 @@ export function Shell({ children }: { children: ReactNode }) {
               <NavLink to="/compare" className={NAV_LINK_CLASS}>
                 Compare
               </NavLink>
+              <NavLink to="/settings/api-keys" className={NAV_LINK_CLASS}>
+                API Keys
+              </NavLink>
               {user?.role === "ADMIN" && (
                 <NavLink to="/admin/users" className={NAV_LINK_CLASS}>
                   Admin
