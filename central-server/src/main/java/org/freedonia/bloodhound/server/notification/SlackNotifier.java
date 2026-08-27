@@ -63,7 +63,27 @@ public class SlackNotifier {
                 .formatted(color, jsonEscape(title), jsonEscape(message), jsonEscape(linkUrl));
     }
 
+    /**
+     * Neutralizes Slack's own mrkdwn special characters, then JSON-escapes for the payload
+     * itself - a security review found the JSON escaping alone (backslash/quote/newline) left
+     * Slack's link syntax live: attacker-controlled finding text (a hostile scan target's own
+     * page title, WHOIS text, TLS field, etc. - all of which flow into notification title/message
+     * unescaped-by-source, same as any other evidence string in this codebase) containing
+     * {@code <http://evil.example|Click here>} would render as a real clickable link in the
+     * analyst's Slack channel - a phishing vector aimed at the person monitoring alerts. Slack's
+     * own documented escaping order matters: {@code &} first, then {@code <}/{@code >} - escaping
+     * the angle brackets first would have the {@code &} replacement re-escape the {@code &amp;}
+     * it just introduced.
+     */
     private static String jsonEscape(String s) {
-        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n");
     }
 }
