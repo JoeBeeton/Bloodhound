@@ -107,11 +107,21 @@ public class TargetRepository {
         return Boolean.TRUE.equals(has);
     }
 
-    /** Lean, single-column fetch - never pulled as part of the regular Target row mapping, which every other endpoint uses. */
+    /**
+     * Lean, single-column fetch - never pulled as part of the regular Target row mapping, which
+     * every other endpoint uses.
+     *
+     * <p>{@code Optional.ofNullable(...get(0))}, not {@code .stream().findFirst()}: the target
+     * row legitimately exists with {@code homepage_screenshot_png} SQL-NULL for the common case
+     * of "not screenshotted yet" (or never Tier-2 authorized) - a null-valued row makes {@code
+     * List.stream().findFirst()} throw NullPointerException (it wraps the element via {@code
+     * Optional.of}, not {@code ofNullable}), not return an empty/filtered Optional as the
+     * previous code here assumed. Confirmed live: GET .../real-domain-screenshot 500'd instead
+     * of 404ing for a real target with no screenshot yet.
+     */
     public Optional<byte[]> findHomepageScreenshotPng(UUID id) {
-        return jdbc.query("SELECT homepage_screenshot_png FROM targets WHERE id = ?", (rs, rowNum) -> rs.getBytes(1), id)
-                .stream()
-                .findFirst()
-                .filter(bytes -> bytes != null);
+        List<byte[]> rows =
+                jdbc.query("SELECT homepage_screenshot_png FROM targets WHERE id = ?", (rs, rowNum) -> rs.getBytes(1), id);
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.get(0));
     }
 }
