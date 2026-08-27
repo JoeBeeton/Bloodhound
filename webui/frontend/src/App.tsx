@@ -6,6 +6,7 @@ import { AdminScimPage } from "./pages/AdminScimPage";
 import { AdminSlackPage } from "./pages/AdminSlackPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { ApiKeysPage } from "./pages/ApiKeysPage";
+import { AttackSurfaceMapPage } from "./pages/AttackSurfaceMapPage";
 import { ComparePage } from "./pages/ComparePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AdminSsoPage } from "./pages/AdminSsoPage";
@@ -69,6 +70,14 @@ export default function App() {
           element={
             <RequireAuth>
               <ApiKeysPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/map"
+          element={
+            <RequireAuth>
+              <AttackSurfaceMapPage />
             </RequireAuth>
           }
         />
