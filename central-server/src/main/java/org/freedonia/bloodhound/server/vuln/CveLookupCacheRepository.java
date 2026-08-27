@@ -73,7 +73,8 @@ public class CveLookupCacheRepository {
         return jdbc.query(
                 """
                 SELECT DISTINCT f.target_id, f.hostname, c.technology_name, c.version, c.cve_ids, c.kev_matches, c.max_severity
-                FROM fingerprints f, jsonb_array_elements(f.technologies) AS tech
+                FROM fingerprints f
+                CROSS JOIN jsonb_array_elements(f.technologies) AS tech
                 JOIN cve_lookup_cache c
                     ON c.technology_name = tech->>'name' AND c.version = tech->>'version'
                 JOIN targets t ON t.id = f.target_id
