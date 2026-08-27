@@ -25,6 +25,16 @@ public class ScoreSnapshotService {
     }
 
     /**
+     * WEB_APP (ZAP/Nuclei active-scan findings) is exclusively produced by Tier 2 modules -
+     * there is no Tier 1 equivalent - but unlike NETWORK_ANONYMOUS_FTP/NETWORK_FULL_PORT_SURFACE
+     * it can't be excluded via {@link RuleWeightRepository#findTier2ExclusiveRuleIds()}: ZAP's
+     * and Nuclei's rule_ids are dynamically generated per plugin/template ("ZAP_ALERT_10202",
+     * "NUCLEI_cve-2023-1234"), so there are no rules_catalog rows for them to flag in the first
+     * place (see ZapAlertMapper/NucleiFindingMapper's own javadoc). Excluded by category instead.
+     */
+    private static final String TIER2_ONLY_CATEGORY = "WEB_APP";
+
+    /**
      * Computes and persists a score_snapshots row from the target's currently-OPEN findings -
      * both the full score (all open findings) and a Tier-1-only "fair comparison" score
      * (excluding findings only a Tier 2 deep scan could have produced), using the identical
@@ -42,6 +52,7 @@ public class ScoreSnapshotService {
         Set<String> tier2ExclusiveRuleIds = ruleWeightRepository.findTier2ExclusiveRuleIds();
         List<Finding> tier1Findings = openFindings.stream()
                 .filter(f -> !tier2ExclusiveRuleIds.contains(f.ruleId()))
+                .filter(f -> !TIER2_ONLY_CATEGORY.equals(f.category()))
                 .toList();
         ScoreResult tier1Only = ScoringEngine.compute(tier1Findings, ruleWeights);
 

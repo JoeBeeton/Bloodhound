@@ -48,8 +48,10 @@ class Tier1OnlyScoringTest {
     }
 
     private static ScoreResult tier1Only(List<Finding> openFindings) {
-        List<Finding> tier1Findings =
-                openFindings.stream().filter(f -> !TIER2_EXCLUSIVE.contains(f.ruleId())).toList();
+        List<Finding> tier1Findings = openFindings.stream()
+                .filter(f -> !TIER2_EXCLUSIVE.contains(f.ruleId()))
+                .filter(f -> !"WEB_APP".equals(f.category()))
+                .toList();
         return ScoringEngine.compute(tier1Findings, Map.of());
     }
 
@@ -101,6 +103,26 @@ class Tier1OnlyScoringTest {
         assertThat(full.categoryScores().get("NETWORK")).isEqualByComparingTo("60.00");
         assertThat(tier1.categoryScores().get("NETWORK")).isEqualByComparingTo("100.00");
 
+        assertThat(tier1.overallScore()).isGreaterThan(full.overallScore());
+    }
+
+    @Test
+    void webAppFinding_zapOrNucleiActiveScanResult_alwaysExcludedFromTier1Score() {
+        // ZAP/Nuclei are exclusively Tier 2 modules (see ZapAlertMapper/NucleiFindingMapper) -
+        // WEB_APP carries no rules_catalog rows at all (their rule_ids are dynamically generated
+        // per plugin/template), so unlike NETWORK_ANONYMOUS_FTP/NETWORK_FULL_PORT_SURFACE this
+        // can't be excluded via the ruleId-based TIER2_EXCLUSIVE set above - it's excluded by
+        // category instead, since Tier 1 never produces a WEB_APP finding at all. Real gap found
+        // live: before this exclusion existed, WEB_APP had no weight in ScoringEngine at all, so
+        // there was nothing to exclude and full/tier1 scores looked identical for every target -
+        // not because the split was working, but because it had nothing real to do.
+        List<Finding> findings = List.of(finding("ZAP_ALERT_40012", "CRITICAL", "WEB_APP"));
+
+        ScoreResult full = ScoringEngine.compute(findings, Map.of());
+        ScoreResult tier1 = tier1Only(findings);
+
+        assertThat(full.categoryScores().get("WEB_APP")).isEqualByComparingTo("60.00");
+        assertThat(tier1.categoryScores().get("WEB_APP")).isEqualByComparingTo("100.00");
         assertThat(tier1.overallScore()).isGreaterThan(full.overallScore());
     }
 

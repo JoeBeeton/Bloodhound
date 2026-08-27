@@ -26,14 +26,28 @@ import org.freedonia.bloodhound.server.findings.Finding;
  */
 public final class ScoringEngine {
 
-    /** Fixed weighting - not configurable in Phase 1. Categories with no scan module yet score 100 by falling out of the same general logic (zero open findings = zero deduction), so this table doesn't need to change as later milestones add EXPOSURE/NETWORK modules. */
+    /**
+     * Fixed weighting - not configurable in Phase 1. Categories with no scan module yet score
+     * 100 by falling out of the same general logic (zero open findings = zero deduction), so
+     * this table doesn't need to change as later milestones add new modules.
+     *
+     * <p>WEB_APP (ZAP/Nuclei active-scan findings) was added after a real gap was found live:
+     * it's the only category besides WHOIS/BREACH that ScoreImpactCalculator's naive/fast
+     * differential test already treated as a first-class category, but it had no weight slot
+     * here, so it never affected any score at all - full or Tier-1-only - even though ZAP and
+     * Nuclei are genuinely the highest-value Tier 2 findings (confirmed live: a target with 111
+     * open MEDIUM-severity active-scan findings scored identically with and without them). The
+     * original 6 weights (0.25/0.20/0.20/0.15/0.10/0.10) are scaled down proportionally to make
+     * room for WEB_APP at 0.15, still summing to exactly 1.00.
+     */
     static final Map<String, BigDecimal> CATEGORY_WEIGHTS = Map.of(
-            "EXPOSURE", new BigDecimal("0.25"),
-            "TLS", new BigDecimal("0.20"),
-            "DNS", new BigDecimal("0.20"),
-            "NETWORK", new BigDecimal("0.15"),
-            "HEADERS", new BigDecimal("0.10"),
-            "SUBDOMAIN_HYGIENE", new BigDecimal("0.10"));
+            "EXPOSURE", new BigDecimal("0.22"),
+            "TLS", new BigDecimal("0.17"),
+            "DNS", new BigDecimal("0.17"),
+            "NETWORK", new BigDecimal("0.13"),
+            "HEADERS", new BigDecimal("0.08"),
+            "SUBDOMAIN_HYGIENE", new BigDecimal("0.08"),
+            "WEB_APP", new BigDecimal("0.15"));
 
     private static final List<String> CATEGORIES = List.copyOf(CATEGORY_WEIGHTS.keySet());
 
