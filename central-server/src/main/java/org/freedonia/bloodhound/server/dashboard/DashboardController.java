@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.findings.OrgFinding;
@@ -71,18 +73,28 @@ public class DashboardController {
                 .map(t -> TargetSummary.from(t, scoreSnapshotRepository.findLatest(t.id()).orElse(null)))
                 .toList();
 
-        // Same per-target caching as FindingController#forOrganization: score impact needs
-        // each target's FULL open set, not this severity-filtered top-10 display list.
+        // Score impact needs each target's FULL open set as context (a category's "before"
+        // score depends on every open finding in it, not just this severity-filtered
+        // top-10 display list) - but only the handful of findings actually being displayed
+        // from that target need the expensive per-finding "what if this were resolved"
+        // recomputation, not its entire open set. See ScoreImpactCalculator#computeFor -
+        // computeAll here was a real, measured problem: a target with ~880 open findings
+        // (of which at most a few ever land in the top 10) took the dashboard from ~250ms
+        // to 15+ seconds on its own.
         var ruleWeights = ruleWeightRepository.findAllWeights();
-        Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget = new HashMap<>();
         List<OrgFinding> rawTopFindings =
                 findingRepository.findOpenByOrganization(orgId, TOP_FINDING_SEVERITIES, TOP_FINDINGS_LIMIT);
+        Map<UUID, Set<UUID>> displayedIdsByTarget = rawTopFindings.stream()
+                .collect(Collectors.groupingBy(
+                        of -> of.finding().targetId(),
+                        Collectors.mapping(of -> of.finding().id(), Collectors.toSet())));
+        Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget = new HashMap<>();
         List<OrgFindingSummary> topFindings = rawTopFindings.stream()
                 .map(orgFinding -> {
                     UUID targetId = orgFinding.finding().targetId();
                     Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
-                        var allOpen = findingRepository.findByTarget(id, null, null, null);
-                        return ScoreImpactCalculator.computeAll(allOpen, ruleWeights);
+                        var allOpen = findingRepository.findOpenForScoring(id);
+                        return ScoreImpactCalculator.computeFor(allOpen, displayedIdsByTarget.get(id), ruleWeights);
                     });
                     ScoreImpact impact = impacts.get(orgFinding.finding().id());
                     return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);

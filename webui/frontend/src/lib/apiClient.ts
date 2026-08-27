@@ -23,3 +23,16 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   }
   return res;
 }
+
+/**
+ * Paginated list endpoints (subdomains, findings) carry the true total match
+ * count in this header, since the response body itself may be a bounded
+ * page of a much larger result - see SubdomainController/FindingController.
+ * Falls back to the page's own length if the header is missing/unparseable,
+ * so a caller that doesn't care about the true total still gets a sane value.
+ */
+export function totalCountFromResponse(res: Response, fallbackCount: number): number {
+  const header = res.headers.get("X-Total-Count");
+  const parsed = header ? Number(header) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallbackCount;
+}

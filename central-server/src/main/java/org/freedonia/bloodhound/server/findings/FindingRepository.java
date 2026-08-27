@@ -97,6 +97,46 @@ public class FindingRepository {
         }
     }
 
+    private static final RowMapper<Finding> SCORING_ROW_MAPPER = (rs, rowNum) -> new Finding(
+            UUID.fromString(rs.getString("id")),
+            null,
+            UUID.fromString(rs.getString("target_id")),
+            null,
+            rs.getString("rule_id"),
+            rs.getString("severity"),
+            rs.getString("category"),
+            null,
+            null,
+            null,
+            rs.getString("affected_asset"),
+            null,
+            "OPEN",
+            null,
+            null,
+            null);
+
+    /**
+     * Lightweight projection for scoring/compound-risk context - carries only the fields
+     * {@link org.freedonia.bloodhound.server.scoring.ScoringEngine}, {@link
+     * org.freedonia.bloodhound.server.scoring.ScoreImpactCalculator}, and {@link
+     * org.freedonia.bloodhound.server.compound.CompoundRiskEngine} actually read (id, target,
+     * ruleId, severity, category, affectedAsset), not {@code SELECT *}. This context gets
+     * fetched on essentially every dashboard/findings-list/score-snapshot computation for a
+     * target - confirmed live that {@code SELECT *} here moved 16MB per request for one real
+     * target with 36,466 open findings, almost entirely title/description/evidence text that
+     * none of those three consumers ever look at (that data volume, not CPU, was the last
+     * remaining chunk of an 8+ second response after the O(n log n) scoring rewrite and the
+     * BigDecimal precision fix already resolved the CPU side). Every other {@link Finding}
+     * field is null on rows this returns - never use it where those are needed.
+     */
+    public List<Finding> findOpenForScoring(UUID targetId) {
+        return jdbc.query(
+                "SELECT id, target_id, rule_id, severity, category, affected_asset FROM findings "
+                        + "WHERE target_id = ? AND status = 'OPEN'",
+                SCORING_ROW_MAPPER,
+                targetId);
+    }
+
     /** Defaults to status=OPEN when {@code status} is null - "current findings for a target" means open ones. */
     public List<Finding> findByTarget(UUID targetId, String severity, String category, String status) {
         StringBuilder sql = new StringBuilder("SELECT * FROM findings WHERE target_id = ?");
@@ -128,8 +168,19 @@ public class FindingRepository {
      * the pattern findOpenByOrganization already uses for severity - a bare single value
      * works too since a 1-element split is just that value.
      */
+    /**
+     * Bounded, offset-paginated - like {@code SubdomainRepository#findByTarget},
+     * this backs a browser-facing endpoint and a target's open-finding count
+     * is unbounded in principle (confirmed live: 36,466 for one target in
+     * this deployment - that specific request took over two minutes and
+     * never actually returned before this was added). See {@link
+     * #countByTargetFiltered} for the total. Score-impact computation is
+     * unaffected by this cap: it still needs, and still gets, the target's
+     * FULL open set as context (see {@code FindingController#list}) - only
+     * the rows actually shipped to the browser are limited here.
+     */
     public List<FindingDetail> findByTargetDetailed(
-            UUID targetId, String severity, String category, String status, String affectedAsset) {
+            UUID targetId, String severity, String category, String status, String affectedAsset, int limit, int offset) {
         StringBuilder sql = new StringBuilder(
                 "SELECT f.*, COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
                         + "rc.remediation_advice AS remediation_advice "
@@ -139,6 +190,27 @@ public class FindingRepository {
                         + "WHERE f.target_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(targetId);
+        appendFilters(sql, args, severity, category, status, affectedAsset);
+        sql.append(" ORDER BY CASE f.severity "
+                + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
+                + "f.created_at DESC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), DETAIL_MAPPER, args.toArray());
+    }
+
+    /** Same filters as {@link #findByTargetDetailed}, unpaginated count - lets a caller show "showing N of TOTAL". */
+    public int countByTargetFiltered(UUID targetId, String severity, String category, String status, String affectedAsset) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM findings f WHERE f.target_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(targetId);
+        appendFilters(sql, args, severity, category, status, affectedAsset);
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
+        return count != null ? count : 0;
+    }
+
+    private static void appendFilters(
+            StringBuilder sql, List<Object> args, String severity, String category, String status, String affectedAsset) {
         appendInClause(sql, args, "f.severity", severity);
         appendInClause(sql, args, "f.category", category);
         if (affectedAsset != null) {
@@ -147,10 +219,6 @@ public class FindingRepository {
         }
         sql.append(" AND f.status = ?");
         args.add(status != null ? status : "OPEN");
-        sql.append(" ORDER BY CASE f.severity "
-                + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
-                + "f.created_at DESC");
-        return jdbc.query(sql.toString(), DETAIL_MAPPER, args.toArray());
     }
 
     /** Appends " AND column IN (?,?,...)" for a comma-separated value list; a no-op if csv is null/blank. */

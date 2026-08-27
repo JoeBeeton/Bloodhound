@@ -34,8 +34,7 @@ public class ScoreSnapshotService {
      * had the chance to accumulate those findings.
      */
     public ScoreSnapshot computeAndPersist(UUID targetId, UUID scanRunId) {
-        // findByTarget defaults to status=OPEN when the status filter is null.
-        List<Finding> openFindings = findingRepository.findByTarget(targetId, null, null, null);
+        List<Finding> openFindings = findingRepository.findOpenForScoring(targetId);
         var ruleWeights = ruleWeightRepository.findAllWeights();
 
         ScoreResult full = ScoringEngine.compute(openFindings, ruleWeights);

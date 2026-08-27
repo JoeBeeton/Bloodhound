@@ -14,9 +14,15 @@ import { TechHostingPanel } from "../components/TechHostingPanel";
 import { ScanRunDrilldown } from "../components/ScanRunDrilldown";
 import { ScoreTrendChart } from "../components/ScoreTrendChart";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
 import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target } from "../lib/types";
+
+/** Server-capped page of results plus the true match count (see X-Total-Count / totalCountFromResponse) - the count can exceed items.length when the server truncated a large result set. */
+interface FindingsPage {
+  items: Finding[];
+  totalCount: number;
+}
 
 async function updateSchedule(targetId: string, scanCadenceSeconds: number): Promise<Target> {
   const res = await apiFetch(`/api/v1/targets/${targetId}`, {
@@ -34,14 +40,14 @@ async function fetchTarget(id: string): Promise<Target> {
   return res.json();
 }
 
-async function fetchFindings(targetId: string, filters: FindingsFilterState): Promise<Finding[]> {
-  const params = new URLSearchParams();
+async function fetchFindings(targetId: string, filters: FindingsFilterState): Promise<FindingsPage> {
+  const params = new URLSearchParams({ limit: "500" });
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
-  const qs = params.toString();
-  const res = await apiFetch(`/api/v1/targets/${targetId}/findings${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`/api/v1/targets/${targetId}/findings?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load findings.");
-  return res.json();
+  const items: Finding[] = await res.json();
+  return { items, totalCount: totalCountFromResponse(res, items.length) };
 }
 
 async function triggerScan(targetId: string): Promise<{ id: string }> {
@@ -88,22 +94,33 @@ const TIER1_SUBDOMAIN_CAP = 40;
 const TIER2_SUBDOMAIN_CAP = 15;
 
 function ShowMoreToggle({
+  fetchedCount,
   totalCount,
   expanded,
   onToggle,
 }: {
+  /** How many rows are actually available client-side to expand into - may be less than totalCount if the server capped the response (see FindingController's X-Total-Count). */
+  fetchedCount: number;
   totalCount: number;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  if (totalCount <= DISPLAY_CAP) return null;
+  if (fetchedCount <= DISPLAY_CAP) return null;
+  const truncated = totalCount > fetchedCount;
   return (
-    <button
-      onClick={onToggle}
-      className="mt-3 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:text-neon-cyan/70"
-    >
-      {expanded ? "Show fewer ▴" : `Show all ${totalCount} ▾`}
-    </button>
+    <div className="mt-3">
+      <button
+        onClick={onToggle}
+        className="font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:text-neon-cyan/70"
+      >
+        {expanded ? "Show fewer ▴" : `Show all ${fetchedCount} ▾`}
+      </button>
+      {truncated && expanded && (
+        <p className="mt-1 font-mono text-[11px] text-slate-500">
+          Showing {fetchedCount} of {totalCount} total — narrow with filters above to see more.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -186,10 +203,10 @@ export function TargetDetailPage() {
   // biggest score improvement" - findings that don't affect the score (null/NaN
   // delta) sink to the bottom rather than interleaving confusingly with real deltas.
   const sortedFindings = sortByScoreImpact
-    ? findingsQuery.data
-        ?.slice()
+    ? findingsQuery.data?.items
+        .slice()
         .sort((a, b) => (b.scoreImpact?.overallScoreDelta ?? -1) - (a.scoreImpact?.overallScoreDelta ?? -1))
-    : findingsQuery.data;
+    : findingsQuery.data?.items;
   const visibleFindings = findingsExpanded ? sortedFindings : sortedFindings?.slice(0, DISPLAY_CAP);
 
   return (
@@ -314,9 +331,9 @@ export function TargetDetailPage() {
 
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">
-            Open findings {findingsQuery.data ? `(${findingsQuery.data.length})` : ""}
+            Open findings {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
           </h2>
-          {findingsQuery.data && findingsQuery.data.length > 1 && (
+          {findingsQuery.data && findingsQuery.data.items.length > 1 && (
             <button
               onClick={() => setSortByScoreImpact((v) => !v)}
               className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
@@ -326,13 +343,13 @@ export function TargetDetailPage() {
           )}
         </div>
 
-        <FindingsFilterBar value={filters} onChange={setFilters} resultCount={findingsQuery.data?.length} />
+        <FindingsFilterBar value={filters} onChange={setFilters} resultCount={findingsQuery.data?.totalCount} />
 
         {findingsQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading findings…</p>}
         {findingsQuery.isError && (
           <ErrorState message="Failed to load findings." onRetry={() => findingsQuery.refetch()} />
         )}
-        {findingsQuery.data?.length === 0 && (
+        {findingsQuery.data?.totalCount === 0 && (
           <p className="font-mono text-sm text-slate-400">
             {filters.severities.length > 0 || filters.categories.length > 0
               ? "No findings match the selected filters."
@@ -347,7 +364,8 @@ export function TargetDetailPage() {
         </div>
         {findingsQuery.data && (
           <ShowMoreToggle
-            totalCount={findingsQuery.data.length}
+            fetchedCount={findingsQuery.data.items.length}
+            totalCount={findingsQuery.data.totalCount}
             expanded={findingsExpanded}
             onToggle={() => setFindingsExpanded((v) => !v)}
           />

@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.subdomain;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -137,9 +138,55 @@ public class SubdomainRepository {
                 danglingCnameTarget);
     }
 
-    public List<Subdomain> findByTarget(UUID targetId) {
+    /**
+     * Bounded, offset-paginated - a target's subdomain list is unbounded in
+     * principle (a real target can have tens of thousands: confirmed live,
+     * 57,107 for one target in this deployment) and this backs a browser-
+     * facing endpoint, so shipping "everything" isn't just slow, it's a
+     * multi-megabyte response no UI should ever try to render at once. See
+     * {@link #countByTarget} for the total, used to tell the caller how much
+     * more there is beyond this page.
+     */
+    /** {@code hostnameContains} is a case-insensitive substring match, null/blank for no filter - lets a target's search box genuinely search its full subdomain set server-side rather than only whatever page happened to be fetched. */
+    public List<Subdomain> findByTarget(UUID targetId, String hostnameContains, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM subdomains WHERE target_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(targetId);
+        if (hostnameContains != null && !hostnameContains.isBlank()) {
+            sql.append(" AND hostname ILIKE ?");
+            args.add("%" + hostnameContains + "%");
+        }
+        sql.append(" ORDER BY hostname ASC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), rowMapper, args.toArray());
+    }
+
+    public int countByTarget(UUID targetId, String hostnameContains) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM subdomains WHERE target_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(targetId);
+        if (hostnameContains != null && !hostnameContains.isBlank()) {
+            sql.append(" AND hostname ILIKE ?");
+            args.add("%" + hostnameContains + "%");
+        }
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
+        return count != null ? count : 0;
+    }
+
+    /**
+     * Exact-hostname lookup, for the subdomain-detail page - fetching the
+     * whole (possibly tens-of-thousands-row) list client-side just to find
+     * one by hostname was itself a real problem this exists to fix, not just
+     * an unbounded-payload one: a subdomain past whatever page the paginated
+     * {@link #findByTarget} happened to return would silently 404 on its own
+     * detail page otherwise.
+     */
+    public java.util.Optional<Subdomain> findByTargetAndHostname(UUID targetId, String hostname) {
         return jdbc.query(
-                "SELECT * FROM subdomains WHERE target_id = ? ORDER BY hostname ASC", rowMapper, targetId);
+                        "SELECT * FROM subdomains WHERE target_id = ? AND hostname = ?", rowMapper, targetId, hostname)
+                .stream()
+                .findFirst();
     }
 
     /**
