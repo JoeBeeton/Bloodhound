@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.64.2",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.1.3",

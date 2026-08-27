@@ -90,6 +90,10 @@ webui/frontend (npm dependencies bundled into the built SPA)
     Copyright the recharts group.
     https://recharts.org
 
+  d3-force                                              ISC License
+    Copyright Mike Bostock.
+    https://d3js.org
+
   Tailwind CSS                                          MIT License
     Copyright Tailwind Labs, Inc.
     https://tailwindcss.com

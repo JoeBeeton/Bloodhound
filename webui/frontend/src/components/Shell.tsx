@@ -40,6 +40,9 @@ export function Shell({ children }: { children: ReactNode }) {
               <NavLink to="/targets" className={NAV_LINK_CLASS}>
                 Targets
               </NavLink>
+              <NavLink to="/map" className={NAV_LINK_CLASS}>
+                Map
+              </NavLink>
               <NavLink to="/scans" className={NAV_LINK_CLASS}>
                 Scans
               </NavLink>
