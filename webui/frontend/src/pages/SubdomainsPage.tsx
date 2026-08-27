@@ -1,11 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ErrorState } from "../components/ErrorState";
 import { HostingBadge } from "../components/TechHostingPanel";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Severity, Subdomain, Target } from "../lib/types";
+
+/** Server-capped page plus the true match count - see totalCountFromResponse; a target can have far more rows than the server will ever return in one request (confirmed live: 57,107 subdomains / 36,466 findings for one real target). */
+interface Page<T> {
+  items: T[];
+  totalCount: number;
+}
+
+/** Comfortably above what any normal target has, while staying well under the server's hard cap - large enough that this page's "full inventory" framing stays true for the vast majority of targets. */
+const PAGE_LIMIT = 500;
 
 async function fetchTarget(id: string): Promise<Target> {
   const res = await apiFetch(`/api/v1/targets/${id}`);
@@ -13,10 +22,13 @@ async function fetchTarget(id: string): Promise<Target> {
   return res.json();
 }
 
-async function fetchSubdomains(targetId: string): Promise<Subdomain[]> {
-  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains`);
+async function fetchSubdomains(targetId: string, hostnameSearch: string): Promise<Page<Subdomain>> {
+  const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+  if (hostnameSearch) params.set("hostname", hostnameSearch);
+  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load subdomains.");
-  return res.json();
+  const items: Subdomain[] = await res.json();
+  return { items, totalCount: totalCountFromResponse(res, items.length) };
 }
 
 async function fetchFingerprints(targetId: string): Promise<FingerprintEntry[]> {
@@ -25,10 +37,11 @@ async function fetchFingerprints(targetId: string): Promise<FingerprintEntry[]> 
   return res.json();
 }
 
-async function fetchFindings(targetId: string): Promise<Finding[]> {
-  const res = await apiFetch(`/api/v1/targets/${targetId}/findings`);
+async function fetchFindings(targetId: string): Promise<Page<Finding>> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}/findings?limit=${PAGE_LIMIT}`);
   if (!res.ok) throw new Error("Failed to load findings.");
-  return res.json();
+  const items: Finding[] = await res.json();
+  return { items, totalCount: totalCountFromResponse(res, items.length) };
 }
 
 const SEVERITY_ORDER: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
@@ -53,9 +66,20 @@ export function SubdomainsPage() {
   const targetId = id!;
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  // Debounced so typing doesn't fire a request per keystroke - the search now genuinely
+  // queries the server (see fetchSubdomains), not just the already-fetched page, so it's
+  // a real network round trip each time it changes.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const targetQuery = useQuery({ queryKey: ["target", targetId], queryFn: () => fetchTarget(targetId) });
-  const subdomainsQuery = useQuery({ queryKey: ["subdomains", targetId], queryFn: () => fetchSubdomains(targetId) });
+  const subdomainsQuery = useQuery({
+    queryKey: ["subdomains", targetId, debouncedSearch],
+    queryFn: () => fetchSubdomains(targetId, debouncedSearch),
+  });
   const fingerprintsQuery = useQuery({
     queryKey: ["fingerprints", targetId],
     queryFn: () => fetchFingerprints(targetId),
@@ -69,7 +93,7 @@ export function SubdomainsPage() {
 
   const findingsByHostname = useMemo(() => {
     const map = new Map<string, Finding[]>();
-    for (const f of findingsQuery.data ?? []) {
+    for (const f of findingsQuery.data?.items ?? []) {
       const list = map.get(f.affectedAsset) ?? [];
       list.push(f);
       map.set(f.affectedAsset, list);
@@ -77,9 +101,13 @@ export function SubdomainsPage() {
     return map;
   }, [findingsQuery.data]);
 
-  const filtered = (subdomainsQuery.data ?? []).filter((s) =>
-    s.hostname.toLowerCase().includes(search.toLowerCase()),
-  );
+  // Filtering now happens server-side (see fetchSubdomains's hostname param) so this page
+  // stays correct against a target's FULL subdomain set, not just whatever page was
+  // fetched - filtered === subdomains, kept as its own name only so the JSX below reads
+  // the same as before.
+  const filtered = subdomainsQuery.data?.items ?? [];
+  const subdomainsTruncated = !!subdomainsQuery.data && subdomainsQuery.data.totalCount > subdomainsQuery.data.items.length;
+  const findingsTruncated = !!findingsQuery.data && findingsQuery.data.totalCount > findingsQuery.data.items.length;
 
   const isLoading = subdomainsQuery.isLoading || fingerprintsQuery.isLoading || findingsQuery.isLoading;
   const isError = subdomainsQuery.isError || fingerprintsQuery.isError || findingsQuery.isError;
@@ -117,20 +145,30 @@ export function SubdomainsPage() {
           />
         )}
 
-        {subdomainsQuery.data && subdomainsQuery.data.length === 0 && (
+        {subdomainsQuery.data && subdomainsQuery.data.totalCount === 0 && !search && (
           <p className="font-mono text-sm text-slate-400">
             No subdomains discovered yet — run a scan to enumerate them.
           </p>
         )}
 
-        {subdomainsQuery.data && subdomainsQuery.data.length > 0 && (
+        {subdomainsQuery.data && (subdomainsQuery.data.totalCount > 0 || search) && (
           <>
+            {(subdomainsTruncated || findingsTruncated) && (
+              <p className="mb-3 font-mono text-xs text-neon-amber">
+                {subdomainsTruncated &&
+                  `Showing ${subdomainsQuery.data.items.length} of ${subdomainsQuery.data.totalCount} subdomains. `}
+                {findingsTruncated &&
+                  `Findings summary reflects the first ${findingsQuery.data!.items.length} of ${findingsQuery.data!.totalCount} open findings. `}
+                Use the filter below to narrow results.
+              </p>
+            )}
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter by hostname…"
               className="mb-4 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-neon-cyan"
             />
+            {filtered.length > 0 && (
             <div className="overflow-x-auto rounded-lg border border-neon-cyan/20 bg-panel/60">
               <table className="w-full min-w-[720px] text-left font-mono text-xs">
                 <thead>
@@ -182,6 +220,7 @@ export function SubdomainsPage() {
                 </tbody>
               </table>
             </div>
+            )}
             {filtered.length === 0 && (
               <p className="mt-4 font-mono text-sm text-slate-400">No subdomains match “{search}”.</p>
             )}

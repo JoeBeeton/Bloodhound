@@ -10,9 +10,21 @@ import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Subdomain } from "../lib/types";
 
-async function fetchSubdomains(targetId: string): Promise<Subdomain[]> {
-  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains`);
-  if (!res.ok) throw new Error("Failed to load subdomains.");
+/**
+ * Single-hostname lookup, not "fetch the whole target's subdomain list and
+ * find it client-side" (what this used to do) - a target can have tens of
+ * thousands of subdomains (confirmed live, 57,107 for one real target), so
+ * that would have meant a multi-second, multi-megabyte fetch just to load
+ * one subdomain's detail page, and would have silently failed to find a
+ * subdomain outside whatever page the (now-paginated) list endpoint
+ * happened to return. 404 is a genuine "this subdomain doesn't exist for
+ * this target" case, not an error - the query below just resolves to
+ * undefined rather than throwing for it.
+ */
+async function fetchSubdomain(targetId: string, hostname: string): Promise<Subdomain | undefined> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains/${encodeURIComponent(hostname)}`);
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error("Failed to load subdomain.");
   return res.json();
 }
 
@@ -43,7 +55,10 @@ export function SubdomainDetailPage() {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [filters, setFilters] = useState<FindingsFilterState>({ severities: [], categories: [] });
 
-  const subdomainsQuery = useQuery({ queryKey: ["subdomains", targetId], queryFn: () => fetchSubdomains(targetId) });
+  const subdomainQuery = useQuery({
+    queryKey: ["subdomain", targetId, hostname],
+    queryFn: () => fetchSubdomain(targetId, hostname),
+  });
   const fingerprintsQuery = useQuery({
     queryKey: ["fingerprints", targetId],
     queryFn: () => fetchFingerprints(targetId),
@@ -53,7 +68,7 @@ export function SubdomainDetailPage() {
     queryFn: () => fetchFindingsForHost(targetId, hostname, filters),
   });
 
-  const subdomain = subdomainsQuery.data?.find((s) => s.hostname === hostname);
+  const subdomain = subdomainQuery.data;
   const fingerprint = fingerprintsQuery.data?.find((f) => f.hostname === hostname);
 
   return (

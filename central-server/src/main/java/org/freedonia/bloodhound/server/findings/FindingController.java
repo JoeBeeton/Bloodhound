@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.dto.FindingSummary;
 import org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary;
@@ -17,6 +19,7 @@ import org.freedonia.bloodhound.server.scoring.ScoreImpactCalculator;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -62,7 +65,10 @@ public class FindingController {
      * severity-filtered, limit-capped display list), since a category's "before" score
      * depends on every open finding in it - so per distinct target_id among the results,
      * fetch that target's complete open set once and reuse it for every displayed finding
-     * from that target.
+     * from that target. The expensive per-finding recomputation itself, though, only runs
+     * for the findings actually being displayed (see ScoreImpactCalculator#computeFor) -
+     * computeAll here was a real, measured problem against a target with a large
+     * open-finding count, same issue as DashboardController's identical query shape.
      */
     @GetMapping("/api/v1/findings")
     public List<OrgFindingSummary> forOrganization(
@@ -76,14 +82,18 @@ public class FindingController {
                 findingRepository.findOpenByOrganization(principal.organizationId(), severities, limit);
 
         var ruleWeights = ruleWeightRepository.findAllWeights();
+        Map<UUID, Set<UUID>> displayedIdsByTarget = orgFindings.stream()
+                .collect(Collectors.groupingBy(
+                        of -> of.finding().targetId(),
+                        Collectors.mapping(of -> of.finding().id(), Collectors.toSet())));
         Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget = new HashMap<>();
 
         return orgFindings.stream()
                 .map(orgFinding -> {
                     UUID targetId = orgFinding.finding().targetId();
                     Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
-                        var allOpen = findingRepository.findByTarget(id, null, null, null);
-                        return ScoreImpactCalculator.computeAll(allOpen, ruleWeights);
+                        var allOpen = findingRepository.findOpenForScoring(id);
+                        return ScoreImpactCalculator.computeFor(allOpen, displayedIdsByTarget.get(id), ruleWeights);
                     });
                     ScoreImpact impact = impacts.get(orgFinding.finding().id());
                     return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);
@@ -91,33 +101,42 @@ public class FindingController {
                 .toList();
     }
 
+    /** Generous enough that the overwhelming majority of targets see everything in one request, without risking the multi-minute/multi-MB response an unbounded query against a large target produces - confirmed live, 36,466 open findings for one target in this deployment. */
+    private static final int DEFAULT_FINDINGS_LIMIT = 200;
+
+    private static final int MAX_FINDINGS_LIMIT = 500;
+
     @GetMapping("/api/v1/targets/{id}/findings")
-    public List<FindingSummary> forTarget(
+    public ResponseEntity<List<FindingSummary>> forTarget(
             @PathVariable UUID id,
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String affectedAsset,
+            @RequestParam(defaultValue = "" + DEFAULT_FINDINGS_LIMIT) int limit,
+            @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
         Target target = targetRepository
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(FindingController::notFound);
-        return list(target.id(), severity, category, status, affectedAsset);
+        return list(target.id(), severity, category, status, affectedAsset, limit, offset);
     }
 
     @GetMapping("/api/v1/runs/{runId}/findings")
-    public List<FindingSummary> forRun(
+    public ResponseEntity<List<FindingSummary>> forRun(
             @PathVariable UUID runId,
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String affectedAsset,
+            @RequestParam(defaultValue = "" + DEFAULT_FINDINGS_LIMIT) int limit,
+            @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
         ScanRun run = scanRunRepository.findById(runId).orElseThrow(FindingController::notFound);
         Target target = targetRepository
                 .findByIdAndOrganization(run.targetId(), principal.organizationId())
                 .orElseThrow(FindingController::notFound);
-        return list(target.id(), severity, category, status, affectedAsset);
+        return list(target.id(), severity, category, status, affectedAsset, limit, offset);
     }
 
     /**
@@ -127,16 +146,33 @@ public class FindingController {
      * that isn't actually OPEN (e.g. a status=RESOLVED query) simply won't be in that
      * map and gets scoreImpact=null, since "what would remediating this improve" only
      * means something for a finding that's still open right now.
+     *
+     * <p>Response body shape is unchanged (a bare JSON array) to keep every existing
+     * frontend caller working - the total count of matching findings (which can be far
+     * larger than what's actually returned) is carried in the X-Total-Count header
+     * instead, same convention as SubdomainController#list. Only the rows actually
+     * shipped are limited; the score-impact computation above still sees every open
+     * finding for correctness (see ScoreImpactCalculator's own javadoc for why this
+     * being O(n log n) now, not O(n²), makes that affordable even for a large target).
      */
-    private List<FindingSummary> list(UUID targetId, String severity, String category, String status, String affectedAsset) {
-        var displayed = findingRepository.findByTargetDetailed(targetId, severity, category, status, affectedAsset);
-        var allOpen = findingRepository.findByTarget(targetId, null, null, null);
-        var ruleWeights = ruleWeightRepository.findAllWeights();
-        Map<UUID, ScoreImpact> impacts = ScoreImpactCalculator.computeAll(allOpen, ruleWeights);
+    private ResponseEntity<List<FindingSummary>> list(
+            UUID targetId, String severity, String category, String status, String affectedAsset, int limit, int offset) {
+        int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
+        int boundedOffset = Math.max(offset, 0);
 
-        return displayed.stream()
+        var displayed = findingRepository.findByTargetDetailed(
+                targetId, severity, category, status, affectedAsset, boundedLimit, boundedOffset);
+        var allOpen = findingRepository.findOpenForScoring(targetId);
+        var ruleWeights = ruleWeightRepository.findAllWeights();
+        Set<UUID> displayedIds = displayed.stream().map(d -> d.finding().id()).collect(Collectors.toSet());
+        Map<UUID, ScoreImpact> impacts = ScoreImpactCalculator.computeFor(allOpen, displayedIds, ruleWeights);
+
+        List<FindingSummary> page = displayed.stream()
                 .map(d -> FindingSummary.from(d, parseEvidence(d.finding().evidenceJson()), impacts.get(d.finding().id())))
                 .toList();
+        int totalCount = findingRepository.countByTargetFiltered(targetId, severity, category, status, affectedAsset);
+
+        return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 
     private Map<String, Object> parseEvidence(String json) {
