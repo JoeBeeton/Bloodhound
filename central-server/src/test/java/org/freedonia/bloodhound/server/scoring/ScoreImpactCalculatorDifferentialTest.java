@@ -32,7 +32,7 @@ class ScoreImpactCalculatorDifferentialTest {
     private static Finding finding(String ruleId, String severity, String category) {
         UUID run = UUID.randomUUID();
         return new Finding(
-                UUID.randomUUID(), run, UUID.randomUUID(), "SOME_MODULE", ruleId, severity, category, "title",
+                UUID.randomUUID(), "bh-test-1", run, UUID.randomUUID(), "SOME_MODULE", ruleId, severity, category, "title",
                 "description", "{}", "asset", run, "OPEN", null, Instant.now(), Instant.now());
     }
 

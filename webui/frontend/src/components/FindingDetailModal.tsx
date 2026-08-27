@@ -68,6 +68,7 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
       <p className="mb-4 text-sm leading-relaxed text-slate-300">{finding.description}</p>
 
       <div className="mb-4 grid grid-cols-2 gap-3 rounded border border-slate-800 bg-void/40 p-3 sm:grid-cols-3">
+        <Field label="Finding ID">{finding.displayId}</Field>
         <Field label="Rule ID">{finding.ruleId}</Field>
         <Field label="Module">{finding.moduleType}</Field>
         <Field label="Affected asset">{finding.affectedAsset}</Field>

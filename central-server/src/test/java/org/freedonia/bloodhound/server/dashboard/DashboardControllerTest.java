@@ -46,7 +46,7 @@ class DashboardControllerTest {
 
     private Finding finding(UUID id, UUID targetId, String evidenceJson) {
         return new Finding(
-                id, UUID.randomUUID(), targetId, "HTTP", "RULE_X", "CRITICAL", "EXPOSURE", "title", "desc",
+                id, "bh-test-1", UUID.randomUUID(), targetId, "HTTP", "RULE_X", "CRITICAL", "EXPOSURE", "title", "desc",
                 evidenceJson, "asset", UUID.randomUUID(), "OPEN", null, Instant.now(), Instant.now());
     }
 

@@ -14,6 +14,7 @@ class FindingDiffEngineTest {
         UUID id = UUID.randomUUID();
         return new Finding(
                 id,
+                "bh-test-1",
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 "DNS_POSTURE",

@@ -9,6 +9,7 @@ import org.freedonia.bloodhound.server.scoring.ScoreImpact;
 
 public record FindingSummary(
         UUID id,
+        String displayId,
         UUID targetId,
         String moduleType,
         String ruleId,
@@ -37,6 +38,7 @@ public record FindingSummary(
         Finding finding = detail.finding();
         return new FindingSummary(
                 finding.id(),
+                finding.displayId(),
                 finding.targetId(),
                 finding.moduleType(),
                 finding.ruleId(),
@@ -67,6 +69,7 @@ public record FindingSummary(
     public static FindingSummary from(Finding finding, Map<String, Object> evidence, ScoreImpact scoreImpact) {
         return new FindingSummary(
                 finding.id(),
+                finding.displayId(),
                 finding.targetId(),
                 finding.moduleType(),
                 finding.ruleId(),

@@ -5,6 +5,8 @@ import java.util.UUID;
 
 public record Finding(
         UUID id,
+        /** "bh-&lt;target-hostname&gt;-&lt;n&gt;", a stable per-target sequential label - see V33__finding_display_id.sql. Null on rows from FindingRepository's lean scoring projection, which never needs it. */
+        String displayId,
         UUID scanRunId,
         UUID targetId,
         String moduleType,

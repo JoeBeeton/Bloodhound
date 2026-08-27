@@ -210,6 +210,12 @@ export interface TyposquatCandidate {
   visualSimilarityPercent: number | null;
 }
 
+/** GET /api/v1/targets/{id}/typosquats' response shape. */
+export interface TyposquatListResponse {
+  realDomainHasScreenshot: boolean;
+  candidates: TyposquatCandidate[];
+}
+
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
 /**
@@ -232,6 +238,8 @@ export interface ScoreImpact {
 
 export interface Finding {
   id: string;
+  /** Stable, human-friendly per-target label ("bh-example.co.uk-1") - easier to reference than the raw id. */
+  displayId: string;
   targetId: string;
   moduleType: string;
   ruleId: string;
@@ -284,6 +292,7 @@ export interface FindingDiffResponse {
 /** A finding paired with the hostname of the target it belongs to - the org-wide /api/v1/findings shape. */
 export interface OrgFinding {
   id: string;
+  displayId: string;
   targetId: string;
   targetHostname: string;
   moduleType: string;
