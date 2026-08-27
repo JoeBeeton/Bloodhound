@@ -5,6 +5,7 @@ import { AdminRulesCatalogPage } from "./pages/AdminRulesCatalogPage";
 import { AdminScimPage } from "./pages/AdminScimPage";
 import { AdminSlackPage } from "./pages/AdminSlackPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { ApiKeysPage } from "./pages/ApiKeysPage";
 import { ComparePage } from "./pages/ComparePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AdminSsoPage } from "./pages/AdminSsoPage";
@@ -60,6 +61,14 @@ export default function App() {
           element={
             <RequireAuth>
               <SubdomainDetailPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/settings/api-keys"
+          element={
+            <RequireAuth>
+              <ApiKeysPage />
             </RequireAuth>
           }
         />

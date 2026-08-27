@@ -26,6 +26,11 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 
+    // OpenAPI/Swagger UI for the external read-only API (Apache-2.0). Serves the
+    // generated spec + interactive docs from the same running app, no separate
+    // toolchain - see config.OpenApiConfig for the apiKey security scheme.
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 
