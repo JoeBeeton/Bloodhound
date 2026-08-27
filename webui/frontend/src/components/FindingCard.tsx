@@ -50,7 +50,9 @@ export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect:
       <p className="font-mono text-sm font-semibold text-slate-100">{finding.title}</p>
       <p className="mt-1 text-sm text-slate-400">{finding.description}</p>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="font-mono text-xs text-slate-400">asset: {finding.affectedAsset}</p>
+        <p className="font-mono text-xs text-slate-400">
+          <span className="text-slate-600">{finding.displayId}</span> · asset: {finding.affectedAsset}
+        </p>
         <ScoreImpactBadge impact={finding.scoreImpact} />
       </div>
     </button>

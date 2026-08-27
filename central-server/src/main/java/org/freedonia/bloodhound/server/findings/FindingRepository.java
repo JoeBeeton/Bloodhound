@@ -16,6 +16,7 @@ public class FindingRepository {
 
     private static final RowMapper<Finding> ROW_MAPPER = (rs, rowNum) -> new Finding(
             UUID.fromString(rs.getString("id")),
+            rs.getString("display_id"),
             UUID.fromString(rs.getString("scan_run_id")),
             UUID.fromString(rs.getString("target_id")),
             rs.getString("module_type"),
@@ -66,11 +67,13 @@ public class FindingRepository {
     }
 
     public void insert(UUID scanRunId, UUID targetId, String moduleType, FindingPayload payload) {
+        String displayId = nextDisplayId(targetId);
         jdbc.update(
-                "INSERT INTO findings (id, scan_run_id, target_id, module_type, rule_id, severity, category, "
+                "INSERT INTO findings (id, display_id, scan_run_id, target_id, module_type, rule_id, severity, category, "
                         + "title, description, evidence, affected_asset, first_detected_scan_run_id) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)",
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)",
                 UUID.randomUUID(),
+                displayId,
                 scanRunId,
                 targetId,
                 moduleType,
@@ -82,6 +85,25 @@ public class FindingRepository {
                 writeJson(payload.evidence()),
                 payload.affectedAsset(),
                 scanRunId);
+    }
+
+    /**
+     * Atomically claims the next sequential number for this target and returns the full
+     * "bh-&lt;hostname&gt;-&lt;n&gt;" display id. Safe under concurrent inserts for the same target
+     * (multiple worker replicas reporting findings for the same host around the same time,
+     * exactly the scenario that produced a real duplicate-finding bug elsewhere in this ingestion
+     * path - see FindingReconciler): the UPDATE...RETURNING below is a single atomic SQL
+     * statement, and Postgres serializes concurrent UPDATEs to the same targets row via
+     * row-level locking, so two callers can never be handed the same number - unlike a
+     * read-then-write "SELECT next_finding_number, then UPDATE" pattern, which would have
+     * exactly the same race window as that bug.
+     */
+    private String nextDisplayId(UUID targetId) {
+        java.util.Map<String, Object> row = jdbc.queryForMap(
+                "UPDATE targets SET next_finding_number = next_finding_number + 1 WHERE id = ? "
+                        + "RETURNING next_finding_number - 1 AS claimed_number, hostname",
+                targetId);
+        return "bh-" + row.get("hostname") + "-" + row.get("claimed_number");
     }
 
     /** Reproduced again this run: bump updated_at and move scan_run_id to the current run, without duplicating the row. */
@@ -99,6 +121,7 @@ public class FindingRepository {
 
     private static final RowMapper<Finding> SCORING_ROW_MAPPER = (rs, rowNum) -> new Finding(
             UUID.fromString(rs.getString("id")),
+            null,
             null,
             UUID.fromString(rs.getString("target_id")),
             null,

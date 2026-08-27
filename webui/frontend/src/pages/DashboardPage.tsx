@@ -134,7 +134,8 @@ export function DashboardPage() {
                           </span>
                         </div>
                         <p className="font-mono text-sm text-slate-200">{f.title}</p>
-                        <div className="mt-1">
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] text-slate-600">{f.displayId}</span>
                           <ScoreImpactBadge impact={f.scoreImpact} />
                         </div>
                       </button>
@@ -169,7 +170,10 @@ export function DashboardPage() {
                           </span>
                         </div>
                         <p className="font-mono text-sm text-slate-200">{f.title}</p>
-                        <p className="mt-1 font-mono text-[11px] text-slate-500">{new Date(f.createdAt).toLocaleString()}</p>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] text-slate-600">{f.displayId}</span>
+                          <span className="font-mono text-[11px] text-slate-500">{new Date(f.createdAt).toLocaleString()}</span>
+                        </div>
                       </button>
                     ))}
                   </div>

@@ -16,6 +16,7 @@ class ScoringEngineTest {
         UUID run = UUID.randomUUID();
         return new Finding(
                 UUID.randomUUID(),
+                "bh-test-1",
                 run,
                 UUID.randomUUID(),
                 "SOME_MODULE",

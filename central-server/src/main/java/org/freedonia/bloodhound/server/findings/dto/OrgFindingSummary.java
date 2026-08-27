@@ -9,6 +9,7 @@ import org.freedonia.bloodhound.server.scoring.ScoreImpact;
 /** FindingSummary plus the owning target's hostname - what the dashboard's cross-target "top findings" widget needs. */
 public record OrgFindingSummary(
         UUID id,
+        String displayId,
         UUID targetId,
         String targetHostname,
         String moduleType,
@@ -33,6 +34,7 @@ public record OrgFindingSummary(
         var f = orgFinding.finding();
         return new OrgFindingSummary(
                 f.id(),
+                f.displayId(),
                 f.targetId(),
                 orgFinding.targetHostname(),
                 f.moduleType(),

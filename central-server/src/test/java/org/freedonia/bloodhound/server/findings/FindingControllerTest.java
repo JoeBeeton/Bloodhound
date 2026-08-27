@@ -47,7 +47,7 @@ class FindingControllerTest {
 
     private Finding finding(UUID id) {
         return new Finding(
-                id, UUID.randomUUID(), targetId, "HTTP", "RULE_X", "HIGH", "EXPOSURE", "title", "desc", null,
+                id, "bh-test-1", UUID.randomUUID(), targetId, "HTTP", "RULE_X", "HIGH", "EXPOSURE", "title", "desc", null,
                 "asset", UUID.randomUUID(), "OPEN", null, Instant.now(), Instant.now());
     }
 
