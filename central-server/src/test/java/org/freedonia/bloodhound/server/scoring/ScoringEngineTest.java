@@ -127,13 +127,13 @@ class ScoringEngineTest {
 
     /**
      * Drives the engine to an exact overall score by deducting the same
-     * amount `d` from every one of the 6 categories: since the category
-     * weights sum to exactly 1.00 (0.25+0.20+0.20+0.15+0.10+0.10), a uniform
-     * per-category deduction of `d` yields overall = 100 - d regardless of
-     * individual category weights, which is far simpler to hit exactly than
-     * solving through a single category (whose weight caps how far overall
-     * can move using only that category, and can require a negative,
-     * unreachable-after-clamping category score for low targets).
+     * amount `d` from every one of the 7 categories: since the category
+     * weights sum to exactly 1.00 (0.22+0.17+0.17+0.13+0.08+0.08+0.15), a
+     * uniform per-category deduction of `d` yields overall = 100 - d
+     * regardless of individual category weights, which is far simpler to hit
+     * exactly than solving through a single category (whose weight caps how
+     * far overall can move using only that category, and can require a
+     * negative, unreachable-after-clamping category score for low targets).
      * Each category gets exactly one HIGH (20pt) finding as the sole/0th
      * finding in its group, so no diminishing-returns discount applies and
      * deduction = 20 * weight = d exactly.
@@ -142,7 +142,7 @@ class ScoringEngineTest {
         BigDecimal deduction = new BigDecimal("100").subtract(new BigDecimal(targetOverall));
         BigDecimal weight = deduction.divide(new BigDecimal("20"));
         List<String> categories =
-                List.of("EXPOSURE", "TLS", "DNS", "NETWORK", "HEADERS", "SUBDOMAIN_HYGIENE");
+                List.of("EXPOSURE", "TLS", "DNS", "NETWORK", "HEADERS", "SUBDOMAIN_HYGIENE", "WEB_APP");
         List<Finding> findings = categories.stream()
                 .map(category -> finding("BOUNDARY_RULE_" + category, "HIGH", category))
                 .toList();
@@ -158,7 +158,8 @@ class ScoringEngineTest {
     void overallScoreWeighting_matchesFixedCategoryWeightTable() {
         // One finding per category, each driven to a distinct, easily-hand-checked score via a tailored weight.
         // TLS -> 80 (20 deducted), DNS -> 70 (30 deducted), HEADERS -> 60 (40 deducted),
-        // NETWORK -> 90 (10 deducted), EXPOSURE -> 100 (no finding), SUBDOMAIN_HYGIENE -> 100 (no finding).
+        // NETWORK -> 90 (10 deducted), EXPOSURE -> 100 (no finding), SUBDOMAIN_HYGIENE -> 100 (no finding),
+        // WEB_APP -> 100 (no finding).
         List<Finding> findings = List.of(
                 finding("R_TLS", "HIGH", "TLS"), // 20 * weight1.0 = 20 -> 80
                 finding("R_DNS", "HIGH", "DNS"), // 20 * weight1.5 = 30 -> 70
@@ -173,10 +174,26 @@ class ScoringEngineTest {
 
         ScoreResult result = ScoringEngine.compute(findings, weights);
 
-        // overall = 80*0.20 + 70*0.20 + 60*0.10 + 90*0.15 + 100*0.25 + 100*0.10
-        //         = 16 + 14 + 6 + 13.5 + 25 + 10 = 84.5
-        assertThat(result.overallScore()).isEqualByComparingTo("84.50");
+        // overall = 80*0.17 + 70*0.17 + 60*0.08 + 90*0.13 + 100*0.22 + 100*0.08 + 100*0.15
+        //         = 13.6 + 11.9 + 4.8 + 11.7 + 22 + 8 + 15 = 87.0
+        assertThat(result.overallScore()).isEqualByComparingTo("87.00");
         assertThat(result.grade()).isEqualTo("B");
+    }
+
+    @Test
+    void webAppCategoryFinding_nowScoredLikeAnyOtherCategory() {
+        // Unlike WHOIS (deliberately excluded - see below), WEB_APP (ZAP/Nuclei active-scan
+        // findings) is a real scored category: CRITICAL=40 * weight 1.0 (no catalog entry) *
+        // 0.7^0 = 40 deduction -> 60.00. Real gap found live: before WEB_APP was added to
+        // CATEGORY_WEIGHTS, this returned 100.00 and never moved overallScore at all, no matter
+        // how many ZAP/Nuclei findings were open on a target.
+        List<Finding> findings = List.of(finding("ZAP_ALERT_40012", "CRITICAL", "WEB_APP"));
+
+        ScoreResult result = ScoringEngine.compute(findings, Map.of());
+
+        assertThat(result.categoryScores()).containsKey("WEB_APP");
+        assertThat(result.categoryScores().get("WEB_APP")).isEqualByComparingTo("60.00");
+        assertThat(result.overallScore()).isLessThan(new BigDecimal("100.00"));
     }
 
     @Test

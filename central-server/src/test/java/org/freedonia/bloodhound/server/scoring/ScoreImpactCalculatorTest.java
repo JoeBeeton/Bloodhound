@@ -37,8 +37,8 @@ class ScoreImpactCalculatorTest {
 
     @Test
     void singleCriticalInOneCategory_removingItRestoresCategoryTo100_overallDeltaMatchesCategoryWeight() {
-        // Baseline: TLS = 100 - 40 (CRITICAL, weight 1.0, n=0) = 60.00; overall = 60*0.20 + 100*0.80 = 92.00.
-        // Remove it: TLS -> 100.00 (empty), overall -> 100.00. Delta = 100.00 - 92.00 = 8.00, matching TLS's 0.20 weight.
+        // Baseline: TLS = 100 - 40 (CRITICAL, weight 1.0, n=0) = 60.00; overall = 60*0.17 + 100*0.83 = 93.20.
+        // Remove it: TLS -> 100.00 (empty), overall -> 100.00. Delta = 100.00 - 93.20 = 6.80, matching TLS's 0.17 weight.
         Finding critical = finding("SOME_RULE", "CRITICAL", "TLS");
         List<Finding> findings = List.of(critical);
 
@@ -49,7 +49,7 @@ class ScoreImpactCalculatorTest {
         assertThat(impact.category()).isEqualTo("TLS");
         assertThat(impact.categoryScoreBefore()).isEqualByComparingTo("60.00");
         assertThat(impact.categoryScoreAfter()).isEqualByComparingTo("100.00");
-        assertThat(impact.overallScoreDelta()).isEqualByComparingTo("8.00");
+        assertThat(impact.overallScoreDelta()).isEqualByComparingTo("6.80");
     }
 
     @Test
@@ -68,12 +68,20 @@ class ScoreImpactCalculatorTest {
     }
 
     @Test
-    void webAppCategory_zapFinding_alsoNotApplicable() {
+    void webAppCategory_zapFinding_nowAffectsScore() {
+        // WEB_APP (ZAP/Nuclei active-scan findings) is a real scored category now, not excluded
+        // like WHOIS: MEDIUM=10 * weight 1.0 (no catalog entry) = 10 deduction -> before=90.00.
+        // overall before = 90*0.15 + 100*0.85 = 98.50; after = 100.00; delta = 1.50 (WEB_APP's 0.15 weight).
         Finding zapFinding = finding("ZAP_ALERT_10202", "MEDIUM", "WEB_APP");
 
         Map<UUID, ScoreImpact> impacts = ScoreImpactCalculator.computeAll(List.of(zapFinding), Map.of());
+        ScoreImpact impact = impacts.get(zapFinding.id());
 
-        assertThat(impacts.get(zapFinding.id()).affectsScore()).isFalse();
+        assertThat(impact.affectsScore()).isTrue();
+        assertThat(impact.category()).isEqualTo("WEB_APP");
+        assertThat(impact.categoryScoreBefore()).isEqualByComparingTo("90.00");
+        assertThat(impact.categoryScoreAfter()).isEqualByComparingTo("100.00");
+        assertThat(impact.overallScoreDelta()).isEqualByComparingTo("1.50");
     }
 
     @Test
@@ -84,7 +92,7 @@ class ScoreImpactCalculatorTest {
         //   n=0 (RULE_HIGH, weight 3.0): 20 * 3.0 * 0.7^0 = 60.0
         //   n=1 (RULE_MED,  weight 2.0): 20 * 2.0 * 0.7^1 = 28.0
         //   n=2 (RULE_LOW,  weight 1.0): 20 * 1.0 * 0.7^2 =  9.8
-        // Baseline DNS = 100 - (60.0 + 28.0 + 9.8) = 2.20; overall = 2.20*0.20 + 100*0.80 = 80.44.
+        // Baseline DNS = 100 - (60.0 + 28.0 + 9.8) = 2.20; overall = 2.20*0.17 + 100*0.83 = 83.37.
         Finding highWeight = finding("RULE_HIGH", "HIGH", "DNS");
         Finding medWeight = finding("RULE_MED", "HIGH", "DNS");
         Finding lowWeight = finding("RULE_LOW", "HIGH", "DNS");
@@ -98,16 +106,16 @@ class ScoreImpactCalculatorTest {
 
         // Remove RULE_HIGH (rank 0, weight 3.0): survivors RULE_MED/RULE_LOW re-rank to n=0,1:
         //   RULE_MED: 20*2.0*0.7^0 = 40.0; RULE_LOW: 20*1.0*0.7^1 = 14.0 -> total 54.0 -> DNS = 46.00
-        //   overall = 46.00*0.20 + 80.00 = 89.20; delta = 89.20 - 80.44 = 8.76
+        //   overall = 46.00*0.17 + 83.00 = 90.82; delta = 90.82 - 83.37 = 7.45
         assertThat(impacts.get(highWeight.id()).categoryScoreAfter()).isEqualByComparingTo("46.00");
-        assertThat(impacts.get(highWeight.id()).overallScoreDelta()).isEqualByComparingTo("8.76");
+        assertThat(impacts.get(highWeight.id()).overallScoreDelta()).isEqualByComparingTo("7.45");
 
         // Remove RULE_LOW (rank 2, weight 1.0): survivors RULE_HIGH/RULE_MED keep ranks n=0,1
         //   (already the two highest-weighted, so removing the 3rd-ranked one doesn't reshuffle them):
         //   RULE_HIGH: 60.0 (unchanged); RULE_MED: 28.0 (unchanged) -> total 88.0 -> DNS = 12.00
-        //   overall = 12.00*0.20 + 80.00 = 82.40; delta = 82.40 - 80.44 = 1.96
+        //   overall = 12.00*0.17 + 83.00 = 85.04; delta = 85.04 - 83.37 = 1.67
         assertThat(impacts.get(lowWeight.id()).categoryScoreAfter()).isEqualByComparingTo("12.00");
-        assertThat(impacts.get(lowWeight.id()).overallScoreDelta()).isEqualByComparingTo("1.96");
+        assertThat(impacts.get(lowWeight.id()).overallScoreDelta()).isEqualByComparingTo("1.67");
 
         // The two deltas are genuinely different (8.76 vs 1.96) - proof the calculator
         // isn't using a flat "just undo this one finding's own deduction" shortcut, since
@@ -125,12 +133,12 @@ class ScoreImpactCalculatorTest {
 
         Map<UUID, ScoreImpact> impacts = ScoreImpactCalculator.computeAll(findings, Map.of());
 
-        // TLS alone: 100 - 20 = 80.00 (weight 0.20) -> removing it recovers 20*0.20 = 4.00 overall.
+        // TLS alone: 100 - 20 = 80.00 (weight 0.17) -> removing it recovers 20*0.17 = 3.40 overall.
         assertThat(impacts.get(tlsFinding.id()).category()).isEqualTo("TLS");
-        assertThat(impacts.get(tlsFinding.id()).overallScoreDelta()).isEqualByComparingTo("4.00");
-        // DNS alone: 100 - 10 = 90.00 (weight 0.20) -> removing it recovers 10*0.20 = 2.00 overall.
+        assertThat(impacts.get(tlsFinding.id()).overallScoreDelta()).isEqualByComparingTo("3.40");
+        // DNS alone: 100 - 10 = 90.00 (weight 0.17) -> removing it recovers 10*0.17 = 1.70 overall.
         assertThat(impacts.get(dnsFinding.id()).category()).isEqualTo("DNS");
-        assertThat(impacts.get(dnsFinding.id()).overallScoreDelta()).isEqualByComparingTo("2.00");
+        assertThat(impacts.get(dnsFinding.id()).overallScoreDelta()).isEqualByComparingTo("1.70");
     }
 
     @Test
