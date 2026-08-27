@@ -95,4 +95,23 @@ public class TargetRepository {
     public void touchNextScanAt(UUID id, Instant nextScanAt) {
         jdbc.update("UPDATE targets SET next_scan_at = ? WHERE id = ?", Timestamp.from(nextScanAt), id);
     }
+
+    /** Overwrites the previous screenshot (current-state, not history) - see TyposquatIngestionService. */
+    public void updateHomepageScreenshot(UUID id, byte[] png) {
+        jdbc.update("UPDATE targets SET homepage_screenshot_png = ? WHERE id = ?", png, id);
+    }
+
+    public boolean hasHomepageScreenshot(UUID id) {
+        Boolean has = jdbc.queryForObject(
+                "SELECT homepage_screenshot_png IS NOT NULL FROM targets WHERE id = ?", Boolean.class, id);
+        return Boolean.TRUE.equals(has);
+    }
+
+    /** Lean, single-column fetch - never pulled as part of the regular Target row mapping, which every other endpoint uses. */
+    public Optional<byte[]> findHomepageScreenshotPng(UUID id) {
+        return jdbc.query("SELECT homepage_screenshot_png FROM targets WHERE id = ?", (rs, rowNum) -> rs.getBytes(1), id)
+                .stream()
+                .findFirst()
+                .filter(bytes -> bytes != null);
+    }
 }

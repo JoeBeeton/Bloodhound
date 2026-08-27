@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/apiClient";
 import { Modal } from "./Modal";
 
+const SIZE_CLASSES = {
+  small: "h-12 w-16",
+  large: "h-24 w-32",
+} as const;
+
 /**
  * Fetches a screenshot via apiFetch (not a plain `<img src>` pointed at the API directly -
  * the endpoint requires the bearer token apiFetch attaches, which a bare `<img>` tag has no
@@ -12,10 +17,20 @@ import { Modal } from "./Modal";
  * "thumbnail" is just a small CSS-scaled rendering of the one screenshot this component holds,
  * not a separately-generated smaller image, so the enlarged view needs no extra request.
  */
-export function ScreenshotThumbnail({ src, alt }: { src: string; alt: string }) {
+export function ScreenshotThumbnail({
+  src,
+  alt,
+  size = "small",
+}: {
+  src: string;
+  alt: string;
+  /** "large" for the real-domain hero row in BrandProtectionPanel - everywhere else (candidate table rows) wants "small" (the default). */
+  size?: keyof typeof SIZE_CLASSES;
+}) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const sizeClass = SIZE_CLASSES[size];
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +61,7 @@ export function ScreenshotThumbnail({ src, alt }: { src: string; alt: string }) 
     return <span className="font-mono text-[10px] text-slate-600">—</span>;
   }
   if (!objectUrl) {
-    return <span className="block h-12 w-16 animate-pulse rounded bg-slate-800" />;
+    return <span className={`block animate-pulse rounded bg-slate-800 ${sizeClass}`} />;
   }
   return (
     <>
@@ -56,7 +71,7 @@ export function ScreenshotThumbnail({ src, alt }: { src: string; alt: string }) 
         className="block cursor-zoom-in rounded border border-slate-700 transition hover:border-neon-cyan/50"
         aria-label={`Enlarge ${alt}`}
       >
-        <img src={objectUrl} alt={alt} className="h-12 w-16 rounded object-cover object-top" />
+        <img src={objectUrl} alt={alt} className={`rounded object-cover object-top ${sizeClass}`} />
       </button>
       {expanded && (
         <Modal title={alt} onClose={() => setExpanded(false)} wide>

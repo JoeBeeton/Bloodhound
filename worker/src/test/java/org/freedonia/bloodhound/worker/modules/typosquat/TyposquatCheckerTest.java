@@ -66,7 +66,7 @@ class TyposquatCheckerTest {
                     return Map.of(probeHostname, List.of("203.0.113.99"));
                 });
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).isNotEmpty();
@@ -86,7 +86,7 @@ class TyposquatCheckerTest {
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
         when(whoisFetcher.fetch("jjaa.com")).thenThrow(new RuntimeException("no whois data"));
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).containsExactly("198.51.100.7");
@@ -101,13 +101,27 @@ class TyposquatCheckerTest {
         when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(solidPng(Color.BLUE));
         when(screenshotter.capture("jjaa.com")).thenReturn(solidPng(Color.BLUE));
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+        TyposquatChecker.CheckResult checkResult = checker.check(ROOT_HOSTNAME, List.of(candidate));
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).screenshotPng()).isNotNull();
-        assertThat(result.get(0).visualSimilarityPercent()).isEqualTo(100);
+        assertThat(checkResult.candidates()).hasSize(1);
+        assertThat(checkResult.candidates().get(0).screenshotPng()).isNotNull();
+        assertThat(checkResult.candidates().get(0).visualSimilarityPercent()).isEqualTo(100);
+        // The real site's own screenshot is returned too, for a UI side-by-side - not just consumed
+        // internally for hashing.
+        assertThat(checkResult.realSiteScreenshotPng()).isNotNull();
         verify(screenshotter, times(1)).capture(ROOT_HOSTNAME);
         verify(screenshotter, times(1)).capture("jjaa.com");
+    }
+
+    @Test
+    void noGenuineCandidates_realSiteNeverScreenshotted_resultCarriesNullRealSiteScreenshot() {
+        var candidate = new PermutationGenerator.Candidate("dead.com", "OMISSION");
+        when(dnsResolver.resolveAll(List.of("dead.com"))).thenReturn(Map.of());
+
+        TyposquatChecker.CheckResult checkResult = checker.check(ROOT_HOSTNAME, List.of(candidate));
+
+        assertThat(checkResult.realSiteScreenshotPng()).isNull();
+        verifyNoInteractions(screenshotter);
     }
 
     @Test
@@ -117,7 +131,7 @@ class TyposquatCheckerTest {
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
         when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(null);
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
         assertThat(result.get(0).screenshotPng()).isNull();
         assertThat(result.get(0).visualSimilarityPercent()).isNull();
@@ -146,7 +160,7 @@ class TyposquatCheckerTest {
         var candidate = new PermutationGenerator.Candidate("dead.com", "OMISSION");
         when(dnsResolver.resolveAll(List.of("dead.com"))).thenReturn(Map.of());
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).isEmpty();
@@ -159,7 +173,7 @@ class TyposquatCheckerTest {
 
     @Test
     void emptyInput_returnsEmpty_neverCallsResolverOrScreenshotter() {
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of());
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of()).candidates();
         assertThat(result).isEmpty();
         verifyNoInteractions(dnsResolver);
         verifyNoInteractions(screenshotter);

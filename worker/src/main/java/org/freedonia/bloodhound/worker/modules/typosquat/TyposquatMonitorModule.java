@@ -49,7 +49,8 @@ public class TyposquatMonitorModule implements ScanModule {
     @Override
     public ModuleResult execute(ScanContext context) throws ScanModuleException {
         List<PermutationGenerator.Candidate> candidates = PermutationGenerator.generate(context.hostname());
-        List<TyposquatChecker.CheckedCandidate> checked = checker.check(context.hostname(), candidates);
+        TyposquatChecker.CheckResult checkResult = checker.check(context.hostname(), candidates);
+        List<TyposquatChecker.CheckedCandidate> checked = checkResult.candidates();
         List<RawFinding> findings = TyposquatDecisionLogic.decide(checked);
 
         List<Map<String, Object>> candidateMetadata = new ArrayList<>();
@@ -85,6 +86,14 @@ public class TyposquatMonitorModule implements ScanModule {
         Map<String, Object> rawMetadata = new LinkedHashMap<>();
         rawMetadata.put("candidates", candidateMetadata);
         rawMetadata.put("generated", candidates.size());
+        // The real target's own homepage screenshot - the visual-similarity baseline every
+        // candidate above was already compared against, handed back here too so central-server
+        // can persist it for a side-by-side display, not just as an internal hashing input.
+        rawMetadata.put(
+                "realSiteScreenshotBase64",
+                checkResult.realSiteScreenshotPng() != null
+                        ? Base64.getEncoder().encodeToString(checkResult.realSiteScreenshotPng())
+                        : null);
         return new ModuleResult(findings, rawMetadata);
     }
 }

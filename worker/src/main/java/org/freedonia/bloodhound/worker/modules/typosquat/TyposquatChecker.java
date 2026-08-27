@@ -33,7 +33,9 @@ import org.freedonia.bloodhound.worker.modules.whois.WhoisFetcher;
  * one is a much stronger phishing/impersonation signal than registration
  * alone. Screenshotting is best-effort exactly like the WHOIS lookup below:
  * a failure never fails the candidate's registration finding, it just means
- * no similarity score for that one candidate.
+ * no similarity score for that one candidate. The real target's own
+ * screenshot is returned too (see {@link CheckResult}), for a visual
+ * side-by-side in the UI, not just as an internal hashing input.
  */
 public class TyposquatChecker {
 
@@ -45,6 +47,9 @@ public class TyposquatChecker {
             boolean wildcardArtifact,
             byte[] screenshotPng,
             Integer visualSimilarityPercent) {}
+
+    /** realSiteScreenshotPng is null whenever no candidate ended up genuine enough to need the comparison baseline at all. */
+    public record CheckResult(byte[] realSiteScreenshotPng, List<CheckedCandidate> candidates) {}
 
     private final SubdomainDnsResolver dnsResolver;
     private final WhoisFetcher whoisFetcher;
@@ -65,9 +70,9 @@ public class TyposquatChecker {
      * least one genuine candidate to compare it against) and used as the visual-similarity
      * baseline for every candidate below, rather than a per-candidate re-fetch.
      */
-    public List<CheckedCandidate> check(String rootHostname, List<PermutationGenerator.Candidate> candidates) {
+    public CheckResult check(String rootHostname, List<PermutationGenerator.Candidate> candidates) {
         if (candidates.isEmpty()) {
-            return List.of();
+            return new CheckResult(null, List.of());
         }
         Map<String, List<String>> resolved =
                 dnsResolver.resolveAll(candidates.stream().map(PermutationGenerator.Candidate::domain).toList());
@@ -105,8 +110,9 @@ public class TyposquatChecker {
             return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(c.domain()));
         });
         Long realSiteHash = null;
+        byte[] realScreenshot = null;
         if (anyGenuineCandidate) {
-            byte[] realScreenshot = screenshotter.capture(rootHostname);
+            realScreenshot = screenshotter.capture(rootHostname);
             realSiteHash = PerceptualHash.hash(realScreenshot);
         }
 
@@ -138,7 +144,7 @@ public class TyposquatChecker {
                     candidateScreenshot,
                     similarity));
         }
-        return result;
+        return new CheckResult(realScreenshot, result);
     }
 
     /**
