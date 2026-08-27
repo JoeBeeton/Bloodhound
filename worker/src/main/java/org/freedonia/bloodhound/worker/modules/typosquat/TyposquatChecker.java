@@ -25,6 +25,15 @@ import org.freedonia.bloodhound.worker.modules.whois.WhoisFetcher;
  * target's own domain) - see {@link #wildcardParent} for why this matters
  * specifically for typosquat candidates, given {@link PermutationGenerator}'s
  * documented last-dot-only TLD split.
+ *
+ * <p>For every "genuine" candidate (resolves, not a wildcard artifact),
+ * captures a screenshot via {@link TyposquatScreenshotter} and computes a
+ * {@link PerceptualHash}-based visual-similarity score against one shared
+ * screenshot of the real target - a page that actually LOOKS like the real
+ * one is a much stronger phishing/impersonation signal than registration
+ * alone. Screenshotting is best-effort exactly like the WHOIS lookup below:
+ * a failure never fails the candidate's registration finding, it just means
+ * no similarity score for that one candidate.
  */
 public class TyposquatChecker {
 
@@ -33,21 +42,30 @@ public class TyposquatChecker {
             String permutationType,
             List<String> resolvedIps,
             Instant registrationDate,
-            boolean wildcardArtifact) {}
+            boolean wildcardArtifact,
+            byte[] screenshotPng,
+            Integer visualSimilarityPercent) {}
 
     private final SubdomainDnsResolver dnsResolver;
     private final WhoisFetcher whoisFetcher;
+    private final TyposquatScreenshotter screenshotter;
 
-    public TyposquatChecker() {
-        this(new SubdomainDnsResolver(), new WhoisFetcher());
+    public TyposquatChecker(TyposquatScreenshotter screenshotter) {
+        this(new SubdomainDnsResolver(), new WhoisFetcher(), screenshotter);
     }
 
-    TyposquatChecker(SubdomainDnsResolver dnsResolver, WhoisFetcher whoisFetcher) {
+    TyposquatChecker(SubdomainDnsResolver dnsResolver, WhoisFetcher whoisFetcher, TyposquatScreenshotter screenshotter) {
         this.dnsResolver = dnsResolver;
         this.whoisFetcher = whoisFetcher;
+        this.screenshotter = screenshotter;
     }
 
-    public List<CheckedCandidate> check(List<PermutationGenerator.Candidate> candidates) {
+    /**
+     * {@code rootHostname} is the target's own real domain - screenshotted once (if there's at
+     * least one genuine candidate to compare it against) and used as the visual-similarity
+     * baseline for every candidate below, rather than a per-candidate re-fetch.
+     */
+    public List<CheckedCandidate> check(String rootHostname, List<PermutationGenerator.Candidate> candidates) {
         if (candidates.isEmpty()) {
             return List.of();
         }
@@ -79,12 +97,46 @@ public class TyposquatChecker {
             }
         });
 
+        // The real target's own screenshot is the comparison baseline for every genuine
+        // candidate below - captured at most once per check() call (not per candidate), and
+        // only if there's actually at least one genuine candidate to compare it against.
+        boolean anyGenuineCandidate = candidates.stream().anyMatch(c -> {
+            List<String> ips = resolved.getOrDefault(c.domain(), List.of());
+            return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(c.domain()));
+        });
+        Long realSiteHash = null;
+        if (anyGenuineCandidate) {
+            byte[] realScreenshot = screenshotter.capture(rootHostname);
+            realSiteHash = PerceptualHash.hash(realScreenshot);
+        }
+
         List<CheckedCandidate> result = new ArrayList<>();
         for (PermutationGenerator.Candidate candidate : candidates) {
             List<String> ips = resolved.getOrDefault(candidate.domain(), List.of());
             boolean wildcardArtifact = !ips.isEmpty() && wildcardParents.contains(wildcardParent(candidate.domain()));
-            Instant registrationDate = ips.isEmpty() || wildcardArtifact ? null : tryWhois(candidate.domain());
-            result.add(new CheckedCandidate(candidate.domain(), candidate.permutationType(), ips, registrationDate, wildcardArtifact));
+            boolean genuine = !ips.isEmpty() && !wildcardArtifact;
+            Instant registrationDate = genuine ? tryWhois(candidate.domain()) : null;
+
+            byte[] candidateScreenshot = null;
+            Integer similarity = null;
+            if (genuine && realSiteHash != null) {
+                candidateScreenshot = screenshotter.capture(candidate.domain());
+                Long candidateHash = PerceptualHash.hash(candidateScreenshot);
+                if (candidateHash != null) {
+                    similarity = PerceptualHash.similarityPercent(realSiteHash, candidateHash);
+                } else {
+                    candidateScreenshot = null;
+                }
+            }
+
+            result.add(new CheckedCandidate(
+                    candidate.domain(),
+                    candidate.permutationType(),
+                    ips,
+                    registrationDate,
+                    wildcardArtifact,
+                    candidateScreenshot,
+                    similarity));
         }
         return result;
     }

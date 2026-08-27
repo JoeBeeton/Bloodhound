@@ -31,7 +31,13 @@ public class SecurityHeadersFilter extends HttpFilter {
     // bundled) - so this can be genuinely restrictive rather than a
     // wildcard placeholder. 'unsafe-inline' on style-src is needed for
     // Vite/Tailwind's injected <style> tags; nothing here allows inline
-    // *script*.
+    // *script*. img-src's "blob:" is for ScreenshotThumbnail (typosquat
+    // brand-protection previews) - those images require an auth header
+    // apiFetch attaches, which a plain `<img src>` pointed at the API can't
+    // send, so the frontend fetches the bytes itself and renders them from
+    // an object URL instead; confirmed live that omitting "blob:" here
+    // silently blocks every one of those thumbnails with no visible error
+    // beyond the browser console.
     //
     // This filter also sets Cache-Control. Without it, browsers apply
     // their own heuristic freshness rules to index.html (which has no
@@ -47,7 +53,7 @@ public class SecurityHeadersFilter extends HttpFilter {
     private static final String CSP = "default-src 'self'; "
             + "script-src 'self'; "
             + "style-src 'self' 'unsafe-inline'; "
-            + "img-src 'self' data:; "
+            + "img-src 'self' data: blob:; "
             + "connect-src 'self'; "
             + "font-src 'self'; "
             + "object-src 'none'; "

@@ -21,6 +21,9 @@ bloodhound:
     zap:
       base-url: ${ZAP_BASE_URL:http://zap:8080}
       api-key: ${ZAP_API_KEY:}
+    screenshotter:
+      base-url: ${SCREENSHOTTER_BASE_URL:http://screenshotter:3000}
+      api-key: ${SCREENSHOTTER_API_KEY:}
 
 management:
   endpoints:

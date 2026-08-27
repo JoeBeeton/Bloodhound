@@ -41,17 +41,28 @@ public final class TyposquatDecisionLogic {
             if (candidate.registrationDate() != null) {
                 evidence.put("registrationDate", candidate.registrationDate().toString());
             }
+            if (candidate.visualSimilarityPercent() != null) {
+                evidence.put("visualSimilarityPercent", candidate.visualSimilarityPercent());
+            }
             String humanType =
                     candidate.permutationType().toLowerCase(Locale.ROOT).replace('_', ' ');
+            String description = "A domain closely resembling this target's own (a " + humanType
+                    + " variant) is registered and actively resolving, which is consistent with "
+                    + "typosquatting or brand-impersonation infrastructure - though it can occasionally be "
+                    + "a coincidentally similarly-named, unrelated legitimate site.";
+            if (candidate.visualSimilarityPercent() != null) {
+                description += " Its homepage's visual layout is " + candidate.visualSimilarityPercent()
+                        + "% similar to the real target's, based on a screenshot comparison - "
+                        + (candidate.visualSimilarityPercent() >= 80
+                                ? "a strong additional signal that this may be an actual clone/impersonation, not just a coincidental name."
+                                : "a comparatively weak visual match, which leans toward coincidental naming rather than a rendered clone.");
+            }
             findings.add(new RawFinding(
                     "TYPOSQUAT_DOMAIN_REGISTERED",
                     Severity.HIGH,
                     Category.BRAND,
                     "Registered lookalike domain: " + candidate.domain(),
-                    "A domain closely resembling this target's own (a " + humanType
-                            + " variant) is registered and actively resolving, which is consistent with "
-                            + "typosquatting or brand-impersonation infrastructure - though it can occasionally be "
-                            + "a coincidentally similarly-named, unrelated legitimate site.",
+                    description,
                     candidate.domain(),
                     evidence));
         }

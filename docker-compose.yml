@@ -52,6 +52,8 @@ services:
       ZAP_BASE_URL: http://zap:8080
       ZAP_API_KEY: ${ZAP_API_KEY}
       HIBP_API_KEY: ${HIBP_API_KEY:-}
+      SCREENSHOTTER_BASE_URL: http://screenshotter:3000
+      SCREENSHOTTER_API_KEY: ${SCREENSHOTTER_API_KEY}
     # Scale ad hoc with: docker compose up --scale worker=3
     # (deploy.replicas is a swarm-mode construct and is intentionally not
     # used here so a plain `docker compose up` never errors on it.)
@@ -69,6 +71,20 @@ services:
       -config api.key=${ZAP_API_KEY}
       -config api.addrs.addr.name=.*
       -config api.addrs.addr.regex=true
+
+  # Headless-Chromium screenshot service (browserless/chromium, MIT) for
+  # TYPOSQUAT_MONITOR's visual-similarity check - internal network only, no
+  # host port. Kept as its own sidecar rather than installed into the worker
+  # image itself: headless Chrome has heavy, fragile shared-library
+  # dependencies (confirmed for real - a direct microdnf install attempt in
+  # worker's Oracle Linux 9 base image hung indefinitely), and this mirrors
+  # the same reasoning already applied to zap above - a heavy external
+  # rendering engine stays out of the JVM image entirely, worker just calls
+  # its REST API.
+  screenshotter:
+    image: ghcr.io/browserless/chromium
+    environment:
+      TOKEN: ${SCREENSHOTTER_API_KEY}
 
   # Deliberately-vulnerable practice target (github.com/juice-shop/juice-shop)
   # for exercising Tier 2 active scanning safely - never point ZAP_ACTIVE_SCAN

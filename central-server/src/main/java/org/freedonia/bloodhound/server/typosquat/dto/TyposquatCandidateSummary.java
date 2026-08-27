@@ -11,7 +11,9 @@ public record TyposquatCandidateSummary(
         Instant firstSeenAt,
         Instant lastCheckedAt,
         String resolvedIp,
-        Instant registrationDate) {
+        Instant registrationDate,
+        boolean hasScreenshot,
+        Integer visualSimilarityPercent) {
 
     public static TyposquatCandidateSummary from(TyposquatCandidate c) {
         return new TyposquatCandidateSummary(
@@ -21,6 +23,8 @@ public record TyposquatCandidateSummary(
                 c.firstSeenAt(),
                 c.lastCheckedAt(),
                 c.resolvedIp(),
-                c.registrationDate());
+                c.registrationDate(),
+                c.hasScreenshot(),
+                c.visualSimilarityPercent());
     }
 }

@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.worker.modules.typosquat;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +11,7 @@ import org.freedonia.bloodhound.common.scanmodule.ScanContext;
 import org.freedonia.bloodhound.common.scanmodule.ScanModule;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.common.scanmodule.ScanTier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,7 +28,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class TyposquatMonitorModule implements ScanModule {
 
-    private final TyposquatChecker checker = new TyposquatChecker();
+    private final TyposquatChecker checker;
+
+    public TyposquatMonitorModule(
+            @Value("${bloodhound.worker.screenshotter.base-url:http://screenshotter:3000}") String screenshotterBaseUrl,
+            @Value("${bloodhound.worker.screenshotter.api-key:}") String screenshotterApiKey) {
+        this.checker = new TyposquatChecker(new TyposquatScreenshotter(screenshotterBaseUrl, screenshotterApiKey));
+    }
 
     @Override
     public String moduleType() {
@@ -41,7 +49,7 @@ public class TyposquatMonitorModule implements ScanModule {
     @Override
     public ModuleResult execute(ScanContext context) throws ScanModuleException {
         List<PermutationGenerator.Candidate> candidates = PermutationGenerator.generate(context.hostname());
-        List<TyposquatChecker.CheckedCandidate> checked = checker.check(candidates);
+        List<TyposquatChecker.CheckedCandidate> checked = checker.check(context.hostname(), candidates);
         List<RawFinding> findings = TyposquatDecisionLogic.decide(checked);
 
         List<Map<String, Object>> candidateMetadata = new ArrayList<>();
@@ -60,6 +68,17 @@ public class TyposquatMonitorModule implements ScanModule {
             entry.put("registrationDate", isRegistered && candidate.registrationDate() != null
                     ? candidate.registrationDate().toString()
                     : null);
+            entry.put("visualSimilarityPercent", isRegistered ? candidate.visualSimilarityPercent() : null);
+            // Base64 in the JSON metadata blob (not a separate upload channel) - same pattern the
+            // rest of this module's result already uses to hand structured data back to
+            // central-server for persistence (see TyposquatIngestionService). Screenshots are
+            // deliberately small (800x600, see TyposquatScreenshotter) so this stays a modest
+            // handful of KB per genuine candidate, not a bulk-transfer concern.
+            entry.put(
+                    "screenshotBase64",
+                    isRegistered && candidate.screenshotPng() != null
+                            ? Base64.getEncoder().encodeToString(candidate.screenshotPng())
+                            : null);
             candidateMetadata.add(entry);
         }
 

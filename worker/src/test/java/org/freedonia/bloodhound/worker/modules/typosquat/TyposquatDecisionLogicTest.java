@@ -14,7 +14,7 @@ class TyposquatDecisionLogicTest {
     @Test
     void resolvingCandidateProducesAHighSeverityBrandFinding() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false)));
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null)));
 
         assertThat(findings).hasSize(1);
         RawFinding finding = findings.get(0);
@@ -25,12 +25,13 @@ class TyposquatDecisionLogicTest {
         assertThat(finding.evidence()).containsEntry("permutationType", "OMISSION");
         assertThat(finding.evidence()).containsEntry("resolvedIps", List.of("203.0.113.5"));
         assertThat(finding.evidence()).doesNotContainKey("registrationDate");
+        assertThat(finding.evidence()).doesNotContainKey("visualSimilarityPercent");
     }
 
     @Test
     void nonResolvingCandidateProducesNoFinding() {
-        List<RawFinding> findings = TyposquatDecisionLogic.decide(
-                List.of(new TyposquatChecker.CheckedCandidate("exampl.com", "OMISSION", List.of(), null, false)));
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
+                new TyposquatChecker.CheckedCandidate("exampl.com", "OMISSION", List.of(), null, false, null, null)));
         assertThat(findings).isEmpty();
     }
 
@@ -38,16 +39,17 @@ class TyposquatDecisionLogicTest {
     void registrationDateIncludedInEvidenceWhenAvailable() {
         Instant registered = Instant.parse("2026-01-01T00:00:00Z");
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "examp1e.com", "HOMOGLYPH", List.of("198.51.100.1"), registered, false)));
+                "examp1e.com", "HOMOGLYPH", List.of("198.51.100.1"), registered, false, null, null)));
         assertThat(findings.get(0).evidence()).containsEntry("registrationDate", registered.toString());
     }
 
     @Test
     void mixOfResolvingAndNonResolvingOnlyFlagsTheResolvingOnes() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
-                new TyposquatChecker.CheckedCandidate("a.com", "OMISSION", List.of(), null, false),
-                new TyposquatChecker.CheckedCandidate("b.com", "OMISSION", List.of("203.0.113.9"), null, false),
-                new TyposquatChecker.CheckedCandidate("c.com", "OMISSION", List.of(), null, false)));
+                new TyposquatChecker.CheckedCandidate("a.com", "OMISSION", List.of(), null, false, null, null),
+                new TyposquatChecker.CheckedCandidate(
+                        "b.com", "OMISSION", List.of("203.0.113.9"), null, false, null, null),
+                new TyposquatChecker.CheckedCandidate("c.com", "OMISSION", List.of(), null, false, null, null)));
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).affectedAsset()).isEqualTo("b.com");
     }
@@ -66,17 +68,39 @@ class TyposquatDecisionLogicTest {
      */
     @Test
     void resolvingCandidateFlaggedAsWildcardArtifact_producesNoFinding() {
-        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
-                new TyposquatChecker.CheckedCandidate("jaja.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true)));
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "jaja.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null)));
         assertThat(findings).isEmpty();
     }
 
     @Test
     void wildcardArtifactAndGenuineCandidateMixed_onlyGenuineOneFlagged() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
-                new TyposquatChecker.CheckedCandidate("jaja.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true),
-                new TyposquatChecker.CheckedCandidate("jjaa.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false)));
+                new TyposquatChecker.CheckedCandidate(
+                        "jaja.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null),
+                new TyposquatChecker.CheckedCandidate(
+                        "jjaa.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false, null, null)));
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).affectedAsset()).isEqualTo("jjaa.com");
+    }
+
+    @Test
+    void highVisualSimilarity_includedInEvidenceAndFlaggedAsStrongSignalInDescription() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 92)));
+
+        RawFinding finding = findings.get(0);
+        assertThat(finding.evidence()).containsEntry("visualSimilarityPercent", 92);
+        assertThat(finding.description()).contains("92%").contains("strong additional signal");
+    }
+
+    @Test
+    void lowVisualSimilarity_includedInEvidence_describedAsWeakMatch() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 15)));
+
+        RawFinding finding = findings.get(0);
+        assertThat(finding.evidence()).containsEntry("visualSimilarityPercent", 15);
+        assertThat(finding.description()).contains("15%").contains("weak visual match");
     }
 }
