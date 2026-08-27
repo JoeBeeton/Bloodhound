@@ -1,7 +1,8 @@
 package org.freedonia.bloodhound.server.findings;
 
-import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,8 +28,17 @@ public final class FindingReconciler {
         Map<String, OpenFindingKey> openByKey =
                 currentlyOpen.stream().collect(Collectors.toMap(OpenFindingKey::dedupKey, Function.identity()));
 
-        List<FindingPayload> toInsert = new ArrayList<>();
-        List<java.util.UUID> toTouch = new ArrayList<>();
+        // Keyed maps/sets, not plain lists: a real duplicate-finding bug was caused by
+        // `reported` itself containing more than one payload for the same (ruleId,
+        // affectedAsset) - confirmed live, DOCUMENT_METADATA fans out over a target's root
+        // plus every known subdomain (see HostFanOut), and when the same document is linked
+        // from more than one of those hostnames, each host's scan independently downloads
+        // and parses it, producing byte-for-byte duplicate findings that all land in one
+        // `reported` list for a single ingest() call. Without this, three duplicates reported
+        // meant three rows in toInsert. The first occurrence of a given key wins - arbitrary,
+        // but no less arbitrary than which host HostFanOut happened to schedule first.
+        Map<String, FindingPayload> toInsertByKey = new LinkedHashMap<>();
+        Set<java.util.UUID> toTouch = new LinkedHashSet<>();
         Set<String> reproducedKeys = new HashSet<>();
 
         for (FindingPayload finding : reported) {
@@ -38,7 +48,7 @@ public final class FindingReconciler {
             if (existing != null) {
                 toTouch.add(existing.id());
             } else {
-                toInsert.add(finding);
+                toInsertByKey.putIfAbsent(key, finding);
             }
         }
 
@@ -47,6 +57,6 @@ public final class FindingReconciler {
                 .map(OpenFindingKey::id)
                 .toList();
 
-        return new ReconciliationPlan(toInsert, toTouch, toResolve);
+        return new ReconciliationPlan(List.copyOf(toInsertByKey.values()), List.copyOf(toTouch), toResolve);
     }
 }

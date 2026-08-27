@@ -73,6 +73,37 @@ class FindingReconcilerTest {
     }
 
     @Test
+    void reportedBatchContainsTheSameKeyTwice_producesOneInsertNotTwo() {
+        // Real bug, caught live: DOCUMENT_METADATA fans out over a target's root plus every
+        // known subdomain, and when the same document is linked from more than one of them,
+        // each host's scan independently produces an identical finding - all landing in one
+        // `reported` list for a single ingest() call. Three duplicates reported must still
+        // become exactly one inserted row.
+        List<FindingPayload> reported = List.of(
+                payload("EXPOSURE_DOCUMENT_METADATA_AUTHOR_INFO", "https://example.com/report.pdf"),
+                payload("EXPOSURE_DOCUMENT_METADATA_AUTHOR_INFO", "https://example.com/report.pdf"),
+                payload("EXPOSURE_DOCUMENT_METADATA_AUTHOR_INFO", "https://example.com/report.pdf"));
+
+        ReconciliationPlan plan = FindingReconciler.reconcile(List.of(), reported);
+
+        assertThat(plan.toInsert()).hasSize(1);
+        assertThat(plan.toInsert().get(0)).isEqualTo(reported.get(0));
+    }
+
+    @Test
+    void reportedBatchContainsTheSameKeyTwice_andItsAlreadyOpen_touchesOnceNotTwice() {
+        UUID existingId = UUID.randomUUID();
+        List<OpenFindingKey> open = List.of(new OpenFindingKey(existingId, "DNS_SPF_MISSING", "example.com"));
+        List<FindingPayload> reported =
+                List.of(payload("DNS_SPF_MISSING", "example.com"), payload("DNS_SPF_MISSING", "example.com"));
+
+        ReconciliationPlan plan = FindingReconciler.reconcile(open, reported);
+
+        assertThat(plan.toTouch()).containsExactly(existingId);
+        assertThat(plan.toInsert()).isEmpty();
+    }
+
+    @Test
     void differentAffectedAssetsForSameRule_areIndependentFindings() {
         UUID cookieAId = UUID.randomUUID();
         List<OpenFindingKey> open = List.of(new OpenFindingKey(cookieAId, "COOKIE_MISSING_SECURE_FLAG", "session_id"));
