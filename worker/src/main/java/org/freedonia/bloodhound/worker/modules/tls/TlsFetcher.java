@@ -19,6 +19,7 @@ import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -156,6 +157,12 @@ public class TlsFetcher {
     }
 
     private SSLSocket openSocket(SSLContext ctx, String hostname) throws IOException {
+        // Unlike every other target-facing fetcher in this codebase, this class's three SSL socket
+        // probes connect by hostname string with no SafeAddressValidator check anywhere - HostFanOut's
+        // one check happens before any of them, well before this method is reached. Checking here (the
+        // single shared connect point for all three) closes that gap the same way ExposedPathFetcher's
+        // doProbe() does for its own independent connections.
+        SafeAddressValidator.requireSafeIfResolvable(hostname);
         SSLSocket socket = (SSLSocket) ctx.getSocketFactory().createSocket();
         socket.connect(new InetSocketAddress(hostname, PORT), CONNECT_TIMEOUT_MS);
         socket.setSoTimeout(SOCKET_TIMEOUT_MS);
@@ -168,6 +175,7 @@ public class TlsFetcher {
     /** httpsReachable=false (rather than treating the header as simply absent) skips HSTS findings entirely - see TlsDecisionLogic. */
     private HstsResult fetchHstsHeader(String hostname) {
         try {
+            SafeAddressValidator.requireSafeIfResolvable(hostname);
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(5))
                     .build();
