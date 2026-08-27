@@ -143,6 +143,39 @@ export function DashboardPage() {
                 )}
               </section>
 
+              {/* Recent findings across the org, purely chronological (all severities) - a
+                  different lens from "Top open findings" (severity-ranked, Critical/High only):
+                  this answers "what's new since I last looked", not "what's most urgent". */}
+              <section>
+                <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Recent findings</h2>
+                {dashboard.recentFindings.length === 0 ? (
+                  <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-slate-400">
+                    No findings recorded yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {dashboard.recentFindings.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => setSelectedFinding(f)}
+                        className="block w-full rounded-lg border border-slate-700/60 bg-panel/60 p-3 text-left transition hover:bg-panel"
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-3">
+                          <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[f.severity]}`}>
+                            {f.severity} · {f.category}
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+                            {f.targetHostname}
+                          </span>
+                        </div>
+                        <p className="font-mono text-sm text-slate-200">{f.title}</p>
+                        <p className="mt-1 font-mono text-[11px] text-slate-500">{new Date(f.createdAt).toLocaleString()}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+
               {/* Recent scan activity */}
               <section>
                 <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Recent scan activity</h2>

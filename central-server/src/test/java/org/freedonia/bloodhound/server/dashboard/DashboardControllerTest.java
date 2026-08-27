@@ -12,7 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.Finding;
@@ -53,6 +52,7 @@ class DashboardControllerTest {
 
     private void stubEmptyBaseline() {
         when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10))).thenReturn(List.of());
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10))).thenReturn(List.of());
         when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
     }
@@ -101,6 +101,7 @@ class DashboardControllerTest {
                 .thenReturn(List.of(
                         new OrgFinding(f1, "host.example.com", Instant.now(), null),
                         new OrgFinding(f2, "host.example.com", Instant.now(), null)));
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10))).thenReturn(List.of());
         when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
         when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f1, f2));
@@ -121,6 +122,7 @@ class DashboardControllerTest {
         Finding f = finding(UUID.randomUUID(), targetId, "{\"key\":\"value\"}");
         when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10)))
                 .thenReturn(List.of(new OrgFinding(f, "host.example.com", Instant.now(), null)));
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10))).thenReturn(List.of());
         when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
         when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f));
@@ -137,6 +139,7 @@ class DashboardControllerTest {
         Finding f = finding(UUID.randomUUID(), targetId, null);
         when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10)))
                 .thenReturn(List.of(new OrgFinding(f, "host.example.com", Instant.now(), null)));
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10))).thenReturn(List.of());
         when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
         when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f));
@@ -153,6 +156,7 @@ class DashboardControllerTest {
         Finding f = finding(UUID.randomUUID(), targetId, "{not valid json");
         when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10)))
                 .thenReturn(List.of(new OrgFinding(f, "host.example.com", Instant.now(), null)));
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10))).thenReturn(List.of());
         when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
         when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f));
@@ -160,6 +164,63 @@ class DashboardControllerTest {
         DashboardSummary summary = controller.get(principal);
 
         assertThat(summary.topFindings().get(0).evidence()).isEmpty();
+    }
+
+    @Test
+    void recentFindings_returnedFromTheChronologicalQuery_independentOfTopFindings() {
+        when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of());
+        UUID targetId = UUID.randomUUID();
+        Finding f = finding(UUID.randomUUID(), targetId, null);
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10))).thenReturn(List.of());
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10)))
+                .thenReturn(List.of(new OrgFinding(f, "host.example.com", Instant.now(), null)));
+        when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
+        when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
+        when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f));
+
+        DashboardSummary summary = controller.get(principal);
+
+        assertThat(summary.topFindings()).isEmpty();
+        assertThat(summary.recentFindings()).hasSize(1);
+        assertThat(summary.recentFindings().get(0).id()).isEqualTo(f.id());
+    }
+
+    /**
+     * Regression test for a subtle correctness bug in the shared score-impact cache: if a
+     * finding lands in BOTH topFindings and recentFindings (a genuinely realistic case - a
+     * brand-new Critical finding is both "top" and "recent"), whichever list touches that
+     * target's cache entry first must not cause the OTHER list's finding id to be silently
+     * missing an impact, since the per-target impacts map is only ever computed once.
+     */
+    @Test
+    void findingInBothTopAndRecent_getsAScoreImpactInBothLists() {
+        when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of());
+        UUID targetId = UUID.randomUUID();
+        UUID sharedId = UUID.randomUUID();
+        UUID recentOnlyId = UUID.randomUUID();
+        Finding shared = finding(sharedId, targetId, null);
+        Finding recentOnly = finding(recentOnlyId, targetId, null);
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(10)))
+                .thenReturn(List.of(new OrgFinding(shared, "host.example.com", Instant.now(), null)));
+        when(findingRepository.findRecentByOrganization(eq(orgId), eq(10)))
+                .thenReturn(List.of(
+                        new OrgFinding(shared, "host.example.com", Instant.now(), null),
+                        new OrgFinding(recentOnly, "host.example.com", Instant.now(), null)));
+        when(scanRunRepository.findRecentByOrganization(eq(orgId), eq(8))).thenReturn(List.of());
+        when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
+        when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(shared, recentOnly));
+
+        DashboardSummary summary = controller.get(principal);
+
+        assertThat(summary.recentFindings()).hasSize(2);
+        // Both the finding topFindings also touched AND the one only recentFindings needed
+        // must have gone through score-impact computation - neither silently dropped to null
+        // because the cache was seeded by whichever list happened to run first.
+        assertThat(summary.recentFindings())
+                .extracting(org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary::id)
+                .containsExactlyInAnyOrder(sharedId, recentOnlyId);
+        // Still only one findOpenForScoring call for the shared target, across both lists.
+        verify(findingRepository, times(1)).findOpenForScoring(targetId);
     }
 
     @Test
@@ -192,6 +253,7 @@ class DashboardControllerTest {
 
         assertThat(summary.ownTargets()).isEmpty();
         assertThat(summary.topFindings()).isEmpty();
+        assertThat(summary.recentFindings()).isEmpty();
         assertThat(summary.recentActivity()).isEmpty();
         assertThat(summary.stats().totalTargets()).isZero();
     }

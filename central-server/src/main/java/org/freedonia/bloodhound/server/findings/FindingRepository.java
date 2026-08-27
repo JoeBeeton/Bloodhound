@@ -267,6 +267,28 @@ public class FindingRepository {
         return jdbc.query(sql.toString(), ORG_FINDING_MAPPER, args.toArray());
     }
 
+    /**
+     * Org-wide findings for the dashboard's "recent findings" widget - purely chronological
+     * (all severities, most recently discovered first), a deliberately different ordering from
+     * {@link #findOpenByOrganization}'s severity-first one above: that widget answers "what's
+     * most urgent right now", this one answers "what's new since I last looked", and a
+     * low-severity finding discovered five minutes ago is exactly the kind of thing the
+     * severity-ranked list would bury far down (or exclude outright, since that list is
+     * CRITICAL/HIGH-only) but that's still worth surfacing here.
+     */
+    public List<OrgFinding> findRecentByOrganization(UUID organizationId, int limit) {
+        String sql = "SELECT f.*, t.hostname AS target_hostname, "
+                + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
+                + "rc.remediation_advice AS remediation_advice "
+                + "FROM findings f "
+                + "JOIN targets t ON t.id = f.target_id "
+                + "LEFT JOIN scan_runs sr ON sr.id = f.first_detected_scan_run_id "
+                + "LEFT JOIN rules_catalog rc ON rc.rule_id = f.rule_id "
+                + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN' "
+                + "ORDER BY f.created_at DESC LIMIT ?";
+        return jdbc.query(sql, ORG_FINDING_MAPPER, organizationId, limit);
+    }
+
     /** Unbounded count backing the dashboard's stat tiles - findOpenByOrganization above is display-limited, this isn't. */
     public int countOpenByOrganization(UUID organizationId, List<String> severities) {
         StringBuilder sql = new StringBuilder(

@@ -39,6 +39,7 @@ public class DashboardController {
 
     private static final List<String> TOP_FINDING_SEVERITIES = List.of("CRITICAL", "HIGH");
     private static final int TOP_FINDINGS_LIMIT = 10;
+    private static final int RECENT_FINDINGS_LIMIT = 10;
     private static final int RECENT_ACTIVITY_LIMIT = 8;
 
     private final TargetRepository targetRepository;
@@ -84,21 +85,27 @@ public class DashboardController {
         var ruleWeights = ruleWeightRepository.findAllWeights();
         List<OrgFinding> rawTopFindings =
                 findingRepository.findOpenByOrganization(orgId, TOP_FINDING_SEVERITIES, TOP_FINDINGS_LIMIT);
-        Map<UUID, Set<UUID>> displayedIdsByTarget = rawTopFindings.stream()
+        // Purely chronological (all severities), a different ordering from topFindings above -
+        // see FindingRepository#findRecentByOrganization's javadoc for why both exist.
+        List<OrgFinding> rawRecentFindings = findingRepository.findRecentByOrganization(orgId, RECENT_FINDINGS_LIMIT);
+
+        // Unioned across BOTH lists before any impacts are computed, not built separately per
+        // list: impactsByTarget below caches one impacts map per target, computed once on that
+        // target's first touch - if topFindings and recentFindings share a target (plausible: a
+        // brand-new Critical finding could land in both), building the cache from only one
+        // list's displayed-ids would silently miss impacts for whichever finding ids only the
+        // other list needed, since the cache is never recomputed after that first touch.
+        Map<UUID, Set<UUID>> displayedIdsByTarget = java.util.stream.Stream.concat(
+                        rawTopFindings.stream(), rawRecentFindings.stream())
                 .collect(Collectors.groupingBy(
                         of -> of.finding().targetId(),
                         Collectors.mapping(of -> of.finding().id(), Collectors.toSet())));
         Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget = new HashMap<>();
         List<OrgFindingSummary> topFindings = rawTopFindings.stream()
-                .map(orgFinding -> {
-                    UUID targetId = orgFinding.finding().targetId();
-                    Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
-                        var allOpen = findingRepository.findOpenForScoring(id);
-                        return ScoreImpactCalculator.computeFor(allOpen, displayedIdsByTarget.get(id), ruleWeights);
-                    });
-                    ScoreImpact impact = impacts.get(orgFinding.finding().id());
-                    return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);
-                })
+                .map(orgFinding -> toSummary(orgFinding, displayedIdsByTarget, impactsByTarget, ruleWeights))
+                .toList();
+        List<OrgFindingSummary> recentFindings = rawRecentFindings.stream()
+                .map(orgFinding -> toSummary(orgFinding, displayedIdsByTarget, impactsByTarget, ruleWeights))
                 .toList();
 
         List<DashboardSummary.RecentActivity> recentActivity = scanRunRepository
@@ -122,7 +129,21 @@ public class DashboardController {
         var stats = new DashboardSummary.Stats(
                 allTargets.size(), (int) ownCount, (int) competitorCount, (int) watchlistCount, openCritical, openHigh);
 
-        return new DashboardSummary(ownTargets, topFindings, recentActivity, stats);
+        return new DashboardSummary(ownTargets, topFindings, recentFindings, recentActivity, stats);
+    }
+
+    private OrgFindingSummary toSummary(
+            OrgFinding orgFinding,
+            Map<UUID, Set<UUID>> displayedIdsByTarget,
+            Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget,
+            Map<String, java.math.BigDecimal> ruleWeights) {
+        UUID targetId = orgFinding.finding().targetId();
+        Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
+            var allOpen = findingRepository.findOpenForScoring(id);
+            return ScoreImpactCalculator.computeFor(allOpen, displayedIdsByTarget.get(id), ruleWeights);
+        });
+        ScoreImpact impact = impacts.get(orgFinding.finding().id());
+        return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);
     }
 
     private Map<String, Object> parseEvidence(String json) {
