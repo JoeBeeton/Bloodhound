@@ -114,4 +114,30 @@ class SafeAddressValidatorTest {
     void requireSafeIfResolvable_ipv6UlaLiteral_throws() {
         assertThrows(IOException.class, () -> SafeAddressValidator.requireSafeIfResolvable("fd00::1"));
     }
+
+    // parseAllowlist coverage - the actual env-var-to-static-field wiring (BLOODHOUND_SSRF_
+    // ALLOWLIST -> ALLOWLISTED_HOSTNAMES, read once at class load) isn't exercised here since
+    // that would need a real env var set before this JVM starts; live-verified instead (see the
+    // network-segmentation/docker-compose commit) against the actual dev-fixtures juiceshop.local
+    // scenario this allowlist exists for.
+
+    @Test
+    void parseAllowlist_nullOrBlank_producesEmptySet() {
+        assertTrue(SafeAddressValidator.parseAllowlist(null).isEmpty());
+        assertTrue(SafeAddressValidator.parseAllowlist("").isEmpty());
+        assertTrue(SafeAddressValidator.parseAllowlist("   ").isEmpty());
+    }
+
+    @Test
+    void parseAllowlist_singleHostname_normalizedToLowercase() {
+        assertTrue(SafeAddressValidator.parseAllowlist("Juiceshop.Local").contains("juiceshop.local"));
+    }
+
+    @Test
+    void parseAllowlist_multipleHostnames_trimmedAndSplit() {
+        var result = SafeAddressValidator.parseAllowlist(" juiceshop.local , other.internal ,,  ");
+        assertTrue(result.contains("juiceshop.local"));
+        assertTrue(result.contains("other.internal"));
+        assertTrue(result.size() == 2, "blank entries from doubled/trailing commas must not become empty-string entries");
+    }
 }

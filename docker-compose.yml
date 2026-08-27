@@ -113,6 +113,14 @@ services:
       HIBP_API_KEY: ${HIBP_API_KEY:-}
       SCREENSHOTTER_BASE_URL: http://screenshotter:3000
       SCREENSHOTTER_API_KEY: ${SCREENSHOTTER_API_KEY}
+      # SafeAddressValidator's SSRF guard blocks every private/RFC1918 address on principle -
+      # correct for real targets, but juiceshop.local (the dev-fixtures practice target, see
+      # below) only ever resolves to one of those by construction, since it's a Docker-bridge
+      # container. Found live: every scan module failed against it with "unreachable" once the
+      # guard had full coverage. Harmless when dev-fixtures isn't running - an allowlisted
+      # hostname that doesn't resolve is simply never looked up, same as any other unresolvable
+      # name.
+      BLOODHOUND_SSRF_ALLOWLIST: juiceshop.local
     # Scale ad hoc with: docker compose up --scale worker=3
     # (deploy.replicas is a swarm-mode construct and is intentionally not
     # used here so a plain `docker compose up` never errors on it.)
