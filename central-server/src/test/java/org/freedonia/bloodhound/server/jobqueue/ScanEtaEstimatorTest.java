@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.jobqueue;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator.Estimate;
@@ -11,67 +12,77 @@ import org.junit.jupiter.api.Test;
 
 class ScanEtaEstimatorTest {
 
-    private static final Instant NOW = Instant.parse("2026-01-01T12:00:00Z");
+    private final Instant now = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
-    void allTerminal_zeroEta_noRemainingWork() {
+    void allJobsTerminal_zeroEta_fullyCompleted() {
         List<JobProgress> jobs = List.of(
-                new JobProgress("DNS_POSTURE", "COMPLETE", null), new JobProgress("HTTP_HEADERS", "FAILED", null));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of("DNS_POSTURE", 10.0, "HTTP_HEADERS", 5.0), NOW);
-        assertThat(est.completedJobs()).isEqualTo(2);
-        assertThat(est.totalJobs()).isEqualTo(2);
-        assertThat(est.etaSeconds()).isNull();
+                new JobProgress("HTTP_HEADERS", "COMPLETE", now.minusSeconds(60)),
+                new JobProgress("TLS", "FAILED", now.minusSeconds(30)));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("HTTP_HEADERS", 10.0, "TLS", 5.0), now);
+
+        assertThat(estimate.completedJobs()).isEqualTo(2);
+        assertThat(estimate.totalJobs()).isEqualTo(2);
+        assertThat(estimate.etaSeconds()).isNull();
     }
 
     @Test
-    void pendingJob_usesFullHistoricalAverage_noClaimTimeToSubtract() {
-        List<JobProgress> jobs = List.of(new JobProgress("PORT_SCAN_LIGHT", "PENDING", null));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of("PORT_SCAN_LIGHT", 90.0), NOW);
-        assertThat(est.etaSeconds()).isEqualTo(90L);
-        assertThat(est.completedJobs()).isZero();
+    void pendingJob_noClaimedAt_usesFullHistoricalAverage() {
+        List<JobProgress> jobs = List.of(new JobProgress("DNS_POSTURE", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("DNS_POSTURE", 42.0), now);
+
+        assertThat(estimate.etaSeconds()).isEqualTo(42L);
+        assertThat(estimate.completedJobs()).isZero();
     }
 
     @Test
-    void runningJob_subtractsElapsedTimeSinceClaim() {
-        Instant claimedAt = NOW.minusSeconds(30);
-        List<JobProgress> jobs = List.of(new JobProgress("HTTP_HEADERS", "RUNNING", claimedAt));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of("HTTP_HEADERS", 50.0), NOW);
-        assertThat(est.etaSeconds()).isEqualTo(20L); // 50 - 30 elapsed
+    void runningJob_subtractsElapsedTimeFromAverage() {
+        List<JobProgress> jobs = List.of(new JobProgress("SUBDOMAIN_ENUM", "RUNNING", now.minus(20, ChronoUnit.SECONDS)));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("SUBDOMAIN_ENUM", 50.0), now);
+
+        assertThat(estimate.etaSeconds()).isEqualTo(30L);
     }
 
     @Test
-    void runningJob_alreadyOverHistoricalAverage_clampsToZero_notNegative() {
-        Instant claimedAt = NOW.minusSeconds(200);
-        List<JobProgress> jobs = List.of(new JobProgress("HTTP_HEADERS", "RUNNING", claimedAt));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of("HTTP_HEADERS", 50.0), NOW);
-        assertThat(est.etaSeconds()).isEqualTo(0L);
+    void runningJob_alreadyPastHistoricalAverage_flooredAtZero_notNegative() {
+        List<JobProgress> jobs = List.of(new JobProgress("SUBDOMAIN_ENUM", "RUNNING", now.minus(500, ChronoUnit.SECONDS)));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("SUBDOMAIN_ENUM", 50.0), now);
+
+        assertThat(estimate.etaSeconds()).isEqualTo(0L);
     }
 
     @Test
-    void overallEta_isMaxOfRemainingEstimates_notSum_becauseJobsRunConcurrently() {
+    void multipleIncompleteJobs_etaIsTheMaxRemaining_notSum() {
         List<JobProgress> jobs = List.of(
-                new JobProgress("HTTP_HEADERS", "PENDING", null), // 5s
-                new JobProgress("PORT_SCAN_DEEP", "PENDING", null), // 400s - the real bottleneck
-                new JobProgress("DNS_POSTURE", "COMPLETE", null));
-        Estimate est = ScanEtaEstimator.estimate(
-                jobs, Map.of("HTTP_HEADERS", 5.0, "PORT_SCAN_DEEP", 400.0, "DNS_POSTURE", 3.0), NOW);
-        assertThat(est.etaSeconds()).isEqualTo(400L);
-        assertThat(est.completedJobs()).isEqualTo(1);
-        assertThat(est.totalJobs()).isEqualTo(3);
+                new JobProgress("A", "RUNNING", now.minus(10, ChronoUnit.SECONDS)),
+                new JobProgress("B", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("A", 20.0, "B", 100.0), now);
+
+        // A: 20-10=10 remaining. B: 100 remaining (not started). Max is 100, not 110 - jobs run
+        // concurrently across workers, not sequentially.
+        assertThat(estimate.etaSeconds()).isEqualTo(100L);
     }
 
     @Test
-    void moduleWithNoHistoricalData_contributesNoEstimate_ratherThanGuessing() {
-        List<JobProgress> jobs = List.of(new JobProgress("BRAND_NEW_MODULE", "RUNNING", NOW.minusSeconds(5)));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of(), NOW);
-        assertThat(est.etaSeconds()).isNull();
+    void moduleTypeWithNoHistoricalData_contributesNothing_notFabricatedGuess() {
+        List<JobProgress> jobs = List.of(new JobProgress("BRAND_NEW_MODULE", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of(), now);
+
+        assertThat(estimate.etaSeconds()).isNull();
     }
 
     @Test
-    void mixOfKnownAndUnknownModules_etaReflectsOnlyTheKnownOne() {
-        List<JobProgress> jobs = List.of(
-                new JobProgress("UNKNOWN_MODULE", "PENDING", null), new JobProgress("HTTP_HEADERS", "PENDING", null));
-        Estimate est = ScanEtaEstimator.estimate(jobs, Map.of("HTTP_HEADERS", 12.0), NOW);
-        assertThat(est.etaSeconds()).isEqualTo(12L);
+    void emptyJobList_zeroTotalAndCompleted_nullEta() {
+        Estimate estimate = ScanEtaEstimator.estimate(List.of(), Map.of(), now);
+
+        assertThat(estimate.totalJobs()).isZero();
+        assertThat(estimate.completedJobs()).isZero();
+        assertThat(estimate.etaSeconds()).isNull();
     }
 }

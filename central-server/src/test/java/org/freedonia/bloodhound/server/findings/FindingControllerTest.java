@@ -1,0 +1,183 @@
+package org.freedonia.bloodhound.server.findings;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.dto.FindingSummary;
+import org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary;
+import org.freedonia.bloodhound.server.jobqueue.ScanRun;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
+import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
+import org.freedonia.bloodhound.server.target.Target;
+import org.freedonia.bloodhound.server.target.TargetRepository;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
+
+class FindingControllerTest {
+
+    private final FindingRepository findingRepository = mock(FindingRepository.class);
+    private final TargetRepository targetRepository = mock(TargetRepository.class);
+    private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
+    private final RuleWeightRepository ruleWeightRepository = mock(RuleWeightRepository.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final FindingController controller = new FindingController(
+            findingRepository, targetRepository, scanRunRepository, ruleWeightRepository, objectMapper);
+
+    private final UUID orgId = UUID.randomUUID();
+    private final UUID targetId = UUID.randomUUID();
+    private final JwtPrincipal principal = new JwtPrincipal(UUID.randomUUID(), orgId, "VIEWER", "viewer@example.com");
+
+    private Target target() {
+        return new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now());
+    }
+
+    private Finding finding(UUID id) {
+        return new Finding(
+                id, UUID.randomUUID(), targetId, "HTTP", "RULE_X", "HIGH", "EXPOSURE", "title", "desc", null,
+                "asset", UUID.randomUUID(), "OPEN", null, Instant.now(), Instant.now());
+    }
+
+    private void stubCommonListDeps() {
+        when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
+        when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of());
+        when(findingRepository.countByTargetFiltered(eq(targetId), any(), any(), any(), any())).thenReturn(0);
+        when(findingRepository.findByTargetDetailed(eq(targetId), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+    }
+
+    @Test
+    void forTarget_targetInAnotherOrg_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.forTarget(targetId, null, null, null, null, 200, 0, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void forTarget_ownedTarget_returnsPageWithTotalCountHeader() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        stubCommonListDeps();
+        when(findingRepository.countByTargetFiltered(targetId, null, null, null, null)).thenReturn(42);
+
+        ResponseEntity<List<FindingSummary>> response =
+                controller.forTarget(targetId, null, null, null, null, 200, 0, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getFirst("X-Total-Count")).isEqualTo("42");
+    }
+
+    @Test
+    void forTarget_limitClampedToMax500_evenIfCallerAsksForMore() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        stubCommonListDeps();
+
+        controller.forTarget(targetId, null, null, null, null, 999999, 0, principal);
+
+        verify(findingRepository).findByTargetDetailed(eq(targetId), any(), any(), any(), any(), eq(500), eq(0));
+    }
+
+    @Test
+    void forTarget_limitClampedToMin1_evenIfCallerAsksForZeroOrNegative() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        stubCommonListDeps();
+
+        controller.forTarget(targetId, null, null, null, null, -5, 0, principal);
+
+        verify(findingRepository).findByTargetDetailed(eq(targetId), any(), any(), any(), any(), eq(1), eq(0));
+    }
+
+    @Test
+    void forTarget_negativeOffset_clampedToZero() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        stubCommonListDeps();
+
+        controller.forTarget(targetId, null, null, null, null, 200, -10, principal);
+
+        verify(findingRepository).findByTargetDetailed(eq(targetId), any(), any(), any(), any(), anyInt(), eq(0));
+    }
+
+    @Test
+    void forRun_runNotFound_notFound() {
+        UUID runId = UUID.randomUUID();
+        when(scanRunRepository.findById(runId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.forRun(runId, null, null, null, null, 200, 0, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void forRun_runsTargetInAnotherOrg_notFound() {
+        UUID runId = UUID.randomUUID();
+        ScanRun run = new ScanRun(runId, targetId, "MANUAL", null, Instant.now(), null, "COMPLETE");
+        when(scanRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.forRun(runId, null, null, null, null, 200, 0, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void forRun_resolvesRunsTarget_thenListsThatTargetsCurrentFindings() {
+        UUID runId = UUID.randomUUID();
+        ScanRun run = new ScanRun(runId, targetId, "MANUAL", null, Instant.now(), null, "COMPLETE");
+        when(scanRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        stubCommonListDeps();
+
+        ResponseEntity<List<FindingSummary>> response =
+                controller.forRun(runId, null, null, null, null, 200, 0, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        verify(findingRepository).findByTargetDetailed(eq(targetId), any(), any(), any(), any(), eq(200), eq(0));
+    }
+
+    @Test
+    void forOrganization_scoreImpactContextFetchedOncePerTarget() {
+        Finding f1 = finding(UUID.randomUUID());
+        Finding f2 = finding(UUID.randomUUID());
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), eq(20)))
+                .thenReturn(List.of(
+                        new OrgFinding(f1, "host.example.com", Instant.now(), null),
+                        new OrgFinding(f2, "host.example.com", Instant.now(), null)));
+        when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
+        when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f1, f2));
+
+        List<OrgFindingSummary> result = controller.forOrganization(null, 20, principal);
+
+        assertThat(result).hasSize(2);
+        verify(findingRepository, org.mockito.Mockito.times(1)).findOpenForScoring(targetId);
+    }
+
+    @Test
+    void forOrganization_severityFilter_splitOnComma() {
+        when(findingRepository.findOpenByOrganization(eq(orgId), eq(List.of("CRITICAL", "HIGH")), eq(20)))
+                .thenReturn(List.of());
+
+        controller.forOrganization("CRITICAL,HIGH", 20, principal);
+
+        verify(findingRepository).findOpenByOrganization(orgId, List.of("CRITICAL", "HIGH"), 20);
+    }
+
+    @Test
+    void forOrganization_blankSeverity_meansNoFilter() {
+        when(findingRepository.findOpenByOrganization(eq(orgId), eq(List.of()), eq(20))).thenReturn(List.of());
+
+        controller.forOrganization("", 20, principal);
+
+        verify(findingRepository).findOpenByOrganization(orgId, List.of(), 20);
+    }
+}
