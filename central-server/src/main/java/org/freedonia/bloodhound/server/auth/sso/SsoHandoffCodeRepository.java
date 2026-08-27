@@ -53,15 +53,22 @@ public class SsoHandoffCodeRepository {
     }
 
     /**
-     * Single-use: deletes on lookup regardless of outcome, so a replay of the same
-     * code (whether already-consumed or forged-but-guessed) always finds nothing.
+     * Single-use: a single atomic {@code DELETE ... RETURNING}, not a SELECT followed by a
+     * separate DELETE - a security review caught that the two-statement form let a raced
+     * double-exchange of the same code (two requests landing between the SELECT and the DELETE)
+     * both read the row and both succeed, defeating the single-use guarantee this class exists
+     * for. A single DELETE is atomic: Postgres serializes concurrent DELETEs against the same
+     * row via its normal row-level locking, so only ever one caller can actually delete (and
+     * therefore receive) a given code's row - a second, concurrent consume() for the same code
+     * deletes zero rows and correctly gets Optional.empty(), the same as an already-consumed or
+     * forged-but-guessed code always did.
      */
     public Optional<Result> consume(String code) {
-        Optional<Result> result = jdbc.query(
-                        "SELECT * FROM sso_handoff_codes WHERE code = ? AND expires_at > now()", ROW_MAPPER, code)
+        return jdbc.query(
+                        "DELETE FROM sso_handoff_codes WHERE code = ? AND expires_at > now() RETURNING *",
+                        ROW_MAPPER,
+                        code)
                 .stream()
                 .findFirst();
-        jdbc.update("DELETE FROM sso_handoff_codes WHERE code = ?", code);
-        return result;
     }
 }
