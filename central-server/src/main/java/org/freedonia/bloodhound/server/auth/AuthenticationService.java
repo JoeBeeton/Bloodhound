@@ -89,7 +89,19 @@ public class AuthenticationService {
                 .filter(u -> "ACTIVE".equals(u.status()))
                 .orElseThrow(InvalidRefreshTokenException::new);
 
-        refreshTokenRepository.revoke(existing.id());
+        // tryRevoke, not the plain unconditional revoke: a security review found that reading
+        // revokedAt() above and only revoking here as a separate statement left a genuine
+        // rotation race - two concurrent refresh() calls for the same still-valid token could
+        // both pass the check above before either committed its revoke, both proceeding to mint
+        // a child token and forking the session instead of one of them being rejected. tryRevoke
+        // is the atomic point of truth: only the caller whose UPDATE actually flips revoked_at
+        // (there can be only one, since Postgres serializes concurrent UPDATEs to the same row)
+        // gets to rotate; the loser is treated exactly like an already-revoked replay, since from
+        // its perspective that's exactly what happened a moment too late to observe directly.
+        if (!refreshTokenRepository.tryRevoke(existing.id())) {
+            refreshTokenRepository.revokeLineageFrom(existing.id());
+            throw new InvalidRefreshTokenException();
+        }
         AuthResult result = issueTokens(user);
         refreshTokenRepository.linkReplacement(existing.id(), result.refreshTokenId());
         return result;

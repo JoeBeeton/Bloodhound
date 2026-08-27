@@ -133,16 +133,38 @@ class AuthenticationServiceTest {
         UUID oldTokenId = UUID.randomUUID();
         RefreshToken token = new RefreshToken(oldTokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
+        when(refreshTokenRepository.tryRevoke(oldTokenId)).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(jwtService.issueAccessToken(any(), any(), any(), any())).thenReturn("new-jwt");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(900L);
 
         AuthResult result = service.refresh("raw-old-token");
 
-        verify(refreshTokenRepository).revoke(oldTokenId);
+        verify(refreshTokenRepository).tryRevoke(oldTokenId);
         verify(refreshTokenRepository).linkReplacement(oldTokenId, result.refreshTokenId());
         verify(refreshTokenRepository, never()).revokeLineageFrom(any());
         assertThat(result.accessToken()).isEqualTo("new-jwt");
+    }
+
+    @Test
+    void refresh_concurrentRefreshWinsTheRace_thisCallTreatedAsTheft() {
+        // The actual race a security review found: two concurrent refresh() calls both read the
+        // same still-unrevoked token before either commits its revoke. tryRevoke's atomic
+        // UPDATE...WHERE revoked_at IS NULL is what decides a winner - simulated here by having
+        // it report "someone else already claimed this" (false), as if another request's
+        // statement had executed first.
+        UUID userId = UUID.randomUUID();
+        User user = user(userId, "ACTIVE");
+        UUID tokenId = UUID.randomUUID();
+        RefreshToken token = new RefreshToken(tokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
+        when(refreshTokenRepository.tryRevoke(tokenId)).thenReturn(false);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.refresh("raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
+
+        verify(refreshTokenRepository).revokeLineageFrom(tokenId);
+        verify(refreshTokenRepository, never()).linkReplacement(any(), any());
     }
 
     @Test
