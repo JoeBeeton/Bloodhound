@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.worker.modules.tls;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -162,9 +163,18 @@ public class TlsFetcher {
         // one check happens before any of them, well before this method is reached. Checking here (the
         // single shared connect point for all three) closes that gap the same way ExposedPathFetcher's
         // doProbe() does for its own independent connections.
-        SafeAddressValidator.requireSafeIfResolvable(hostname);
+        //
+        // resolveSafeAddress, not requireSafeIfResolvable + a hostname-based InetSocketAddress: a
+        // security review caught that pairing them left a real DNS-rebinding TOCTOU window - the
+        // validator's own resolution and the socket's independent resolution moments later could
+        // disagree. Connecting directly to the one already-validated address closes it. SNI is
+        // unaffected: it's set explicitly below via SNIHostName regardless of which InetSocketAddress
+        // overload is used to connect, and this class never enables hostname-based certificate
+        // verification in the first place (the permissive/legacy-protocol probes want whatever cert
+        // is presented, and isChainTrusted only checks chain trust, not hostname match).
+        InetAddress resolved = SafeAddressValidator.resolveSafeAddress(hostname);
         SSLSocket socket = (SSLSocket) ctx.getSocketFactory().createSocket();
-        socket.connect(new InetSocketAddress(hostname, PORT), CONNECT_TIMEOUT_MS);
+        socket.connect(new InetSocketAddress(resolved, PORT), CONNECT_TIMEOUT_MS);
         socket.setSoTimeout(SOCKET_TIMEOUT_MS);
         SSLParameters params = socket.getSSLParameters();
         params.setServerNames(List.of(new SNIHostName(hostname)));
