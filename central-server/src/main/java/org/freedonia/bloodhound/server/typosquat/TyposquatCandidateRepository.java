@@ -80,15 +80,24 @@ public class TyposquatCandidateRepository {
                 targetId);
     }
 
-    /** Org-scoping is the caller's job (see TyposquatController) - this just fetches the bytes for an id already confirmed to belong to the right target. */
+    /**
+     * Org-scoping is the caller's job (see TyposquatController) - this just fetches the bytes for
+     * an id already confirmed to belong to the right target.
+     *
+     * <p>{@code Optional.ofNullable(...get(0))}, not {@code .stream().findFirst()}: the row
+     * legitimately exists (the candidate itself is real) with {@code screenshot_png} SQL-NULL
+     * for the common case of "not screenshotted yet" - a null-valued row makes {@code
+     * List.stream().findFirst()} throw NullPointerException (it wraps the element via {@code
+     * Optional.of}, not {@code ofNullable}), not return an empty/filtered Optional as the
+     * previous code here assumed. Confirmed live: GET .../screenshot 500'd instead of 404ing
+     * for a real candidate with no screenshot.
+     */
     public Optional<byte[]> findScreenshotPng(UUID targetId, UUID candidateId) {
-        return jdbc.query(
-                        "SELECT screenshot_png FROM typosquat_candidates WHERE id = ? AND target_id = ?",
-                        (rs, rowNum) -> rs.getBytes("screenshot_png"),
-                        candidateId,
-                        targetId)
-                .stream()
-                .findFirst()
-                .filter(bytes -> bytes != null);
+        List<byte[]> rows = jdbc.query(
+                "SELECT screenshot_png FROM typosquat_candidates WHERE id = ? AND target_id = ?",
+                (rs, rowNum) -> rs.getBytes("screenshot_png"),
+                candidateId,
+                targetId);
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.get(0));
     }
 }
