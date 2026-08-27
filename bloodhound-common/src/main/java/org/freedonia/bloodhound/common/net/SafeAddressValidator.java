@@ -91,4 +91,31 @@ public final class SafeAddressValidator {
             }
         }
     }
+
+    /**
+     * Resolves {@code hostname} once and returns the specific address a caller should then
+     * connect to directly, instead of handing back a bare "yes it's currently fine" and letting
+     * the caller re-resolve independently at connect time - a security review flagged that
+     * exact gap: {@code requireSafeIfResolvable} followed by a separate hostname-based {@code
+     * InetSocketAddress}/socket connect leaves a real window for DNS rebinding to swap in an
+     * unsafe address between the two resolutions. Used by every raw-socket connect in this
+     * codebase that can act on the resolved address itself (TlsFetcher, ExposedPathFetcher's
+     * Redis probe) - not usable everywhere: {@code java.net.http.HttpClient} and other
+     * higher-level clients resolve internally with no "connect to this exact address" hook
+     * exposed, so {@code requireSafeIfResolvable}'s check-then-let-the-caller-reconnect shape
+     * remains the only option there, a documented, accepted residual gap for those call sites.
+     *
+     * <p>Unlike {@code requireSafeIfResolvable} (which conservatively rejects a hostname if ANY
+     * of its resolved addresses is unsafe, since a caller using an HttpClient can't control
+     * which one gets used), this only needs to validate the ONE address it's about to hand back
+     * - the same single-address resolution {@code InetAddress.getByName} and the raw socket
+     * constructors these callers previously used were already implicitly relying on.
+     */
+    public static InetAddress resolveSafeAddress(String hostname) throws IOException {
+        InetAddress address = InetAddress.getByName(hostname);
+        if (isUnsafeToConnect(address)) {
+            throw new IOException(hostname + " resolves to a private/loopback/reserved address - refusing to connect");
+        }
+        return address;
+    }
 }

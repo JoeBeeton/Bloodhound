@@ -181,9 +181,14 @@ public class ExposedPathFetcher {
         HostnameRateLimiter.shared().acquire(hostname);
         try (Socket socket = new Socket()) {
             // Same SSRF re-check as doProbe() - this is a raw socket connect by hostname, not HTTP,
-            // so it needs its own guard rather than sharing doProbe()'s.
-            SafeAddressValidator.requireSafeIfResolvable(hostname);
-            socket.connect(new InetSocketAddress(hostname, 6379), ALT_PORT_CONNECT_TIMEOUT_S * 1000);
+            // so it needs its own guard rather than sharing doProbe()'s. resolveSafeAddress, not
+            // requireSafeIfResolvable + a hostname-based InetSocketAddress: connecting to the one
+            // already-validated address (rather than letting the socket re-resolve the hostname
+            // independently) closes the DNS-rebinding TOCTOU window a security review flagged here -
+            // no SNI/hostname-verification concerns to preserve, unlike TlsFetcher, since this is a
+            // plain TCP connection.
+            java.net.InetAddress resolved = SafeAddressValidator.resolveSafeAddress(hostname);
+            socket.connect(new InetSocketAddress(resolved, 6379), ALT_PORT_CONNECT_TIMEOUT_S * 1000);
             socket.setSoTimeout(REQUEST_TIMEOUT_S * 1000);
             socket.getOutputStream().write("INFO\r\n".getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();

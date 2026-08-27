@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.worker.modules.whois;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -9,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,8 +75,15 @@ public class WhoisFetcher {
     }
 
     private String queryWhoisServer(String server, String query) throws IOException {
+        // Every other raw-socket connect in this codebase re-validates the resolved address
+        // immediately before connecting - this one didn't, a security review flagged as an
+        // inconsistent outlier (low risk in practice: the two servers this is ever called with
+        // are "whois.iana.org" and a referral server parsed from IANA's own authoritative
+        // response, not attacker-influenced target data the way a scanned hostname/subdomain is
+        // elsewhere - but worth the same guard for consistency and defense in depth).
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(server, WHOIS_PORT), SOCKET_TIMEOUT_MS);
+            InetAddress resolved = SafeAddressValidator.resolveSafeAddress(server);
+            socket.connect(new InetSocketAddress(resolved, WHOIS_PORT), SOCKET_TIMEOUT_MS);
             socket.setSoTimeout(SOCKET_TIMEOUT_MS);
             socket.getOutputStream().write((query + "\r\n").getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
