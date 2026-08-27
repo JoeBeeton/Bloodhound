@@ -1,3 +1,5 @@
+import org.gradle.testing.jacoco.tasks.JacocoReport
+
 plugins {
     java
     id("org.springframework.boot") version "3.4.1" apply false
@@ -27,6 +29,11 @@ allprojects {
 
 subprojects {
     apply(plugin = "java")
+    // Coverage measurement (EPL-2.0, build-time only). Applied to every subproject so
+    // `./gradlew test jacocoTestReport` always produces a per-module HTML/XML report at
+    // build/reports/jacoco/test/html/index.html - this is what "high test coverage" is
+    // measured against, not a guess.
+    apply(plugin = "jacoco")
 
     java {
         toolchain {
@@ -36,5 +43,14 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+        finalizedBy(tasks.named("jacocoTestReport"))
+    }
+
+    tasks.named<JacocoReport>("jacocoTestReport") {
+        dependsOn(tasks.named("test"))
+        reports {
+            xml.required.set(true)
+            html.required.set(true)
+        }
     }
 }
