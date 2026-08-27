@@ -3,6 +3,10 @@ package org.freedonia.bloodhound.common.net;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * SSRF guard: is this resolved IP address something Bloodhound should ever be
@@ -17,10 +21,43 @@ import java.net.UnknownHostException;
  * since DNS is attacker-influenced and a hostname that resolved to a public
  * IP at creation time can be repointed at an internal address by scan time
  * (DNS rebinding) - the create-time check alone is not sufficient on its own.
+ *
+ * <p>{@code BLOODHOUND_SSRF_ALLOWLIST} (comma-separated hostnames, exact
+ * match, case-insensitive) exists for exactly one real scenario: the bundled
+ * `juiceshop.local` practice target (see docker-compose.yml's dev-fixtures
+ * profile) inherently resolves to a private Docker-bridge address - that's
+ * the whole point of it being a safe, self-contained thing to point Tier 2
+ * active scanning at - so this guard would otherwise block the one target
+ * it's explicitly safe to attack. Found live: every scan module failed
+ * against it with "unreachable" after this guard was added to ZAP. Keyed by
+ * hostname, not by IP range: a deployer opts a *specific, known* hostname
+ * out, which is a fundamentally narrower hole than exempting a whole private
+ * subnet (which would defeat this guard's purpose for every other target
+ * that happens to resolve there). Empty by default - sets no exception for
+ * any real deployment; only docker-compose.yml's own worker/central-server
+ * environment blocks populate it, and only for the dev-fixtures hostname.
  */
 public final class SafeAddressValidator {
 
+    private static final Set<String> ALLOWLISTED_HOSTNAMES = parseAllowlist(System.getenv("BLOODHOUND_SSRF_ALLOWLIST"));
+
     private SafeAddressValidator() {}
+
+    /** Package-visible so its parsing rules (trim, case-fold, drop blanks) are directly unit-testable without needing to fork a JVM with a real env var set. */
+    static Set<String> parseAllowlist(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private static boolean isAllowlisted(String hostname) {
+        return hostname != null && ALLOWLISTED_HOSTNAMES.contains(hostname.toLowerCase(Locale.ROOT));
+    }
 
     public static boolean isSafeToConnect(InetAddress address) {
         if (address.isLoopbackAddress()
@@ -78,6 +115,9 @@ public final class SafeAddressValidator {
      * resolves to somewhere unsafe.
      */
     public static void requireSafeIfResolvable(String hostname) throws IOException {
+        if (isAllowlisted(hostname)) {
+            return;
+        }
         InetAddress[] addresses;
         try {
             addresses = InetAddress.getAllByName(hostname);
@@ -113,7 +153,7 @@ public final class SafeAddressValidator {
      */
     public static InetAddress resolveSafeAddress(String hostname) throws IOException {
         InetAddress address = InetAddress.getByName(hostname);
-        if (isUnsafeToConnect(address)) {
+        if (!isAllowlisted(hostname) && isUnsafeToConnect(address)) {
             throw new IOException(hostname + " resolves to a private/loopback/reserved address - refusing to connect");
         }
         return address;
