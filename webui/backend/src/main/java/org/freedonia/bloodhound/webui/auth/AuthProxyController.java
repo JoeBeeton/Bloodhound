@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.webui.auth;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import org.freedonia.bloodhound.webui.auth.dto.ClientAuthResponse;
 import org.freedonia.bloodhound.webui.auth.dto.LoginRequest;
@@ -40,7 +41,7 @@ public class AuthProxyController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ClientAuthResponse> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<ClientAuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest servletRequest) {
         try {
             UpstreamAuthResponse upstream = centralServerClient
                     .post()
@@ -49,7 +50,7 @@ public class AuthProxyController {
                     .body(request)
                     .retrieve()
                     .body(UpstreamAuthResponse.class);
-            return respondWithSessionCookie(upstream);
+            return respondWithSessionCookie(upstream, servletRequest);
         } catch (HttpClientErrorException e) {
             // Was previously HttpClientErrorException.Unauthorized only, which
             // silently turned any *other* 4xx central-server could return
@@ -71,7 +72,8 @@ public class AuthProxyController {
      * identical state to a local login.
      */
     @PostMapping("/sso/exchange")
-    public ResponseEntity<ClientAuthResponse> ssoExchange(@RequestBody SsoExchangeRequest request) {
+    public ResponseEntity<ClientAuthResponse> ssoExchange(
+            @RequestBody SsoExchangeRequest request, HttpServletRequest servletRequest) {
         try {
             UpstreamAuthResponse upstream = centralServerClient
                     .post()
@@ -80,7 +82,7 @@ public class AuthProxyController {
                     .body(request)
                     .retrieve()
                     .body(UpstreamAuthResponse.class);
-            return respondWithSessionCookie(upstream);
+            return respondWithSessionCookie(upstream, servletRequest);
         } catch (HttpClientErrorException e) {
             return ResponseEntity.status(e.getStatusCode()).build();
         }
@@ -88,7 +90,7 @@ public class AuthProxyController {
 
     @PostMapping("/refresh")
     public ResponseEntity<ClientAuthResponse> refresh(
-            @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
+            @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken, HttpServletRequest servletRequest) {
         if (refreshToken == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -100,16 +102,17 @@ public class AuthProxyController {
                     .body(new RefreshTokenRequest(refreshToken))
                     .retrieve()
                     .body(UpstreamAuthResponse.class);
-            return respondWithSessionCookie(upstream);
+            return respondWithSessionCookie(upstream, servletRequest);
         } catch (HttpClientErrorException.Unauthorized e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .header(HttpHeaders.SET_COOKIE, clearCookie().toString())
+                    .header(HttpHeaders.SET_COOKIE, clearCookie(servletRequest).toString())
                     .build();
         }
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken) {
+    public ResponseEntity<Void> logout(
+            @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken, HttpServletRequest servletRequest) {
         if (refreshToken != null) {
             try {
                 centralServerClient
@@ -124,14 +127,15 @@ public class AuthProxyController {
             }
         }
         return ResponseEntity.noContent()
-                .header(HttpHeaders.SET_COOKIE, clearCookie().toString())
+                .header(HttpHeaders.SET_COOKIE, clearCookie(servletRequest).toString())
                 .build();
     }
 
-    private ResponseEntity<ClientAuthResponse> respondWithSessionCookie(UpstreamAuthResponse upstream) {
+    private ResponseEntity<ClientAuthResponse> respondWithSessionCookie(
+            UpstreamAuthResponse upstream, HttpServletRequest servletRequest) {
         ResponseCookie cookie = ResponseCookie.from(REFRESH_COOKIE, upstream.refreshToken())
                 .httpOnly(true)
-                .secure(false) // TODO: true once webui is served behind TLS in production
+                .secure(isSecure(servletRequest))
                 .sameSite("Lax")
                 .path("/api/auth")
                 .maxAge(REFRESH_COOKIE_MAX_AGE)
@@ -141,13 +145,30 @@ public class AuthProxyController {
                 .body(ClientAuthResponse.from(upstream));
     }
 
-    private ResponseCookie clearCookie() {
+    private ResponseCookie clearCookie(HttpServletRequest servletRequest) {
         return ResponseCookie.from(REFRESH_COOKIE, "")
                 .httpOnly(true)
-                .secure(false)
+                .secure(isSecure(servletRequest))
                 .sameSite("Lax")
                 .path("/api/auth")
                 .maxAge(0)
                 .build();
+    }
+
+    /**
+     * Was hardcoded {@code false} unconditionally (a security review flagged this: a 30-day
+     * httpOnly cookie sniffable over any plaintext hop unless someone remembered to hand-edit it
+     * before prod). Derives the flag from the actual request instead, so it does the right thing
+     * with no config to remember: plain HTTP in local dev (docker-compose exposes services
+     * directly, unencrypted) correctly gets an unmarked cookie, and a real deployment gets a
+     * Secure one automatically - either because webui itself terminates TLS, or because a
+     * fronting reverse proxy does and forwards {@code X-Forwarded-Proto: https}, which {@code
+     * HttpServletRequest#isSecure()} reflects once the deployer enables Spring Boot's
+     * forward-headers support (server.forward-headers-strategy) for their proxy - that trust
+     * decision belongs to the deployer's own proxy config, not something this app can safely
+     * assume.
+     */
+    private static boolean isSecure(HttpServletRequest servletRequest) {
+        return servletRequest.isSecure();
     }
 }
