@@ -1,12 +1,14 @@
 package org.freedonia.bloodhound.common.net;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -117,6 +119,28 @@ public final class SafeHttpGet {
             currentUrl = uri.resolve(location.get()).toString();
         }
         throw new IOException("exceeded " + maxRedirects + " redirects following " + url);
+    }
+
+    /**
+     * Reads at most {@code maxBytes} from {@code body}, decoded as UTF-8, and closes the
+     * stream - the capped-read counterpart to fetching with {@code BodyHandlers.ofInputStream()}
+     * instead of {@code ofString()}. A security review flagged that {@code ofString()} buffers
+     * the ENTIRE response into memory with no size limit before any caller-side truncation ever
+     * runs (found live: {@code TechFetcher} truncated to a char cap, but only after {@code
+     * ofString()} had already fully buffered the untruncated body) - a scanned target, attacker-
+     * influenceable by definition (see this class's own javadoc), could stream gigabytes within
+     * the request timeout and exhaust the shared worker JVM's heap, affecting every other org's
+     * queued scans on that worker, with zero authorization required since Tier 1 scanning runs
+     * against any tracked competitor/watchlist domain. {@link InputStream#readNBytes(int)}
+     * itself is what bounds memory here: it never allocates more than {@code maxBytes}
+     * regardless of how much more the server tries to send, and truncates silently rather than
+     * throwing past the cap - a partial page is still useful for parsing (generator meta tags,
+     * titles, etc. are typically near the top), unlike discarding everything.
+     */
+    public static String readCappedUtf8(InputStream body, int maxBytes) throws IOException {
+        try (InputStream in = body) {
+            return new String(in.readNBytes(maxBytes), StandardCharsets.UTF_8);
+        }
     }
 
     private static void requireSafeHost(String host) throws IOException {
