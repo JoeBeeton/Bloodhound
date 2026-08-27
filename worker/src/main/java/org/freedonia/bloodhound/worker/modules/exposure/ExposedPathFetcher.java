@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.worker.ratelimit.HostnameRateLimiter;
 
 /**
@@ -123,6 +124,15 @@ public class ExposedPathFetcher {
 
     private ProbeResponse doProbe(URI uri, String method, String postBody, boolean skipBody, boolean isAltPort)
             throws IOException, InterruptedException {
+        // Unlike every other target-facing fetcher in this module (HttpHeaderFetcher/TechFetcher/
+        // DocumentFetcher via SafeHttpGet, NucleiFetcher/CloudBucketChecker directly), this class makes
+        // ~21 independent connections per host by hostname string rather than a pre-resolved address, and
+        // HostFanOut's one SafeAddressValidator check happens well before any of them - so without a check
+        // here too, a target whose DNS flips after that one check (TTL=0 rebinding) would sail every one of
+        // these connections straight past the SSRF guard. Matches the same single check-then-connect
+        // pattern the rest of the codebase already accepts as its baseline (see SafeHttpGet's javadoc for
+        // the residual TOCTOU gap that pattern doesn't fully close).
+        SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(isAltPort ? ALT_PORT_CONNECT_TIMEOUT_S : DEFAULT_PORT_CONNECT_TIMEOUT_S))
                 .build();
@@ -170,6 +180,9 @@ public class ExposedPathFetcher {
     private String probeRedis(String hostname) {
         HostnameRateLimiter.shared().acquire(hostname);
         try (Socket socket = new Socket()) {
+            // Same SSRF re-check as doProbe() - this is a raw socket connect by hostname, not HTTP,
+            // so it needs its own guard rather than sharing doProbe()'s.
+            SafeAddressValidator.requireSafeIfResolvable(hostname);
             socket.connect(new InetSocketAddress(hostname, 6379), ALT_PORT_CONNECT_TIMEOUT_S * 1000);
             socket.setSoTimeout(REQUEST_TIMEOUT_S * 1000);
             socket.getOutputStream().write("INFO\r\n".getBytes(StandardCharsets.US_ASCII));

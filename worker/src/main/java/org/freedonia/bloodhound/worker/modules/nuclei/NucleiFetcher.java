@@ -53,6 +53,18 @@ public class NucleiFetcher {
     private static final String TEMPLATES_DIR = "/opt/nuclei-templates";
 
     public String scanJsonLines(String hostname) throws ScanModuleException {
+        // hostname reaches here as "-target", hostname in argv below - ProcessBuilder(List<String>)
+        // isn't shell-interpreted, so classic ';'/backtick shell injection isn't possible, but a value
+        // starting with '-' would land right after -target as nuclei's own CLI parser sees it, which is
+        // argument-injection territory rather than shell injection. Unlike a target's root hostname
+        // (locked to a strict DNS-name regex at creation, see CreateTargetRequest), a *discovered*
+        // subdomain reaching here (this module scans "root plus known subdomains") is explicitly NOT
+        // validated the same way - see the identical caveat in DanglingCnameChecker/CloudBucketChecker/
+        // NsTakeoverChecker. A leading '-' is invalid DNS-label syntax regardless, so rejecting it here
+        // costs nothing legitimate and closes the gap at the one call site that actually matters.
+        if (hostname.startsWith("-")) {
+            throw new ScanModuleException("refusing to pass a hostname starting with '-' to nuclei: " + hostname);
+        }
         try {
             SafeAddressValidator.requireSafeIfResolvable(hostname);
         } catch (java.io.IOException e) {
