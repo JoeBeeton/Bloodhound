@@ -127,6 +127,7 @@ class OrgUserControllerTest {
         when(userRepository.findById(targetUserId))
                 .thenReturn(Optional.of(existing))
                 .thenReturn(Optional.of(user(targetUserId, orgId, "ANALYST", "ACTIVE")));
+        when(userRepository.updateRoleAndStatus(targetUserId, "ANALYST", "ACTIVE")).thenReturn(true);
 
         UserSummary result = controller.update(orgId, targetUserId, new UpdateUserRequest("ANALYST", null), admin);
 
@@ -139,10 +140,26 @@ class OrgUserControllerTest {
         UUID targetUserId = UUID.randomUUID();
         User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
         when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "SUSPENDED")).thenReturn(true);
 
         controller.update(orgId, targetUserId, new UpdateUserRequest(null, "SUSPENDED"), admin);
 
         // role omitted (null) in the request - existing "VIEWER" must be preserved, not nulled out.
         verify(userRepository).updateRoleAndStatus(targetUserId, "VIEWER", "SUSPENDED");
+    }
+
+    @Test
+    void update_wouldOrphanOrgWithNoActiveAdmin_conflict() {
+        // The last-admin invariant is enforced atomically inside UserRepository's own UPDATE
+        // (see its javadoc) - this test proves the controller surfaces that rejection as a
+        // clean 409 rather than silently reporting success when zero rows were actually updated.
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "ADMIN", "ACTIVE");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(false);
+
+        assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("VIEWER", null), admin))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(409));
     }
 }

@@ -97,7 +97,11 @@ public class OrgUserController {
 
         String newRole = request.role() != null ? request.role() : target.role();
         String newStatus = request.status() != null ? request.status() : target.status();
-        userRepository.updateRoleAndStatus(id, newRole, newStatus);
+        boolean updated = userRepository.updateRoleAndStatus(id, newRole, newStatus);
+        if (!updated) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "cannot demote or deactivate the organization's last remaining admin");
+        }
         return UserSummary.from(userRepository.findById(id).orElseThrow());
     }
 

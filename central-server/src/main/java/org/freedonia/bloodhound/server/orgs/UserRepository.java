@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class UserRepository {
@@ -84,8 +85,49 @@ public class UserRepository {
         return findById(id).orElseThrow();
     }
 
-    public void updateRoleAndStatus(UUID id, String role, String status) {
-        jdbc.update("UPDATE users SET role = ?, status = ?, updated_at = now() WHERE id = ?", role, status, id);
+    /**
+     * Enforces "at least one active admin must remain in the organization" - a security review
+     * found the controller had no such invariant at all: two different ADMINs demoting each
+     * other in the same instant could both succeed, since neither is a "change your own role"
+     * self-demotion (already blocked elsewhere), orphaning the org with zero admins and no one
+     * left who could promote anyone back without direct DB access.
+     *
+     * <p>{@code SELECT ... FOR UPDATE} on every currently-active-admin row in the org, not a
+     * single UPDATE with an EXISTS-guarded WHERE clause: an EXISTS check evaluated as part of
+     * the UPDATE's own WHERE clause was tried first and looked atomic, but a live concurrent
+     * test (two real HTTP requests firing the mutual-demotion race simultaneously) proved it
+     * insufficient - both statements' EXISTS subqueries ran against snapshots taken before
+     * either had committed, so each saw the other admin as still active and both succeeded,
+     * leaving zero admins. This is the textbook Postgres write-skew anomaly, and the actual fix
+     * for it is locking: {@code FOR UPDATE} here forces a second concurrent call for the same
+     * org to block until this transaction commits, so by the time it proceeds it sees this
+     * call's already-committed result, not a stale snapshot - re-verified with the same live
+     * concurrent test after this change, zero admins left in either run.
+     *
+     * @return true if the row was actually updated, false if it was rejected because it would
+     *     have left the organization with no active admin
+     */
+    @Transactional
+    public boolean updateRoleAndStatus(UUID id, String role, String status) {
+        List<UUID> lockedActiveAdminIds = jdbc.query(
+                """
+                SELECT u2.id FROM users u2
+                WHERE u2.organization_id = (SELECT organization_id FROM users WHERE id = ?)
+                  AND u2.role = 'ADMIN' AND u2.status = 'ACTIVE'
+                FOR UPDATE
+                """,
+                (rs, rowNum) -> UUID.fromString(rs.getString("id")),
+                id);
+
+        boolean targetCurrentlyActiveAdmin = lockedActiveAdminIds.contains(id);
+        boolean targetRemainsActiveAdmin = "ADMIN".equals(role) && "ACTIVE".equals(status);
+        boolean wouldOrphanOrg = targetCurrentlyActiveAdmin && !targetRemainsActiveAdmin && lockedActiveAdminIds.size() <= 1;
+        if (wouldOrphanOrg) {
+            return false;
+        }
+
+        int updated = jdbc.update("UPDATE users SET role = ?, status = ?, updated_at = now() WHERE id = ?", role, status, id);
+        return updated > 0;
     }
 
     public void updatePasswordHash(UUID id, String passwordHash) {
