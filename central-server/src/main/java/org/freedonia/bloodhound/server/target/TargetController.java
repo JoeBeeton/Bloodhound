@@ -119,17 +119,27 @@ public class TargetController {
      * Hard, cascading delete (findings/subdomains/scan_runs/score_snapshots/
      * whois_records/target_authorizations all carry ON DELETE CASCADE FKs to
      * targets - see V3__targets_and_jobs.sql) - irreversible, wipes the
-     * target's entire audit history. Deliberately NOT wired to the "Remove"
-     * action in the UI (see PATCH .../{id} with isActive=false instead, which
-     * is what the frontend uses): a security product's history has real
-     * value, and a live system with real user data shouldn't have a single
-     * click destroy it. Left in place as an API-only escape hatch for a
-     * future genuine "purge" admin action, should one ever be needed.
+     * target's entire audit history. Distinct from PATCH .../{id} with
+     * isActive=false ("Remove" in the UI), which only pauses scanning and
+     * keeps everything - that's what most "delete" clicks actually mean and
+     * stays fully reversible.
+     *
+     * <p>Two deliberate guard rails beyond the normal write-access check,
+     * given a single click here is unrecoverable: (1) restricted to ADMIN
+     * only, not ANALYST - see {@link #requireAdmin} - and (2) only reachable
+     * once a target has already been soft-removed (isActive=false), so
+     * permanently destroying a target's history is always a second,
+     * separate action taken after already deciding to stop monitoring it,
+     * never a single click away from an actively-monitored target.
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
-        requireWriteAccess(principal);
-        requireOwnedTarget(id, principal);
+        requireAdmin(principal);
+        Target target = requireOwnedTarget(id, principal);
+        if (target.isActive()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "target must be removed (isActive=false) before it can be permanently deleted");
+        }
         targetRepository.delete(id);
         return ResponseEntity.noContent().build();
     }
@@ -168,6 +178,12 @@ public class TargetController {
     private static void requireWriteAccess(JwtPrincipal principal) {
         if (!"ADMIN".equals(principal.role()) && !"ANALYST".equals(principal.role())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN or ANALYST role required");
+        }
+    }
+
+    private static void requireAdmin(JwtPrincipal principal) {
+        if (!"ADMIN".equals(principal.role())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN role required");
         }
     }
 
