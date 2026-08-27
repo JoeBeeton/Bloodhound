@@ -1,0 +1,15 @@
+-- No index covered severity at all before this - every severity-filtered or
+-- severity-ordered query on findings (the dashboard's org-wide top-findings
+-- widget, countOpenByOrganization x2 per dashboard load, findByTarget/
+-- findByTargetDetailed's ORDER BY CASE severity) fell back to a sequential
+-- scan. Confirmed live via EXPLAIN ANALYZE: a Parallel Seq Scan over the
+-- full findings table (~80k rows in the live dev DB) to satisfy a plain
+-- "severity IN ('CRITICAL','HIGH')" filter.
+--
+-- (target_id, status, severity) rather than a bare severity index: every
+-- real query already filters by target_id (directly, or via the targets
+-- join in the org-wide queries) and status='OPEN' first - this composite
+-- lets Postgres narrow to one target's open findings via the index alone,
+-- then use the same index for the severity filter/sort, rather than needing
+-- a second lookup structure.
+CREATE INDEX idx_findings_target_status_severity ON findings(target_id, status, severity);
