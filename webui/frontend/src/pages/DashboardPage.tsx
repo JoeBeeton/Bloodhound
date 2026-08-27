@@ -4,13 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { ErrorState } from "../components/ErrorState";
 import { FindingDetailModal } from "../components/FindingDetailModal";
 import { GradeBadge } from "../components/GradeBadge";
+import { HealthGauge } from "../components/HealthGauge";
 import { ScoreImpactBadge } from "../components/ScoreImpactBadge";
 import { ScoreTrendChart } from "../components/ScoreTrendChart";
 import { Shell } from "../components/Shell";
 import { StatTile } from "../components/StatTile";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
-import type { DashboardSummary, OrgFinding, ScoreSnapshot, Severity } from "../lib/types";
+import type { DashboardSummary, OrgFinding, ScoreSnapshot, Severity, Target } from "../lib/types";
 
 async function fetchDashboard(): Promise<DashboardSummary> {
   const res = await apiFetch("/api/v1/dashboard");
@@ -32,6 +33,14 @@ const SEVERITY_STYLES: Record<Severity, string> = {
   INFO: "border-severity-info/50 text-severity-info",
 };
 
+/** Own-target scores averaged for the header gauge - null while none of them have a
+ * completed scan yet (overallScore stays null until then, see Target's own doc comment). */
+function averageOwnScore(ownTargets: Target[]): number | null {
+  const scored = ownTargets.filter((t): t is Target & { overallScore: number } => t.overallScore !== null);
+  if (scored.length === 0) return null;
+  return scored.reduce((sum, t) => sum + t.overallScore, 0) / scored.length;
+}
+
 const RUN_STATUS_STYLES: Record<string, string> = {
   RUNNING: "text-neon-amber animate-pulse",
   COMPLETE: "text-neon-cyan",
@@ -48,9 +57,14 @@ export function DashboardPage() {
   return (
     <Shell>
       <div className="flex w-full max-w-5xl flex-col gap-10 text-left">
-        <div>
-          <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Org overview</p>
-          <h1 className="font-display text-3xl font-bold text-neon-cyan">Welcome back, {user?.displayName}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-6">
+          <div>
+            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Org overview</p>
+            <h1 className="font-display text-3xl font-bold text-neon-cyan">Welcome back, {user?.displayName}</h1>
+          </div>
+          {dashboard && dashboard.ownTargets.length > 0 && (
+            <HealthGauge score={averageOwnScore(dashboard.ownTargets)} label="Overall posture" />
+          )}
         </div>
 
         {dashboardQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading dashboard…</p>}
