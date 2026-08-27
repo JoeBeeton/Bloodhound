@@ -135,12 +135,26 @@ function formatEta(etaSeconds: number | null): string {
   return `~${minutes}m remaining`;
 }
 
+/** A scan whose progress bar is still climbing toward 100% can already have a dead module
+ * in it - completedJobs counts FAILED as "done" same as COMPLETE (see ScanRunService), so a
+ * plain percentage reads as "on track" even when something's actually broken. Surfacing that
+ * distinctly (color, not just a badge buried in the module row) is what makes this list
+ * useful to scan at a glance instead of requiring a click into every card. */
+export function scanHasFailure(scan: ActiveScan): boolean {
+  return scan.modules.some((m) => m.status === "FAILED");
+}
+
 function ScanCard({ scan }: { scan: ActiveScan }) {
   const pct = scan.totalJobs > 0 ? Math.round((scan.completedJobs / scan.totalJobs) * 100) : 0;
+  const hasFailure = scanHasFailure(scan);
   return (
     <Link
       to={`/scans/${scan.id}`}
-      className="block rounded-lg border border-neon-cyan/20 bg-panel/80 p-5 transition hover:border-neon-cyan/50 hover:shadow-glow-cyan"
+      className={`block rounded-lg border bg-panel/80 p-5 transition ${
+        hasFailure
+          ? "border-severity-critical/40 hover:border-severity-critical/70 hover:shadow-[0_0_8px_#ff2e97,0_0_24px_rgba(255,46,151,0.5)]"
+          : "border-neon-cyan/20 hover:border-neon-cyan/50 hover:shadow-glow-cyan"
+      }`}
     >
       <div className="mb-3 flex items-start justify-between gap-4">
         <div>
@@ -149,9 +163,15 @@ function ScanCard({ scan }: { scan: ActiveScan }) {
             {scan.triggeredBy} · running {formatElapsed(scan.startedAt)}
           </p>
         </div>
-        <p className="whitespace-nowrap font-mono text-xs uppercase tracking-widest text-neon-amber">
-          {formatEta(scan.etaSeconds)}
-        </p>
+        {hasFailure ? (
+          <p className="whitespace-nowrap font-mono text-xs uppercase tracking-widest text-severity-critical">
+            ⚠ module failed
+          </p>
+        ) : (
+          <p className="whitespace-nowrap font-mono text-xs uppercase tracking-widest text-neon-amber">
+            {formatEta(scan.etaSeconds)}
+          </p>
+        )}
       </div>
 
       <div className="mb-3">
@@ -162,7 +182,10 @@ function ScanCard({ scan }: { scan: ActiveScan }) {
           <span>{pct}%</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-          <div className="h-full rounded-full bg-neon-cyan transition-all" style={{ width: `${pct}%` }} />
+          <div
+            className={`h-full rounded-full transition-all ${hasFailure ? "bg-severity-critical" : "bg-neon-cyan"}`}
+            style={{ width: `${pct}%` }}
+          />
         </div>
       </div>
 
