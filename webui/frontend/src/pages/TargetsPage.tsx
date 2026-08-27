@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import type { ScanRunDetail, Target, TargetType } from "../lib/types";
+import { useAuth } from "../lib/useAuth";
 
 async function fetchTargets(includeInactive: boolean): Promise<Target[]> {
   const res = await apiFetch(`/api/v1/targets?includeInactive=${includeInactive}`);
@@ -14,7 +15,7 @@ async function fetchTargets(includeInactive: boolean): Promise<Target[]> {
   return res.json();
 }
 
-/** Soft remove/restore - PATCH isActive, not the hard-delete endpoint (see TargetController#delete's javadoc: it cascades and destroys history). */
+/** Soft remove/restore - PATCH isActive, reversible, keeps all history. */
 async function setTargetActive(targetId: string, isActive: boolean): Promise<Target> {
   const res = await apiFetch(`/api/v1/targets/${targetId}`, {
     method: "PATCH",
@@ -23,6 +24,12 @@ async function setTargetActive(targetId: string, isActive: boolean): Promise<Tar
   });
   if (!res.ok) throw new Error(isActive ? "Failed to restore target." : "Failed to remove target.");
   return res.json();
+}
+
+/** Hard, cascading, irreversible delete - only reachable for an already-removed target, ADMIN only (see TargetController#delete's javadoc). */
+async function deleteTargetPermanently(targetId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to permanently delete target.");
 }
 
 async function createTarget(input: { hostname: string; targetType: TargetType }): Promise<Target> {
@@ -60,6 +67,8 @@ const TARGET_TYPES: TargetType[] = ["OWN", "COMPETITOR", "WATCHLIST"];
 
 export function TargetsPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
   const [showRemoved, setShowRemoved] = useState(false);
   const targetsQuery = useQuery({
     queryKey: ["targets", showRemoved],
@@ -67,6 +76,8 @@ export function TargetsPage() {
   });
   const [activeRuns, setActiveRuns] = useState<Record<string, string>>({});
   const [pendingRemoval, setPendingRemoval] = useState<Target | null>(null);
+  const [pendingDeletion, setPendingDeletion] = useState<Target | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
   const [hostname, setHostname] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("OWN");
@@ -86,6 +97,15 @@ export function TargetsPage() {
     mutationFn: (input: { targetId: string; isActive: boolean }) => setTargetActive(input.targetId, input.isActive),
     onSuccess: () => {
       setPendingRemoval(null);
+      queryClient.invalidateQueries({ queryKey: ["targets"] });
+    },
+  });
+
+  const deleteForever = useMutation({
+    mutationFn: (targetId: string) => deleteTargetPermanently(targetId),
+    onSuccess: () => {
+      setPendingDeletion(null);
+      setDeleteConfirmText("");
       queryClient.invalidateQueries({ queryKey: ["targets"] });
     },
   });
@@ -189,6 +209,7 @@ export function TargetsPage() {
                 onRemove={() => setPendingRemoval(target)}
                 onRestore={() => setActive.mutate({ targetId: target.id, isActive: true })}
                 restorePending={setActive.isPending}
+                onDeleteForever={isAdmin ? () => setPendingDeletion(target) : undefined}
               />
             ));
           })()}
@@ -219,6 +240,53 @@ export function TargetsPage() {
           </div>
         </Modal>
       )}
+
+      {pendingDeletion && (
+        <Modal
+          title="Delete target permanently"
+          onClose={() => {
+            setPendingDeletion(null);
+            setDeleteConfirmText("");
+          }}
+        >
+          <p className="mb-3 text-sm text-slate-300">
+            This permanently deletes <span className="font-mono text-neon-cyan">{pendingDeletion.hostname}</span> and
+            every finding, subdomain, scan run, and score history it has ever had.{" "}
+            <span className="font-bold text-severity-critical">This cannot be undone.</span> Unlike "Remove," there
+            is no restoring this target afterward.
+          </p>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Type <span className="text-neon-amber">{pendingDeletion.hostname}</span> to confirm
+          </label>
+          <input
+            value={deleteConfirmText}
+            onChange={(e) => setDeleteConfirmText(e.target.value)}
+            className="mb-4 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-severity-critical"
+            autoFocus
+          />
+          {deleteForever.isError && (
+            <p className="mb-3 font-mono text-xs text-severity-critical">Failed to permanently delete target.</p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => {
+                setPendingDeletion(null);
+                setDeleteConfirmText("");
+              }}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => deleteForever.mutate(pendingDeletion.id)}
+              disabled={deleteForever.isPending || deleteConfirmText !== pendingDeletion.hostname}
+              className="rounded bg-severity-critical/90 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-severity-critical disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {deleteForever.isPending ? "Deleting…" : "Delete permanently"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </Shell>
   );
 }
@@ -230,6 +298,7 @@ function TargetRow({
   onRemove,
   onRestore,
   restorePending,
+  onDeleteForever,
 }: {
   target: Target;
   activeRunId?: string;
@@ -237,6 +306,8 @@ function TargetRow({
   onRemove: () => void;
   onRestore: () => void;
   restorePending: boolean;
+  /** Only passed for ADMIN users - see TargetController#delete's ADMIN-only guard rail. */
+  onDeleteForever?: () => void;
 }) {
   const runQuery = useQuery({
     queryKey: ["run", activeRunId],
@@ -312,13 +383,23 @@ function TargetRow({
             </button>
           </>
         ) : (
-          <button
-            onClick={onRestore}
-            disabled={restorePending}
-            className="rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10 disabled:opacity-40"
-          >
-            {restorePending ? "Restoring…" : "Restore"}
-          </button>
+          <>
+            <button
+              onClick={onRestore}
+              disabled={restorePending}
+              className="rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10 disabled:opacity-40"
+            >
+              {restorePending ? "Restoring…" : "Restore"}
+            </button>
+            {onDeleteForever && (
+              <button
+                onClick={onDeleteForever}
+                className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-500 transition hover:border-severity-critical/50 hover:text-severity-critical"
+              >
+                Delete permanently
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
