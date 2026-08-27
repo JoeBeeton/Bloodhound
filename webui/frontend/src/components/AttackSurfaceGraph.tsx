@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { colorForNode, colorForTargetType, hrefForNode, layoutGraph, type GraphData, type GraphNode } from "../lib/attackSurfaceGraph";
+import { colorForNode, colorForTargetType, hrefForNode, layoutGraph, PLATFORM_ENDPOINTS, type GraphData, type GraphNode } from "../lib/attackSurfaceGraph";
 
 const WIDTH = 1200;
 const HEIGHT = 720;
@@ -165,7 +165,12 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
             const color = colorForNode(node);
             const href = hrefForNode(node);
             const showLabel =
-              node.kind === "hub" || node.kind === "target" || node.kind === "database" || node.kind === "webui" || hoveredId === node.id;
+              node.kind === "hub" ||
+              node.kind === "target" ||
+              node.kind === "database" ||
+              node.kind === "webui" ||
+              node.kind === "worker" ||
+              hoveredId === node.id;
             const isBusyWorker = node.kind === "worker" && node.workerStatus === "BUSY";
             return (
               <g
@@ -231,6 +236,23 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                     {node.label.length > 28 ? node.label.slice(0, 26) + "…" : node.label}
                   </text>
                 )}
+                {/* hostname:port - a small always-visible second line under platform nodes (hub/database/webui/worker), per the request to surface every service's real endpoint on the map. */}
+                {showLabel && node.subLabel && (
+                  <text
+                    x={0}
+                    y={node.radius + (node.kind === "subdomain" || node.kind === "more" ? 10 : 15) + (node.kind === "hub" ? 13 : 11)}
+                    textAnchor="middle"
+                    className="pointer-events-none select-none"
+                    style={{
+                      fill: "#8b7fc7",
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: node.kind === "hub" ? 9 : 7.5,
+                      fontWeight: 400,
+                    }}
+                  >
+                    {node.subLabel}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -258,13 +280,30 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
           )}
           {hoveredNode.kind === "more" && <p className="text-slate-400">click to view the full list</p>}
           {hoveredNode.kind === "worker" && (
-            <p style={{ color: colorForNode(hoveredNode) }}>
-              {hoveredNode.workerStatus}
-              {hoveredNode.workerStatus === "BUSY" && hoveredNode.workerModule ? ` · ${hoveredNode.workerModule}` : ""}
-            </p>
+            <>
+              <p style={{ color: colorForNode(hoveredNode) }}>
+                {hoveredNode.workerStatus}
+                {hoveredNode.workerStatus === "BUSY" && hoveredNode.workerModule ? ` · ${hoveredNode.workerModule}` : ""}
+              </p>
+              {hoveredNode.subLabel && <p className="text-violet-300">{hoveredNode.subLabel}</p>}
+              {hoveredNode.fullWorkerId && <p className="text-slate-600">id: {hoveredNode.fullWorkerId}</p>}
+            </>
           )}
-          {(hoveredNode.kind === "database" || hoveredNode.kind === "webui") && (
-            <p className="text-violet-300">platform service</p>
+          {hoveredNode.kind === "database" && (
+            <>
+              <p className="text-violet-300">platform service · postgres</p>
+              <p className="text-slate-500">internal only, no host port published</p>
+            </>
+          )}
+          {hoveredNode.kind === "webui" && (
+            <>
+              <p className="text-violet-300">platform service · webui</p>
+              {PLATFORM_ENDPOINTS.webui.hostPort && (
+                <p className="text-slate-500">
+                  published to host as :{PLATFORM_ENDPOINTS.webui.hostPort}
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

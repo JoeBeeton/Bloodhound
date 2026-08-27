@@ -9,6 +9,8 @@ export interface GraphNode extends SimulationNodeDatum {
   id: string;
   kind: GraphNodeKind;
   label: string;
+  /** hostname:port, shown as a small always-visible second line under platform nodes (hub/database/webui/worker) - see PLATFORM_ENDPOINTS/workerEndpoint. */
+  subLabel?: string;
   targetType?: TargetType;
   grade?: Target["grade"];
   score?: number | null;
@@ -16,6 +18,8 @@ export interface GraphNode extends SimulationNodeDatum {
   hiddenCount?: number;
   workerStatus?: WorkerStatus["status"];
   workerModule?: string | null;
+  /** The full "hostname-randomsuffix" id workers report/claim jobs under (see WorkerApplication#workerId) - label shows just the hostname part, this keeps the exact id available for the tooltip. */
+  fullWorkerId?: string;
   href?: string;
   radius: number;
 }
@@ -60,6 +64,30 @@ export function colorForNode(node: GraphNode): string {
 }
 
 /**
+ * Fixed hostname:port for the three singleton platform services - real values straight out of
+ * docker-compose.yml (each service's own Docker-network hostname is its Compose service name;
+ * ports are the container's own listening port, not necessarily what's published to the host).
+ * webui's container port (8080) differs from the host-published one (8090) - both are worth
+ * showing, so its tooltip carries the host mapping as a second line rather than cramming it into
+ * the always-visible sub-label.
+ */
+export const PLATFORM_ENDPOINTS: Record<"hub" | "database" | "webui", { hostname: string; port: number; hostPort?: number }> = {
+  hub: { hostname: "central-server", port: 8080, hostPort: 8080 },
+  database: { hostname: "postgres", port: 5432 },
+  webui: { hostname: "webui", port: 8080, hostPort: 8090 },
+};
+
+/** Workers don't get a container_name/fixed hostname in docker-compose (they're horizontally
+ * scaled, --scale worker=N) - each one's own hostname is whatever Docker assigned its specific
+ * container (see WorkerApplication#workerId: InetAddress.getLocalHost().getHostName(), then a
+ * random suffix appended to disambiguate replicas started at the same instant). Splitting that
+ * back out here shows the real per-replica hostname rather than the combined id string. */
+function workerEndpoint(workerId: string): { hostname: string; port: number } {
+  const match = /^(.+)-([0-9a-f]{8})$/i.exec(workerId);
+  return { hostname: match ? match[1] : workerId, port: 8081 };
+}
+
+/**
  * Pure data shaping: the platform's own topology (central-server, postgres, webui, live
  * workers) plus every tracked target and a capped subdomain sample per target -> one node/link
  * graph. No layout/positioning here - see layoutGraph.
@@ -83,20 +111,41 @@ export function buildGraph(
   const links: GraphLink[] = [];
 
   const HUB_ID = "hub";
-  nodes.push({ id: HUB_ID, kind: "hub", label: "CENTRAL-SERVER", radius: 20 });
-  nodes.push({ id: "database", kind: "database", label: "POSTGRES", radius: 11 });
+  nodes.push({
+    id: HUB_ID,
+    kind: "hub",
+    label: "CENTRAL-SERVER",
+    subLabel: `${PLATFORM_ENDPOINTS.hub.hostname}:${PLATFORM_ENDPOINTS.hub.port}`,
+    radius: 20,
+  });
+  nodes.push({
+    id: "database",
+    kind: "database",
+    label: "POSTGRES",
+    subLabel: `${PLATFORM_ENDPOINTS.database.hostname}:${PLATFORM_ENDPOINTS.database.port}`,
+    radius: 11,
+  });
   links.push({ source: HUB_ID, target: "database", kind: "structural" });
-  nodes.push({ id: "webui", kind: "webui", label: "WEBUI", radius: 9 });
+  nodes.push({
+    id: "webui",
+    kind: "webui",
+    label: "WEBUI",
+    subLabel: `${PLATFORM_ENDPOINTS.webui.hostname}:${PLATFORM_ENDPOINTS.webui.port}`,
+    radius: 9,
+  });
   links.push({ source: HUB_ID, target: "webui", kind: "structural" });
 
   for (const worker of workers) {
     const workerNodeId = `worker:${worker.workerId}`;
+    const endpoint = workerEndpoint(worker.workerId);
     nodes.push({
       id: workerNodeId,
       kind: "worker",
-      label: worker.workerId,
+      label: endpoint.hostname,
+      subLabel: `:${endpoint.port}`,
       workerStatus: worker.status,
       workerModule: worker.moduleType,
+      fullWorkerId: worker.workerId,
       radius: worker.status === "BUSY" ? 8 : 6,
     });
     links.push({ source: HUB_ID, target: workerNodeId, kind: "structural" });
