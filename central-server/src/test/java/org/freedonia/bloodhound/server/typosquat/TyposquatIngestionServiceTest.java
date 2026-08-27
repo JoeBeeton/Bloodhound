@@ -6,18 +6,21 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.junit.jupiter.api.Test;
 
 class TyposquatIngestionServiceTest {
 
     private final TyposquatCandidateRepository repository = mock(TyposquatCandidateRepository.class);
-    private final TyposquatIngestionService service = new TyposquatIngestionService(repository);
+    private final TargetRepository targetRepository = mock(TargetRepository.class);
+    private final TyposquatIngestionService service = new TyposquatIngestionService(repository, targetRepository);
     private final UUID targetId = UUID.randomUUID();
 
     @Test
@@ -45,6 +48,30 @@ class TyposquatIngestionServiceTest {
                         eq(Instant.parse("2026-01-01T00:00:00Z")),
                         eq(rawPng),
                         eq(92));
+    }
+
+    @Test
+    void realSiteScreenshotPresent_decodedAndPersistedOntoTarget() {
+        byte[] rawPng = new byte[] {9, 8, 7, 6};
+        String base64 = Base64.getEncoder().encodeToString(rawPng);
+
+        service.ingest(targetId, Map.of("candidates", List.of(), "realSiteScreenshotBase64", base64));
+
+        verify(targetRepository).updateHomepageScreenshot(eq(targetId), eq(rawPng));
+    }
+
+    @Test
+    void realSiteScreenshotAbsent_neverTouchesTargetRepository() {
+        service.ingest(targetId, Map.of("candidates", List.of()));
+
+        verifyNoInteractions(targetRepository);
+    }
+
+    @Test
+    void realSiteScreenshotMalformedBase64_neverTouchesTargetRepository() {
+        service.ingest(targetId, Map.of("candidates", List.of(), "realSiteScreenshotBase64", "not valid base64!!!"));
+
+        verifyNoInteractions(targetRepository);
     }
 
     @Test
@@ -91,9 +118,10 @@ class TyposquatIngestionServiceTest {
     }
 
     @Test
-    void nullRawMetadata_noInteractionsWithRepository() {
+    void nullRawMetadata_noInteractionsWithEitherRepository() {
         service.ingest(targetId, null);
         verify(repository, never()).upsert(any(), any(), any(), anyBool(), any(), any(), any(), any());
+        verifyNoInteractions(targetRepository);
     }
 
     @Test

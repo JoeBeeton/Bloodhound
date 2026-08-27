@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,18 +19,28 @@ import org.springframework.stereotype.Service;
  * via the normal reported-findings list, since "is this candidate
  * registered" is knowable within one scan alone, unlike SUBDOMAIN_ENUM's
  * "is this hostname new" which needs this target's history. This service's
- * only job is persisting the candidate list into typosquat_candidates.
+ * job is persisting the candidate list into typosquat_candidates, plus the
+ * real target's own homepage screenshot onto targets (see
+ * TargetRepository#updateHomepageScreenshot) - the visual-similarity
+ * baseline every candidate above was already compared against, for a
+ * side-by-side display in the Brand Protection panel.
  */
 @Service
 public class TyposquatIngestionService {
 
     private final TyposquatCandidateRepository repository;
+    private final TargetRepository targetRepository;
 
-    public TyposquatIngestionService(TyposquatCandidateRepository repository) {
+    public TyposquatIngestionService(TyposquatCandidateRepository repository, TargetRepository targetRepository) {
         this.repository = repository;
+        this.targetRepository = targetRepository;
     }
 
     public void ingest(UUID targetId, Map<String, Object> rawMetadata) {
+        byte[] realSiteScreenshot = decodeBase64OrNull(rawMetadata == null ? null : rawMetadata.get("realSiteScreenshotBase64"));
+        if (realSiteScreenshot != null) {
+            targetRepository.updateHomepageScreenshot(targetId, realSiteScreenshot);
+        }
         for (Map<String, Object> entry : extractCandidateList(rawMetadata)) {
             String domain = stringOrNull(entry.get("domain"));
             if (domain == null || domain.isBlank()) {

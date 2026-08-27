@@ -1,10 +1,11 @@
 package org.freedonia.bloodhound.server.typosquat;
 
-import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.freedonia.bloodhound.server.typosquat.dto.TyposquatCandidateSummary;
+import org.freedonia.bloodhound.server.typosquat.dto.TyposquatListResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -26,11 +27,11 @@ public class TyposquatController {
     }
 
     @GetMapping("/api/v1/targets/{id}/typosquats")
-    public List<TyposquatCandidateSummary> list(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
-        targetRepository
-                .findByIdAndOrganization(id, principal.organizationId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        return repository.findRegisteredByTarget(id).stream().map(TyposquatCandidateSummary::from).toList();
+    public TyposquatListResponse list(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireOwnedTarget(id, principal);
+        var candidates =
+                repository.findRegisteredByTarget(id).stream().map(TyposquatCandidateSummary::from).toList();
+        return new TyposquatListResponse(targetRepository.hasHomepageScreenshot(id), candidates);
     }
 
     /**
@@ -43,12 +44,27 @@ public class TyposquatController {
     @GetMapping("/api/v1/targets/{id}/typosquats/{candidateId}/screenshot")
     public ResponseEntity<byte[]> screenshot(
             @PathVariable UUID id, @PathVariable UUID candidateId, @AuthenticationPrincipal JwtPrincipal principal) {
-        targetRepository
-                .findByIdAndOrganization(id, principal.organizationId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        requireOwnedTarget(id, principal);
         byte[] png = repository
                 .findScreenshotPng(id, candidateId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    }
+
+    /** The real target's own homepage screenshot - the visual-similarity baseline every candidate above is compared against. */
+    @GetMapping("/api/v1/targets/{id}/typosquats/real-domain-screenshot")
+    public ResponseEntity<byte[]> realDomainScreenshot(
+            @PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireOwnedTarget(id, principal);
+        byte[] png = targetRepository
+                .findHomepageScreenshotPng(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    }
+
+    private Target requireOwnedTarget(UUID id, JwtPrincipal principal) {
+        return targetRepository
+                .findByIdAndOrganization(id, principal.organizationId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 }

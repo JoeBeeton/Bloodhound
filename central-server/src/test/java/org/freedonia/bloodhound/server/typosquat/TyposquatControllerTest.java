@@ -67,4 +67,46 @@ class TyposquatControllerTest {
 
         assertThatThrownBy(() -> controller.list(targetId, principal)).isInstanceOf(ResponseStatusException.class);
     }
+
+    @Test
+    void list_carriesWhetherTheRealDomainHasAHomepageScreenshot() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(repository.findRegisteredByTarget(targetId)).thenReturn(java.util.List.of());
+        when(targetRepository.hasHomepageScreenshot(targetId)).thenReturn(true);
+
+        var response = controller.list(targetId, principal);
+
+        assertThat(response.realDomainHasScreenshot()).isTrue();
+        assertThat(response.candidates()).isEmpty();
+    }
+
+    @Test
+    void realDomainScreenshot_targetNotInCallersOrg_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.realDomainScreenshot(targetId, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void realDomainScreenshot_noneStored_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(targetRepository.findHomepageScreenshotPng(targetId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.realDomainScreenshot(targetId, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void realDomainScreenshot_found_returnsPngBytesWithImageContentType() {
+        byte[] png = new byte[] {4, 5, 6};
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(targetRepository.findHomepageScreenshotPng(targetId)).thenReturn(Optional.of(png));
+
+        ResponseEntity<byte[]> response = controller.realDomainScreenshot(targetId, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.IMAGE_PNG);
+        assertThat(response.getBody()).isEqualTo(png);
+    }
 }

@@ -373,7 +373,7 @@ export function TargetDetailPage() {
 
         <h2 className="mb-3 mt-10 font-mono text-sm uppercase tracking-widest text-slate-400">Brand protection</h2>
         <div className="mb-10">
-          <BrandProtectionPanel targetId={targetId} />
+          <BrandProtectionPanel targetId={targetId} realDomainHostname={target?.hostname ?? ""} />
         </div>
 
         <div className="mt-10 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
