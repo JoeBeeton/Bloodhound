@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.subdomain;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -13,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 
 /**
  * Fetch side of dangling-CNAME detection. Cheap for the overwhelming
@@ -74,6 +76,9 @@ class DanglingCnameChecker {
         return get("http://" + hostname + "/");
     }
 
+    /** A takeover-fingerprint check (e.g. GitHub Pages' "There isn't a GitHub Pages site here") only needs the top of the page, not the whole thing. */
+    private static final int BODY_CHAR_CAP = 300_000;
+
     private String get(String url) {
         try {
             URI uri = URI.create(url);
@@ -82,8 +87,12 @@ class DanglingCnameChecker {
             // target hostname is - see SafeAddressValidator's javadoc.
             SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.body();
+            // ofInputStream()+readCappedUtf8, not ofString(): a security review found ofString()
+            // buffers the ENTIRE response into memory with no size limit - a scanned target
+            // could stream gigabytes within the request timeout and exhaust the shared worker
+            // JVM's heap.
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return SafeHttpGet.readCappedUtf8(response.body(), BODY_CHAR_CAP);
         } catch (Exception e) {
             return null;
         }

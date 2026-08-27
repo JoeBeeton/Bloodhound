@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.subdomain;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -13,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 
 /**
  * Fetch side of cloud-bucket public-listing exposure detection. Same shape
@@ -62,7 +64,7 @@ class CloudBucketChecker {
         if (match.isEmpty()) {
             return Optional.empty();
         }
-        HttpResponse<String> response = get(match.get().checkUrl());
+        CappedResponse response = get(match.get().checkUrl());
         if (response == null) {
             return Optional.empty();
         }
@@ -70,7 +72,12 @@ class CloudBucketChecker {
         return Optional.of(new Result(match.get().provider(), match.get().checkUrl(), listable));
     }
 
-    private HttpResponse<String> get(String url) {
+    private record CappedResponse(int statusCode, String body) {}
+
+    /** A bucket-listing response only needs enough to see whether it looks like a directory listing - not the full (potentially huge, for a truly public bucket) object list. */
+    private static final int BODY_CHAR_CAP = 300_000;
+
+    private CappedResponse get(String url) {
         try {
             URI uri = URI.create(url);
             // SSRF guard: this URL's host is a bucket endpoint derived from a discovered
@@ -78,7 +85,12 @@ class CloudBucketChecker {
             // is - see SafeAddressValidator's javadoc.
             SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
-            return client.send(request, HttpResponse.BodyHandlers.ofString());
+            // ofInputStream()+readCappedUtf8, not ofString(): a security review found ofString()
+            // buffers the ENTIRE response into memory with no size limit - a scanned target
+            // could stream gigabytes within the request timeout and exhaust the shared worker
+            // JVM's heap.
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            return new CappedResponse(response.statusCode(), SafeHttpGet.readCappedUtf8(response.body(), BODY_CHAR_CAP));
         } catch (Exception e) {
             return null;
         }

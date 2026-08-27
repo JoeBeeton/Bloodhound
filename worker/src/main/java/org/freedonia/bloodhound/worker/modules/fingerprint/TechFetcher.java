@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.worker.modules.fingerprint;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -64,32 +65,34 @@ public class TechFetcher {
      */
     public String fetchWpJson(String hostname) {
         try {
-            return get("https://" + hostname + "/wp-json/").response().body();
+            return SafeHttpGet.readCappedUtf8(get("https://" + hostname + "/wp-json/").response().body(), BODY_CHAR_CAP);
         } catch (Exception httpsFailure) {
             try {
-                return get("http://" + hostname + "/wp-json/").response().body();
+                return SafeHttpGet.readCappedUtf8(get("http://" + hostname + "/wp-json/").response().body(), BODY_CHAR_CAP);
             } catch (Exception httpFailure) {
                 return null;
             }
         }
     }
 
-    private SafeHttpGet.RedirectChainResult<String> get(String url) throws IOException, InterruptedException {
+    // ofInputStream(), not ofString(): a security review found ofString() buffers the ENTIRE
+    // response into memory before BODY_CHAR_CAP's truncation below ever runs - a scanned target
+    // (attacker-influenceable by definition) could stream gigabytes within the request timeout
+    // and exhaust the shared worker JVM's heap. SafeHttpGet.readCappedUtf8 (called in toResult)
+    // is what actually bounds memory now; BODY_CHAR_CAP is passed straight through to it.
+    private SafeHttpGet.RedirectChainResult<InputStream> get(String url) throws IOException, InterruptedException {
         return SafeHttpGet.getWithRedirectChainHeaders(
                 client,
                 url,
                 Duration.ofSeconds(8),
                 "Bloodhound-ASM/1.0 (+passive surface scan)",
-                HttpResponse.BodyHandlers.ofString(),
+                HttpResponse.BodyHandlers.ofInputStream(),
                 MAX_REDIRECTS);
     }
 
-    private TechFetchResult toResult(SafeHttpGet.RedirectChainResult<String> result) {
-        HttpResponse<String> response = result.response();
-        String body = response.body();
-        if (body != null && body.length() > BODY_CHAR_CAP) {
-            body = body.substring(0, BODY_CHAR_CAP);
-        }
-        return new TechFetchResult(result.allHopHeaders(), response.headers().allValues("set-cookie"), body == null ? "" : body);
+    private TechFetchResult toResult(SafeHttpGet.RedirectChainResult<InputStream> result) throws IOException {
+        HttpResponse<InputStream> response = result.response();
+        String body = SafeHttpGet.readCappedUtf8(response.body(), BODY_CHAR_CAP);
+        return new TechFetchResult(result.allHopHeaders(), response.headers().allValues("set-cookie"), body);
     }
 }

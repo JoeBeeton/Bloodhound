@@ -28,6 +28,9 @@ public class DocumentFetcher {
     /** A legitimate handbook/whitepaper-sized PDF is often several MB; this bounds worst-case memory/time without rejecting realistic documents. */
     static final long MAX_DOCUMENT_BYTES = 20L * 1024 * 1024;
 
+    /** Homepage HTML only needs enough to find document links near the top of the page - nowhere near MAX_DOCUMENT_BYTES. */
+    private static final int HOMEPAGE_BODY_CHAR_CAP = 300_000;
+
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .followRedirects(HttpClient.Redirect.NEVER)
@@ -78,8 +81,15 @@ public class DocumentFetcher {
         }
     }
 
+    // ofInputStream()+readCappedUtf8, not ofString(): a security review found ofString()
+    // buffers the ENTIRE response into memory with no size limit - a scanned target
+    // (attacker-influenceable by definition) could stream gigabytes within the request timeout
+    // and exhaust the shared worker JVM's heap. fetchDocument above already avoids this for
+    // binary downloads via readNBytes; this closes the same gap for the homepage HTML fetch.
     private String getString(String url) throws Exception {
-        return SafeHttpGet.get(client, url, REQUEST_TIMEOUT, USER_AGENT, HttpResponse.BodyHandlers.ofString(), MAX_REDIRECTS)
-                .body();
+        InputStream body =
+                SafeHttpGet.get(client, url, REQUEST_TIMEOUT, USER_AGENT, HttpResponse.BodyHandlers.ofInputStream(), MAX_REDIRECTS)
+                        .body();
+        return SafeHttpGet.readCappedUtf8(body, HOMEPAGE_BODY_CHAR_CAP);
     }
 }
