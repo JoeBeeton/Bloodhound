@@ -66,7 +66,24 @@ public class AuthenticationService {
 
     public AuthResult refresh(String rawRefreshToken) {
         RefreshToken existing =
-                refreshTokenRepository.findActive(hash(rawRefreshToken)).orElseThrow(InvalidRefreshTokenException::new);
+                refreshTokenRepository.findByHash(hash(rawRefreshToken)).orElseThrow(InvalidRefreshTokenException::new);
+
+        // Reuse of an already-revoked token (rotation revokes the old token on every refresh -
+        // see below) is the standard OAuth-refresh theft signal: someone is presenting a token
+        // that's no longer current, meaning either it was stolen and the attacker and the
+        // legitimate holder are now both trying to use this session, or it's simply already
+        // spent. Either way, the safe response is to revoke the whole lineage - including
+        // whichever token IS currently active - and force a real re-login, not just reject this
+        // one request. Checked before the expiry check below so an attacker can't distinguish
+        // "revoked" from "expired" by timing/response - both end up InvalidRefreshTokenException.
+        if (existing.revokedAt() != null) {
+            refreshTokenRepository.revokeLineageFrom(existing.id());
+            throw new InvalidRefreshTokenException();
+        }
+        if (existing.expiresAt().isBefore(Instant.now())) {
+            throw new InvalidRefreshTokenException();
+        }
+
         User user = userRepository
                 .findById(existing.userId())
                 .filter(u -> "ACTIVE".equals(u.status()))
