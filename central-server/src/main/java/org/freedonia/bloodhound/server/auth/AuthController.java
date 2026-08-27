@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.auth;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.auth.dto.AuthResponse;
 import org.freedonia.bloodhound.server.auth.dto.LoginRequest;
@@ -12,8 +13,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+/**
+ * {@code @SecurityRequirements} (empty) overrides OpenApiConfig's global ApiKeyAuth requirement
+ * for every operation here - a live API review found the generated spec claiming login/refresh/
+ * logout needed a bearer token, which is backwards: these are how you GET a token, and
+ * SecurityConfig permitAlls all of /api/v1/auth/**.
+ */
 @RestController
 @RequestMapping("/api/v1/auth")
+@SecurityRequirements
 public class AuthController {
 
     private final AuthenticationService authenticationService;

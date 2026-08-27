@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.apikey;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.SecureRandom;
@@ -42,6 +43,11 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/api-keys")
 @Tag(name = "API Keys", description = "Manage your own read-only external API keys (JWT session required - not usable with an API key itself)")
+// Overrides OpenApiConfig's global ApiKeyAuth requirement with JwtSessionAuth - a live API
+// review found the generated spec showing the generic API-key bearer scheme here, directly
+// contradicting this controller's own @Tag description above and SecurityConfig's real
+// enforcement (ROLE_API_KEY is deliberately excluded from every route in this controller).
+@SecurityRequirement(name = org.freedonia.bloodhound.server.config.OpenApiConfig.JWT_SESSION_SCHEME)
 public class ApiKeyController {
 
     /** No forever-lived keys by default - a deliberately bounded credential handed to external tooling. */

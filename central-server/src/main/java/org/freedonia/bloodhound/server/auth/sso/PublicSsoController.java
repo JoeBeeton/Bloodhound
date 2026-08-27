@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.auth.sso;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import org.freedonia.bloodhound.server.orgs.OrganizationRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -16,9 +17,15 @@ import org.springframework.web.server.ResponseStatusException;
  * to SecurityConfig's permitAll list alongside /api/v1/auth/**. Returns only
  * a boolean + a URL - no IdP configuration detail (that stays admin-only via
  * IdentityProviderController).
+ *
+ * <p>{@code @SecurityRequirements} (empty) overrides OpenApiConfig's global
+ * ApiKeyAuth requirement for every operation here - a live API review found
+ * the generated spec claiming this permitAll endpoint needed a bearer token,
+ * which is nonsensical for a pre-login lookup.
  */
 @RestController
 @RequestMapping("/api/v1/public/sso")
+@SecurityRequirements
 public class PublicSsoController {
 
     public record SsoLookupResponse(boolean enabled, String ssoLoginUrl) {}
