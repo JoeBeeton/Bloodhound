@@ -76,17 +76,50 @@ class AuthenticationServiceTest {
     }
 
     @Test
-    void refresh_unknownOrExpiredToken_throwsInvalidRefreshToken() {
-        when(refreshTokenRepository.findActive(any())).thenReturn(Optional.empty());
+    void refresh_unknownToken_throwsInvalidRefreshToken() {
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.refresh("some-raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
+    }
+
+    @Test
+    void refresh_expiredToken_rejected_lineageNotTouched() {
+        UUID userId = UUID.randomUUID();
+        RefreshToken token =
+                new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().minusSeconds(1), null, Instant.now());
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
+
+        assertThatThrownBy(() -> service.refresh("raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
+        verify(refreshTokenRepository, never()).revoke(any());
+        verify(refreshTokenRepository, never()).revokeLineageFrom(any());
+    }
+
+    @Test
+    void refresh_alreadyRevokedTokenReplayed_treatedAsTheft_revokesWholeLineage() {
+        // Standard OAuth-refresh-rotation hardening: presenting a token that's already been
+        // rotated away (revokedAt set) is the reuse/theft signal, not just an ordinary invalid
+        // token - the whole lineage forward from it (including whichever token is currently
+        // active) must be revoked so neither the attacker nor the legitimate holder can continue.
+        UUID userId = UUID.randomUUID();
+        UUID revokedTokenId = UUID.randomUUID();
+        RefreshToken revokedToken = new RefreshToken(
+                revokedTokenId, userId, "hash", Instant.now().plusSeconds(3600), Instant.now().minusSeconds(60), Instant.now());
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(revokedToken));
+
+        assertThatThrownBy(() -> service.refresh("raw-stolen-token")).isInstanceOf(InvalidRefreshTokenException.class);
+
+        verify(refreshTokenRepository).revokeLineageFrom(revokedTokenId);
+        // Not the ordinary single-token revoke/rotate path - this is theft handling, not a normal refresh.
+        verify(refreshTokenRepository, never()).revoke(any());
+        verify(refreshTokenRepository, never()).linkReplacement(any(), any());
+        verify(userRepository, never()).findById(any());
     }
 
     @Test
     void refresh_tokenBelongsToSuspendedUser_rejected_evenThoughTokenItselfIsValid() {
         UUID userId = UUID.randomUUID();
         RefreshToken token = new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
-        when(refreshTokenRepository.findActive(any())).thenReturn(Optional.of(token));
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, "SUSPENDED")));
 
         assertThatThrownBy(() -> service.refresh("raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
@@ -99,7 +132,7 @@ class AuthenticationServiceTest {
         User user = user(userId, "ACTIVE");
         UUID oldTokenId = UUID.randomUUID();
         RefreshToken token = new RefreshToken(oldTokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
-        when(refreshTokenRepository.findActive(any())).thenReturn(Optional.of(token));
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(jwtService.issueAccessToken(any(), any(), any(), any())).thenReturn("new-jwt");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(900L);
@@ -108,6 +141,7 @@ class AuthenticationServiceTest {
 
         verify(refreshTokenRepository).revoke(oldTokenId);
         verify(refreshTokenRepository).linkReplacement(oldTokenId, result.refreshTokenId());
+        verify(refreshTokenRepository, never()).revokeLineageFrom(any());
         assertThat(result.accessToken()).isEqualTo("new-jwt");
     }
 
