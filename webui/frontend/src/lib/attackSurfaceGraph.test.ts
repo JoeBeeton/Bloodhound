@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildGraph, colorForTargetType, hrefForNode, SUBDOMAINS_PER_TARGET_CAP } from "./attackSurfaceGraph";
-import type { Subdomain, Target } from "./types";
+import { buildGraph, colorForNode, colorForTargetType, hrefForNode, SUBDOMAINS_PER_TARGET_CAP } from "./attackSurfaceGraph";
+import type { Subdomain, Target, WorkerStatus } from "./types";
 
 function target(overrides: Partial<Target> = {}): Target {
   return {
@@ -32,20 +32,45 @@ function sub(id: string, hostname: string, isActive = true): Subdomain {
   };
 }
 
+function worker(overrides: Partial<WorkerStatus> = {}): WorkerStatus {
+  return {
+    workerId: "worker-1",
+    status: "IDLE",
+    lastHeartbeatAt: "2026-01-01T00:00:00Z",
+    targetId: null,
+    targetHostname: null,
+    moduleType: null,
+    currentHost: null,
+    ...overrides,
+  };
+}
+
+/** Every buildGraph() call always carries these three platform nodes - asserted once here so the rest of the suite can focus on what varies. */
+function expectAlwaysPresentPlatformNodes(nodes: ReturnType<typeof buildGraph>["nodes"]) {
+  expect(nodes.filter((n) => n.kind === "hub")).toHaveLength(1);
+  expect(nodes.filter((n) => n.kind === "database")).toHaveLength(1);
+  expect(nodes.filter((n) => n.kind === "webui")).toHaveLength(1);
+}
+
 describe("buildGraph", () => {
-  it("always includes exactly one org root node", () => {
+  it("always includes the central-server hub, postgres, and webui nodes, linked to the hub, even with nothing else", () => {
     const graph = buildGraph([], new Map());
-    expect(graph.nodes.filter((n) => n.kind === "org")).toHaveLength(1);
+    expectAlwaysPresentPlatformNodes(graph.nodes);
+    expect(graph.links).toEqual(
+      expect.arrayContaining([
+        { source: "hub", target: "database", kind: "structural" },
+        { source: "hub", target: "webui", kind: "structural" },
+      ]),
+    );
   });
 
-  it("one target with no subdomains produces just the org and target nodes, linked", () => {
+  it("one target with no subdomains produces the platform nodes plus one target node, linked to the hub", () => {
     const t = target();
     const graph = buildGraph([t], new Map([[t.id, { sample: [], total: 0 }]]));
 
-    expect(graph.nodes).toHaveLength(2);
-    expect(graph.nodes.map((n) => n.kind)).toEqual(expect.arrayContaining(["org", "target"]));
-    expect(graph.links).toHaveLength(1);
-    expect(graph.links[0]).toEqual({ source: "org", target: "target:t1" });
+    expectAlwaysPresentPlatformNodes(graph.nodes);
+    expect(graph.nodes.filter((n) => n.kind === "target")).toHaveLength(1);
+    expect(graph.links).toContainEqual({ source: "hub", target: "target:t1", kind: "structural" });
   });
 
   it("subdomains within the cap all become nodes, no ghost node needed", () => {
@@ -103,7 +128,8 @@ describe("buildGraph", () => {
     );
 
     expect(graph.nodes.filter((n) => n.kind === "target")).toHaveLength(2);
-    expect(graph.links).toHaveLength(4); // org->t1, org->t2, t1->s1, t2->s2
+    expect(graph.links).toContainEqual({ source: "hub", target: "target:t1", kind: "structural" });
+    expect(graph.links).toContainEqual({ source: "hub", target: "target:t2", kind: "structural" });
     expect(graph.links.some((l) => l.source === "target:t1" && l.target === "sub:t2:s2")).toBe(false);
   });
 
@@ -123,6 +149,41 @@ describe("buildGraph", () => {
     expect(bigNode.radius).toBeGreaterThan(smallNode.radius);
     expect(bigNode.radius).toBeLessThanOrEqual(24); // 10 base + 14 cap
   });
+
+  it("every live worker becomes its own node, linked to the hub", () => {
+    const workers = [worker({ workerId: "w1" }), worker({ workerId: "w2", status: "OFFLINE" })];
+    const graph = buildGraph([], new Map(), workers);
+
+    const workerNodes = graph.nodes.filter((n) => n.kind === "worker");
+    expect(workerNodes.map((n) => n.id)).toEqual(["worker:w1", "worker:w2"]);
+    expect(graph.links).toContainEqual({ source: "hub", target: "worker:w1", kind: "structural" });
+    expect(graph.links).toContainEqual({ source: "hub", target: "worker:w2", kind: "structural" });
+  });
+
+  it("a BUSY worker scanning a target that's in this graph gets a distinct 'scanning' link straight to it", () => {
+    const t = target({ id: "t1" });
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", targetHostname: "example.com" });
+    const graph = buildGraph([t], new Map([["t1", { sample: [], total: 0 }]]), [w]);
+
+    expect(graph.links).toContainEqual({ source: "worker:w1", target: "target:t1", kind: "scanning" });
+  });
+
+  it("a BUSY worker scanning another organization's target (not in this graph) gets no scanning link", () => {
+    // Matches WorkerPanel's own handling of this exact case: targetHostname/targetId present on
+    // the wire but pointing at a target this org's graph has no node for.
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "someone-elses-target", targetHostname: null });
+    const graph = buildGraph([], new Map(), [w]);
+
+    expect(graph.links.some((l) => l.kind === "scanning")).toBe(false);
+  });
+
+  it("an IDLE or OFFLINE worker never gets a scanning link even if it has a stale targetId", () => {
+    const t = target({ id: "t1" });
+    const idle = worker({ workerId: "w1", status: "IDLE", targetId: "t1" });
+    const graph = buildGraph([t], new Map([["t1", { sample: [], total: 0 }]]), [idle]);
+
+    expect(graph.links.some((l) => l.kind === "scanning")).toBe(false);
+  });
 });
 
 describe("colorForTargetType", () => {
@@ -133,8 +194,29 @@ describe("colorForTargetType", () => {
     expect(new Set([own, competitor, watchlist]).size).toBe(3);
   });
 
-  it("falls back to a neutral color when no type is given (the org root node)", () => {
+  it("falls back to a neutral color when no type is given (the hub/platform nodes)", () => {
     expect(colorForTargetType(undefined)).toBe("#7a8aa0");
+  });
+});
+
+describe("colorForNode", () => {
+  it("platform nodes (hub, database, webui) all share the same distinct violet, never a target-type color", () => {
+    const hubColor = colorForNode({ id: "hub", kind: "hub", label: "x", radius: 20 });
+    const dbColor = colorForNode({ id: "database", kind: "database", label: "x", radius: 10 });
+    const webuiColor = colorForNode({ id: "webui", kind: "webui", label: "x", radius: 9 });
+    expect(hubColor).toBe(dbColor);
+    expect(dbColor).toBe(webuiColor);
+    expect(["#00f0ff", "#ff2e97", "#ffb800"]).not.toContain(hubColor);
+  });
+
+  it("a worker's color reflects its live status, not any target type", () => {
+    const busy = colorForNode({ id: "worker:w1", kind: "worker", label: "w1", radius: 8, workerStatus: "BUSY" });
+    const idle = colorForNode({ id: "worker:w1", kind: "worker", label: "w1", radius: 8, workerStatus: "IDLE" });
+    expect(busy).not.toBe(idle);
+  });
+
+  it("a target/subdomain node's color still follows target type, unaffected by the platform palette", () => {
+    expect(colorForNode({ id: "target:t1", kind: "target", label: "x", radius: 10, targetType: "OWN" })).toBe("#00f0ff");
   });
 });
 
@@ -155,7 +237,10 @@ describe("hrefForNode", () => {
     );
   });
 
-  it("the org root node has no href - nothing to navigate to", () => {
-    expect(hrefForNode({ id: "org", kind: "org", label: "YOUR ORG", radius: 22 })).toBeUndefined();
+  it("platform nodes (hub, database, webui, worker) have no href - nothing to navigate to", () => {
+    expect(hrefForNode({ id: "hub", kind: "hub", label: "CENTRAL-SERVER", radius: 20 })).toBeUndefined();
+    expect(hrefForNode({ id: "database", kind: "database", label: "POSTGRES", radius: 10 })).toBeUndefined();
+    expect(hrefForNode({ id: "webui", kind: "webui", label: "WEBUI", radius: 9 })).toBeUndefined();
+    expect(hrefForNode({ id: "worker:w1", kind: "worker", label: "w1", radius: 8 })).toBeUndefined();
   });
 });

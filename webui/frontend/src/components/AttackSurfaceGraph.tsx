@@ -1,18 +1,19 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { colorForTargetType, hrefForNode, layoutGraph, type GraphData, type GraphNode } from "../lib/attackSurfaceGraph";
+import { colorForNode, colorForTargetType, hrefForNode, layoutGraph, type GraphData, type GraphNode } from "../lib/attackSurfaceGraph";
 
 const WIDTH = 1200;
 const HEIGHT = 720;
 
 /**
- * Renders an already-shaped GraphData as a force-directed SVG map: org hub at the center,
- * targets orbiting it (loosely clustered by type - see layoutGraph), and each target's
- * discovered subdomains orbiting it in turn. Positions are computed once per `data` identity
- * (see the useMemo below) via a synchronous d3-force run - no live physics/dragging in this
- * first version, which keeps the whole thing simple, fast, and reliably legible rather than
- * jittery. Pan (drag) and zoom (wheel) are implemented directly against the SVG's own viewBox,
- * not a library, since that's all a static, already-laid-out graph needs.
+ * Renders an already-shaped GraphData as a force-directed SVG map: central-server at the hub,
+ * the platform's own topology (postgres, webui, live workers) clustered to one side, and every
+ * tracked target - with its own discovered subdomains orbiting it in turn - clustered by type
+ * elsewhere (see layoutGraph). Positions are computed once per `data` identity (see the useMemo
+ * below) via a synchronous d3-force run - no live physics/dragging in this version, which keeps
+ * the whole thing simple, fast, and reliably legible rather than jittery. Pan (drag) and zoom
+ * (wheel) are implemented directly against the SVG's own viewBox, not a library, since that's
+ * all a static, already-laid-out graph needs.
  */
 export function AttackSurfaceGraph({ data }: { data: GraphData }) {
   const navigate = useNavigate();
@@ -72,6 +73,10 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
 
   return (
     <div className="relative w-full overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/50">
+      {/* Marching-ants flow for "currently scanning" links - CSS keyframes scoped here rather
+          than a Tailwind utility, since animating stroke-dashoffset on an SVG line has no
+          built-in Tailwind equivalent. */}
+      <style>{"@keyframes asm-flow { to { stroke-dashoffset: -16; } }"}</style>
       <svg
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
         className={`h-[70vh] w-full select-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
@@ -89,23 +94,26 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <radialGradient id="asm-org-fill" cx="35%" cy="35%" r="65%">
+          <radialGradient id="asm-hub-fill" cx="35%" cy="35%" r="65%">
             <stop offset="0%" stopColor="#fff" stopOpacity="0.9" />
-            <stop offset="35%" stopColor="#00f0ff" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#ff2e97" stopOpacity="0.85" />
+            <stop offset="35%" stopColor="#a78bfa" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#6d28d9" stopOpacity="0.85" />
           </radialGradient>
         </defs>
 
-        {/* links */}
+        {/* structural links */}
         <g>
           {laidOut.links.map((link, i) => {
+            if (link.kind === "scanning") return null;
             const source = link.source as GraphNode;
             const target = link.target as GraphNode;
             if (typeof source === "string" || typeof target === "string" || source.x == null || target.x == null) {
               return null;
             }
             const dimmed = connectedIds != null && !(connectedIds.has(source.id) && connectedIds.has(target.id));
-            const color = colorForTargetType(target.targetType);
+            const color = target.kind === "database" || target.kind === "webui" || target.kind === "worker"
+              ? "#a78bfa"
+              : colorForTargetType(target.targetType);
             return (
               <line
                 key={i}
@@ -114,8 +122,36 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                 x2={target.x}
                 y2={target.y}
                 stroke={color}
-                strokeWidth={source.kind === "org" ? 1.4 : 0.9}
-                opacity={dimmed ? 0.06 : source.kind === "org" ? 0.45 : 0.28}
+                strokeWidth={source.kind === "hub" ? 1.4 : 0.9}
+                opacity={dimmed ? 0.06 : source.kind === "hub" ? 0.45 : 0.28}
+              />
+            );
+          })}
+        </g>
+
+        {/* "currently scanning" overlay links - drawn on top, animated, so live activity reads at a glance */}
+        <g>
+          {laidOut.links.map((link, i) => {
+            if (link.kind !== "scanning") return null;
+            const source = link.source as GraphNode;
+            const target = link.target as GraphNode;
+            if (typeof source === "string" || typeof target === "string" || source.x == null || target.x == null) {
+              return null;
+            }
+            const dimmed = connectedIds != null && !(connectedIds.has(source.id) && connectedIds.has(target.id));
+            return (
+              <line
+                key={`scan-${i}`}
+                x1={source.x}
+                y1={source.y}
+                x2={target.x}
+                y2={target.y}
+                stroke="#ffb800"
+                strokeWidth={1.6}
+                strokeDasharray="6,4"
+                opacity={dimmed ? 0.08 : 0.85}
+                style={{ animation: "asm-flow 0.6s linear infinite" }}
+                filter="url(#asm-glow)"
               />
             );
           })}
@@ -126,15 +162,17 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
           {laidOut.nodes.map((node) => {
             if (node.x == null || node.y == null) return null;
             const dimmed = connectedIds != null && !connectedIds.has(node.id);
-            const color = node.kind === "org" ? "#ffffff" : colorForTargetType(node.targetType);
+            const color = colorForNode(node);
             const href = hrefForNode(node);
-            const showLabel = node.kind === "org" || node.kind === "target" || hoveredId === node.id;
+            const showLabel =
+              node.kind === "hub" || node.kind === "target" || node.kind === "database" || node.kind === "webui" || hoveredId === node.id;
+            const isBusyWorker = node.kind === "worker" && node.workerStatus === "BUSY";
             return (
               <g
                 key={node.id}
                 transform={`translate(${node.x}, ${node.y})`}
                 opacity={dimmed ? 0.18 : 1}
-                className="transition-opacity duration-200"
+                className={`transition-opacity duration-200 ${isBusyWorker ? "animate-pulse" : ""}`}
                 style={{ cursor: href ? "pointer" : "default" }}
                 onMouseEnter={() => setHoveredId(node.id)}
                 onMouseLeave={() => setHoveredId((cur) => (cur === node.id ? null : cur))}
@@ -143,21 +181,38 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                 <circle
                   r={node.radius}
                   fill={
-                    node.kind === "org"
-                      ? "url(#asm-org-fill)"
+                    node.kind === "hub"
+                      ? "url(#asm-hub-fill)"
                       : node.kind === "more"
                         ? "transparent"
                         : node.isActive === false
                           ? "#1a2233"
                           : color
                   }
-                  stroke={node.kind === "more" ? color : "none"}
+                  stroke={node.kind === "more" ? color : node.kind === "database" || node.kind === "webui" ? "#fff" : "none"}
                   strokeDasharray={node.kind === "more" ? "2,2" : undefined}
-                  strokeWidth={node.kind === "more" ? 1 : 0}
-                  filter={node.kind === "org" || node.kind === "target" || hoveredId === node.id ? "url(#asm-glow)" : undefined}
+                  strokeWidth={node.kind === "more" ? 1 : node.kind === "database" || node.kind === "webui" ? 1.2 : 0}
+                  strokeOpacity={0.6}
+                  filter={
+                    node.kind === "hub" ||
+                    node.kind === "target" ||
+                    node.kind === "database" ||
+                    node.kind === "webui" ||
+                    isBusyWorker ||
+                    hoveredId === node.id
+                      ? "url(#asm-glow)"
+                      : undefined
+                  }
                 />
                 {node.kind === "target" && (
                   <circle r={node.radius + 4} fill="none" stroke={color} strokeWidth={0.75} opacity={0.35} />
+                )}
+                {node.kind === "database" && (
+                  // A tiny cylinder glyph (two ellipses + a body line) reads as "database" at a glance, without an icon font/library.
+                  <g stroke="#12071f" strokeWidth={0.8} fill="none" opacity={0.55}>
+                    <ellipse cx={0} cy={-3.5} rx={5.5} ry={2} />
+                    <path d="M -5.5,-3.5 L -5.5,3.5 A 5.5,2 0 0 0 5.5,3.5 L 5.5,-3.5" />
+                  </g>
                 )}
                 {showLabel && (
                   <text
@@ -166,11 +221,11 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                     textAnchor="middle"
                     className="pointer-events-none select-none"
                     style={{
-                      fill: node.kind === "org" ? "#ffffff" : "#cbd5e1",
+                      fill: node.kind === "hub" ? "#ffffff" : node.kind === "database" || node.kind === "webui" ? "#e9d5ff" : "#cbd5e1",
                       fontFamily: "JetBrains Mono, monospace",
-                      fontSize: node.kind === "org" ? 11 : node.kind === "target" ? 9.5 : 8,
-                      fontWeight: node.kind === "org" || node.kind === "target" ? 700 : 400,
-                      letterSpacing: node.kind === "org" ? 2 : 0,
+                      fontSize: node.kind === "hub" ? 11 : node.kind === "target" ? 9.5 : node.kind === "database" || node.kind === "webui" ? 9 : 8,
+                      fontWeight: node.kind === "hub" || node.kind === "target" ? 700 : 400,
+                      letterSpacing: node.kind === "hub" ? 2 : 0,
                     }}
                   >
                     {node.label.length > 28 ? node.label.slice(0, 26) + "…" : node.label}
@@ -182,7 +237,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         </g>
       </svg>
 
-      {hoveredNode && hoveredNode.kind !== "org" && (
+      {hoveredNode && hoveredNode.kind !== "hub" && (
         <div className="pointer-events-none absolute right-3 top-3 max-w-xs rounded border border-neon-cyan/30 bg-void/90 px-3 py-2 font-mono text-xs shadow-glow-cyan">
           <p className="mb-1 font-bold text-slate-100">{hoveredNode.label}</p>
           {hoveredNode.kind === "target" && (
@@ -202,6 +257,15 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
             </p>
           )}
           {hoveredNode.kind === "more" && <p className="text-slate-400">click to view the full list</p>}
+          {hoveredNode.kind === "worker" && (
+            <p style={{ color: colorForNode(hoveredNode) }}>
+              {hoveredNode.workerStatus}
+              {hoveredNode.workerStatus === "BUSY" && hoveredNode.workerModule ? ` · ${hoveredNode.workerModule}` : ""}
+            </p>
+          )}
+          {(hoveredNode.kind === "database" || hoveredNode.kind === "webui") && (
+            <p className="text-violet-300">platform service</p>
+          )}
         </div>
       )}
 
@@ -209,6 +273,9 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         <LegendRow color="#00f0ff" label="Own" />
         <LegendRow color="#ff2e97" label="Competitor" />
         <LegendRow color="#ffb800" label="Watchlist" />
+        <div className="my-0.5 h-px bg-slate-700/60" />
+        <LegendRow color="#a78bfa" label="Platform" />
+        <LegendRow color="#ffb800" label="Worker busy" />
         <p className="mt-1 text-slate-600">scroll to zoom · drag to pan</p>
       </div>
     </div>
