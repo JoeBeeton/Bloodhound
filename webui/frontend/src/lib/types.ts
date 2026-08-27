@@ -206,6 +206,8 @@ export interface TyposquatCandidate {
   lastCheckedAt: string;
   resolvedIp: string | null;
   registrationDate: string | null;
+  hasScreenshot: boolean;
+  visualSimilarityPercent: number | null;
 }
 
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";

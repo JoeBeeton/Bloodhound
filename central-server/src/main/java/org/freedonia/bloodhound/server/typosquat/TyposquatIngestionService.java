@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.typosquat;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,13 +39,17 @@ public class TyposquatIngestionService {
             boolean isRegistered = Boolean.TRUE.equals(entry.get("isRegistered"));
             String resolvedIp = stringOrNull(entry.get("resolvedIp"));
             Instant registrationDate = instantOrNull(entry.get("registrationDate"));
+            byte[] screenshotPng = decodeBase64OrNull(entry.get("screenshotBase64"));
+            Integer visualSimilarityPercent = intOrNull(entry.get("visualSimilarityPercent"));
             repository.upsert(
                     targetId,
                     domain,
                     permutationType == null ? "UNKNOWN" : permutationType,
                     isRegistered,
                     resolvedIp,
-                    registrationDate);
+                    registrationDate,
+                    screenshotPng,
+                    visualSimilarityPercent);
         }
     }
 
@@ -79,5 +84,30 @@ public class TyposquatIngestionService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static byte[] decodeBase64OrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Base64.getDecoder().decode(String.valueOf(value));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Accepts a {@link Number} directly (the common case - Jackson deserializes a bare JSON
+     * integer like 92 into an Integer/Long when the target type is Object) rather than
+     * round-tripping through a String, which would silently lose the value for any numeric
+     * type Jackson happens to represent with a fractional Java type (e.g. Double 92.0 ->
+     * "92.0" -> Integer.valueOf throws).
+     */
+    private static Integer intOrNull(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
     }
 }

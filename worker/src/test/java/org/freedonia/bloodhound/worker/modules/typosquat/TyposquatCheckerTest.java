@@ -2,20 +2,47 @@ package org.freedonia.bloodhound.worker.modules.typosquat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.Map;
+import javax.imageio.ImageIO;
 import org.freedonia.bloodhound.worker.modules.subdomain.SubdomainDnsResolver;
 import org.freedonia.bloodhound.worker.modules.whois.WhoisFetcher;
 import org.junit.jupiter.api.Test;
 
 class TyposquatCheckerTest {
 
+    private static final String ROOT_HOSTNAME = "realsite.com";
+
     private final SubdomainDnsResolver dnsResolver = mock(SubdomainDnsResolver.class);
     private final WhoisFetcher whoisFetcher = mock(WhoisFetcher.class);
-    private final TyposquatChecker checker = new TyposquatChecker(dnsResolver, whoisFetcher);
+    private final TyposquatScreenshotter screenshotter = mock(TyposquatScreenshotter.class);
+    private final TyposquatChecker checker = new TyposquatChecker(dnsResolver, whoisFetcher, screenshotter);
+
+    private static byte[] solidPng(Color color) {
+        try {
+            BufferedImage image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_RGB);
+            var g = image.getGraphics();
+            g.setColor(color);
+            g.fillRect(0, 0, 100, 100);
+            g.dispose();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     /**
      * Regression test for a real false positive: example.co.uk permuted (via HYPHENATION) into
@@ -39,13 +66,16 @@ class TyposquatCheckerTest {
                     return Map.of(probeHostname, List.of("203.0.113.99"));
                 });
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).isNotEmpty();
         assertThat(result.get(0).wildcardArtifact()).isTrue();
-        // Never worth a WHOIS lookup for a wildcard artifact - it isn't a real registration signal.
-        org.mockito.Mockito.verifyNoInteractions(whoisFetcher);
+        assertThat(result.get(0).screenshotPng()).isNull();
+        assertThat(result.get(0).visualSimilarityPercent()).isNull();
+        // Never worth a WHOIS lookup or a screenshot for a wildcard artifact - it isn't a real signal.
+        verifyNoInteractions(whoisFetcher);
+        verifyNoInteractions(screenshotter);
     }
 
     @Test
@@ -56,7 +86,7 @@ class TyposquatCheckerTest {
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
         when(whoisFetcher.fetch("jjaa.com")).thenThrow(new RuntimeException("no whois data"));
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).containsExactly("198.51.100.7");
@@ -64,24 +94,75 @@ class TyposquatCheckerTest {
     }
 
     @Test
-    void nonResolvingCandidate_neverProbedForWildcard() {
+    void genuineCandidate_screenshotsBothRealSiteAndCandidate_computesSimilarity() {
+        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(solidPng(Color.BLUE));
+        when(screenshotter.capture("jjaa.com")).thenReturn(solidPng(Color.BLUE));
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).screenshotPng()).isNotNull();
+        assertThat(result.get(0).visualSimilarityPercent()).isEqualTo(100);
+        verify(screenshotter, times(1)).capture(ROOT_HOSTNAME);
+        verify(screenshotter, times(1)).capture("jjaa.com");
+    }
+
+    @Test
+    void realSiteScreenshotFails_candidateGetsNoSimilarityScore_stillNoWastedScreenshotCall() {
+        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(null);
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
+
+        assertThat(result.get(0).screenshotPng()).isNull();
+        assertThat(result.get(0).visualSimilarityPercent()).isNull();
+        // The real site's screenshot failed to hash - never worth also screenshotting the candidate.
+        verify(screenshotter, never()).capture("jjaa.com");
+    }
+
+    @Test
+    void multipleGenuineCandidates_realSiteScreenshottedOnlyOnce() {
+        var candidateA = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        var candidateB = new PermutationGenerator.Candidate("rea1site.com", "HOMOGLYPH");
+        when(dnsResolver.resolveAll(List.of("jjaa.com", "rea1site.com")))
+                .thenReturn(Map.of("jjaa.com", List.of("198.51.100.7"), "rea1site.com", List.of("198.51.100.8")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(screenshotter.capture(eq(ROOT_HOSTNAME))).thenReturn(solidPng(Color.GREEN));
+        when(screenshotter.capture(eq("jjaa.com"))).thenReturn(solidPng(Color.RED));
+        when(screenshotter.capture(eq("rea1site.com"))).thenReturn(solidPng(Color.GREEN));
+
+        checker.check(ROOT_HOSTNAME, List.of(candidateA, candidateB));
+
+        verify(screenshotter, times(1)).capture(ROOT_HOSTNAME);
+    }
+
+    @Test
+    void nonResolvingCandidate_neverProbedForWildcardOrScreenshotted() {
         var candidate = new PermutationGenerator.Candidate("dead.com", "OMISSION");
         when(dnsResolver.resolveAll(List.of("dead.com"))).thenReturn(Map.of());
 
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(List.of(candidate));
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate));
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).resolvedIps()).isEmpty();
         assertThat(result.get(0).wildcardArtifact()).isFalse();
+        assertThat(result.get(0).screenshotPng()).isNull();
         // Only one resolveAll call - the initial candidate batch. No second (probe) batch was ever needed.
-        org.mockito.Mockito.verify(dnsResolver, org.mockito.Mockito.times(1)).resolveAll(any());
+        verify(dnsResolver, times(1)).resolveAll(any());
+        verifyNoInteractions(screenshotter);
     }
 
     @Test
-    void emptyInput_returnsEmpty_neverCallsResolver() {
-        List<TyposquatChecker.CheckedCandidate> result = checker.check(List.of());
+    void emptyInput_returnsEmpty_neverCallsResolverOrScreenshotter() {
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of());
         assertThat(result).isEmpty();
-        org.mockito.Mockito.verifyNoInteractions(dnsResolver);
+        verifyNoInteractions(dnsResolver);
+        verifyNoInteractions(screenshotter);
     }
 
     @SuppressWarnings("unchecked")
