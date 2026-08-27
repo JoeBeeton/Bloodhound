@@ -80,7 +80,7 @@ public class OrgUserController {
     public UserSummary update(
             @PathVariable UUID orgId,
             @PathVariable UUID id,
-            @RequestBody UpdateUserRequest request,
+            @Valid @RequestBody UpdateUserRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
         User target = userRepository
