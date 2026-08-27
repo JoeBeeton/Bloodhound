@@ -18,6 +18,12 @@ import org.freedonia.bloodhound.common.findings.Severity;
  * findings): whether a candidate is registered is knowable from this scan
  * alone, so the module emits these findings directly rather than routing
  * through a central-server ingestion detour the way SUBDOMAIN_ENUM/WHOIS do.
+ *
+ * <p>A candidate flagged {@code wildcardArtifact} by {@link TyposquatChecker}
+ * is never emitted as a finding, even though it technically resolves: that
+ * resolution came from its parent zone answering for literally any
+ * subdomain, not from anyone registering this specific lookalike label - not
+ * real typosquatting signal, just noise from an unrelated wildcarded zone.
  */
 public final class TyposquatDecisionLogic {
 
@@ -26,7 +32,7 @@ public final class TyposquatDecisionLogic {
     public static List<RawFinding> decide(List<TyposquatChecker.CheckedCandidate> checked) {
         List<RawFinding> findings = new ArrayList<>();
         for (TyposquatChecker.CheckedCandidate candidate : checked) {
-            if (candidate.resolvedIps().isEmpty()) {
+            if (candidate.resolvedIps().isEmpty() || candidate.wildcardArtifact()) {
                 continue;
             }
             Map<String, Object> evidence = new LinkedHashMap<>();

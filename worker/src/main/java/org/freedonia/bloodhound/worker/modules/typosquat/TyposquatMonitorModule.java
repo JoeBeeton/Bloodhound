@@ -49,11 +49,17 @@ public class TyposquatMonitorModule implements ScanModule {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("domain", candidate.domain());
             entry.put("permutationType", candidate.permutationType());
-            entry.put("isRegistered", !candidate.resolvedIps().isEmpty());
-            entry.put("resolvedIp", candidate.resolvedIps().isEmpty() ? null : candidate.resolvedIps().get(0));
-            entry.put(
-                    "registrationDate",
-                    candidate.registrationDate() == null ? null : candidate.registrationDate().toString());
+            // A wildcard-artifact candidate technically resolves, but that resolution came from its
+            // parent zone answering for literally any subdomain, not from anyone registering this
+            // specific label - treated as unregistered here (not just excluded from findings, see
+            // TyposquatDecisionLogic) so it also never shows up in the target's tracked "Brand
+            // protection" candidate list, which is driven by is_registered independent of findings.
+            boolean isRegistered = !candidate.resolvedIps().isEmpty() && !candidate.wildcardArtifact();
+            entry.put("isRegistered", isRegistered);
+            entry.put("resolvedIp", isRegistered ? candidate.resolvedIps().get(0) : null);
+            entry.put("registrationDate", isRegistered && candidate.registrationDate() != null
+                    ? candidate.registrationDate().toString()
+                    : null);
             candidateMetadata.add(entry);
         }
 
