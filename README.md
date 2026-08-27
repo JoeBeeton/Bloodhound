@@ -114,10 +114,12 @@ anything reachable beyond your own machine.
 docker compose up -d --build
 ```
 
-This brings up Postgres, `central-server`, one `worker`, and `webui`.
-Postgres's schema is created automatically on first boot (Flyway), along
-with a bootstrap organization and admin user from the `BOOTSTRAP_*`
-variables in `.env`.
+This brings up Postgres, `central-server`, one `worker`, `webui`, and the
+Tier 2 sidecars (`zap`, `screenshotter`). Postgres's schema is created
+automatically on first boot (Flyway), along with a bootstrap organization
+and admin user from the `BOOTSTRAP_*` variables in `.env`. The dev/test
+fixtures below (`juice-shop`, `saml-test-idp`) are **not** included by this
+command — see "Optional dev/test fixtures".
 
 Once everything's healthy:
 
@@ -143,17 +145,32 @@ explicit attestation in the UI — there's no bare toggle. To try it out
 without pointing active scanning at anyone else's infrastructure, the
 compose file includes a deliberately-vulnerable practice target
 (`juice-shop`, fronted by `juiceshop-proxy` on `juiceshop.local` so it
-behaves like a normal domain to every scan module) — register that as a
-target, authorize it, and run a deep scan against it.
+behaves like a normal domain to every scan module) — bring it up with the
+`dev-fixtures` profile (see below), register `juiceshop.local` as a target,
+authorize it, and run a deep scan against it.
 
 ### Optional dev/test fixtures
 
 `juice-shop`/`juiceshop-proxy` (the Tier 2 practice target above) and
 `saml-test-idp` (a practice SAML identity provider for exercising SSO
-end-to-end) are included for local development and evaluation. Neither
-should be part of a production deployment — strip them from the compose
-file, and bind `central-server`'s port to the internal Docker network only
-rather than the host, before deploying anywhere beyond a trusted machine.
+end-to-end) are for local development and evaluation only — neither should
+ever be part of a production deployment, so they're gated behind Compose's
+`dev-fixtures` profile and a plain `docker compose up` no longer starts
+them (a security review found the previous quickstart brought them up by
+default with nothing actually enforcing that they got stripped before
+deploying anywhere beyond a trusted machine). Opt in explicitly:
+
+```bash
+docker compose --profile dev-fixtures up -d --build
+# or: COMPOSE_PROFILES=dev-fixtures docker compose up -d --build
+```
+
+`central-server`'s port (8080) is still published to the host by default
+for direct API/swagger access and local debugging — a real browser only
+ever needs webui's port (8090), which proxies every API/SCIM/swagger route
+to central-server anyway. Drop that `ports:` mapping in your own
+override/prod compose file if you want central-server host-unreachable
+entirely.
 
 ## License
 
