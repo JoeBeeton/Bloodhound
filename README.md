@@ -51,7 +51,15 @@ does so under a two-tier scanning model that keeps that legal:
 - **Misconfiguration/exposure checks** — Actuator endpoints, `.git`/`.env`
   leaks, exposed admin consoles, unauthenticated data stores, and more.
 - **WHOIS/RDAP** — registrar/expiry monitoring, registrant changes.
-- **Typosquat monitoring** — lookalike-domain registration tracking.
+- **Brand protection / typosquat monitoring** — lookalike-domain permutation
+  generation and registration tracking, with a visual-similarity check on top:
+  a screenshot of each newly-registered candidate is compared against a
+  screenshot of your own real domain's homepage using perceptual hashing
+  (dHash) — candidates that actually *look* like a convincing copy of your
+  site score a high similarity percentage, a much stronger phishing signal
+  than registration alone. Both screenshots are shown side by side in the
+  brand-protection table so an analyst can eyeball a match directly rather
+  than trusting the percentage blind.
 - **CVE correlation** — fingerprinted software versions cross-referenced
   against NVD, OSV, and CISA's Known Exploited Vulnerabilities catalog.
 - **Deep scan (Tier 2)** — full 1–65535 port discovery, best-effort service
