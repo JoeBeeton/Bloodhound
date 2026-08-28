@@ -36,6 +36,10 @@ export function ScreenshotThumbnail({
     let cancelled = false;
     let currentUrl: string | null = null;
     setFailed(false);
+    // A src change revokes the previous object URL below (on cleanup) but that alone leaves
+    // `objectUrl` state pointing at a URL that no longer resolves to anything - reset it so the
+    // loading skeleton shows for the new src instead of a broken image reference.
+    setObjectUrl(null);
 
     apiFetch(src)
       .then((res) => {
