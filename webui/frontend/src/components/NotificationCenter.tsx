@@ -100,6 +100,19 @@ export function NotificationCenter() {
     }
   }
 
+  // Same "invisible full-screen backdrop catches the outside click" technique Modal.tsx uses,
+  // just without a dimmed overlay (this is a small dropdown, not a modal) - a bell/panel
+  // stacked at the highest z-index still receives its own clicks first, so this only ever
+  // catches clicks genuinely outside the panel. Escape is the keyboard-only equivalent.
+  useEffect(() => {
+    if (!panelOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setPanelOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [panelOpen]);
+
   const unreadCount = query.data?.unreadCount ?? 0;
 
   return (
@@ -118,42 +131,45 @@ export function NotificationCenter() {
       </button>
 
       {panelOpen && (
-        <div className="absolute right-0 top-8 z-50 w-96 max-w-[90vw] rounded-lg border border-neon-cyan/20 bg-panel shadow-glow-cyan">
-          <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-            <span className="font-mono text-xs uppercase tracking-widest text-neon-cyan">Notifications</span>
-            {unreadCount > 0 && (
-              <button
-                onClick={markAllRead}
-                className="font-mono text-[11px] uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
-              >
-                Mark all read
-              </button>
-            )}
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setPanelOpen(false)} aria-hidden />
+          <div className="absolute right-0 top-8 z-50 w-96 max-w-[90vw] rounded-lg border border-neon-cyan/20 bg-panel shadow-glow-cyan">
+            <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
+              <span className="font-mono text-xs uppercase tracking-widest text-neon-cyan">Notifications</span>
+              {unreadCount > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="font-mono text-[11px] uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {query.isLoading && <p className="p-4 font-mono text-xs text-slate-400">Loading…</p>}
+              {query.data && query.data.notifications.length === 0 && (
+                <p className="p-4 font-mono text-xs text-slate-500">No notifications yet.</p>
+              )}
+              {query.data?.notifications.map((n) => (
+                <button
+                  key={n.id}
+                  onClick={() => goTo(n)}
+                  className={`block w-full border-b border-slate-800 px-4 py-3 text-left transition hover:bg-void/60 ${
+                    n.isRead ? "opacity-60" : ""
+                  }`}
+                >
+                  <p className={`font-mono text-xs font-bold ${SEVERITY_CLASS[n.severity] ?? "text-slate-300"}`}>
+                    {n.title}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] text-slate-400">{n.message}</p>
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                    {new Date(n.createdAt).toLocaleString()}
+                  </p>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="max-h-96 overflow-y-auto">
-            {query.isLoading && <p className="p-4 font-mono text-xs text-slate-400">Loading…</p>}
-            {query.data && query.data.notifications.length === 0 && (
-              <p className="p-4 font-mono text-xs text-slate-500">No notifications yet.</p>
-            )}
-            {query.data?.notifications.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => goTo(n)}
-                className={`block w-full border-b border-slate-800 px-4 py-3 text-left transition hover:bg-void/60 ${
-                  n.isRead ? "opacity-60" : ""
-                }`}
-              >
-                <p className={`font-mono text-xs font-bold ${SEVERITY_CLASS[n.severity] ?? "text-slate-300"}`}>
-                  {n.title}
-                </p>
-                <p className="mt-0.5 font-mono text-[11px] text-slate-400">{n.message}</p>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-600">
-                  {new Date(n.createdAt).toLocaleString()}
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
+        </>
       )}
 
       <div className="pointer-events-none fixed bottom-6 right-6 z-[100] flex flex-col gap-2">
