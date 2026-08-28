@@ -1,8 +1,21 @@
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { CompareSeries } from "../lib/types";
 
 /** Cycled per selected target — cyan/magenta/amber first (the core retro-Tokyo palette), then a few extra hues for larger comparisons. */
 const LINE_COLORS = ["#00f0ff", "#ff2e97", "#ffb800", "#7c3aed", "#34d399", "#f472b6"];
+
+/** Faint A-F grade bands behind the lines - same 90/80/70/60 thresholds and color language as
+ * GradeBadge/HealthGauge (cyan=healthy, amber=warning, magenta=critical), so "where does this
+ * competitor's line sit" reads as a grade at a glance instead of requiring a mental lookup
+ * against the Y axis. Opacity kept low (0.02-0.05) so the bands read as a watermark, not
+ * something competing with the actual score lines drawn on top. */
+const GRADE_BANDS: { y1: number; y2: number; color: string; opacity: number; label: string }[] = [
+  { y1: 90, y2: 100, color: "#00f0ff", opacity: 0.05, label: "A" },
+  { y1: 80, y2: 90, color: "#00f0ff", opacity: 0.025, label: "B" },
+  { y1: 70, y2: 80, color: "#ffb800", opacity: 0.04, label: "C" },
+  { y1: 60, y2: 70, color: "#ffb800", opacity: 0.02, label: "D" },
+  { y1: 0, y2: 60, color: "#ff2e97", opacity: 0.04, label: "F" },
+];
 
 export type CompareScoreMode = "tier1" | "full";
 
@@ -42,6 +55,25 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
             review. right:28 leaves room so the final X-axis date label isn't clipped either. */}
         <LineChart margin={{ top: 8, right: 28, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.1)" />
+          {GRADE_BANDS.map((band) => (
+            <ReferenceArea
+              key={band.label}
+              y1={band.y1}
+              y2={band.y2}
+              fill={band.color}
+              fillOpacity={band.opacity}
+              stroke="none"
+              ifOverflow="extendDomain"
+              label={{
+                value: band.label,
+                position: "insideLeft",
+                fill: band.color,
+                fillOpacity: 0.5,
+                fontSize: 10,
+                fontFamily: "JetBrains Mono, monospace",
+              }}
+            />
+          ))}
           <XAxis
             dataKey="computedAtMs"
             type="number"
