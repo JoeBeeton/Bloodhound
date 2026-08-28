@@ -50,6 +50,8 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_CONFIGPROPS", List.of("/actuator/configprops")),
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_THREADDUMP", List.of("/actuator/threaddump")),
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_LOGGERS", List.of("/actuator/loggers")),
+            ExposureProbeSpec.get("EXPOSURE_ACTUATOR_HEALTH", List.of("/actuator/health")),
+            ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INFO", List.of("/actuator/info")),
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INDEX", List.of("/actuator")),
             ExposureProbeSpec.get("EXPOSURE_GIT_CONFIG", List.of("/.git/config")),
             ExposureProbeSpec.get("EXPOSURE_ENV_FILE", List.of("/.env")),
