@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
@@ -96,29 +96,11 @@ export function AdminSsoPage() {
   return (
     <Shell>
       <div className="mx-auto w-full max-w-4xl px-6 py-10">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
-            <h1 className="font-display text-2xl font-bold text-neon-cyan">SSO (SAML)</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link to="/admin/users" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              Users →
-            </Link>
-            <Link to="/admin/rules-catalog" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              Rules catalog →
-            </Link>
-                        <Link to="/admin/slack" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              Slack →
-            </Link>
-<Link to="/admin/scim" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              SCIM →
-            </Link>
-            <Link to="/dashboard" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              ← Dashboard
-            </Link>
-          </div>
+        <div className="mb-2">
+          <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
+          <h1 className="font-display text-2xl font-bold text-neon-cyan">SSO (SAML)</h1>
         </div>
+        <AdminSubNav />
 
         {configQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
         {configQuery.isError && <ErrorState message="Failed to load SSO configuration." onRetry={() => configQuery.refetch()} />}
