@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
-import { ApiKeysPage } from "./ApiKeysPage";
+import { ApiKeysPage, statusDisplay, type ApiKeySummary } from "./ApiKeysPage";
 
 vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
 // Shell pulls in useAuth/nav/NotificationCenter chrome unrelated to this page's own logic - stubbed
@@ -152,5 +152,44 @@ describe("ApiKeysPage", () => {
     await user.click(screen.getByRole("button", { name: /revoke/i }));
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/api-keys/k1", { method: "DELETE" }), { timeout: 5000 });
+  });
+});
+
+function key(overrides: Partial<ApiKeySummary> = {}): ApiKeySummary {
+  return {
+    id: "k1",
+    label: "test key",
+    keyPrefix: "bhk_abc123",
+    createdAt: "2026-01-01T00:00:00Z",
+    expiresAt: "2026-06-01T00:00:00Z",
+    lastUsedAt: null,
+    revoked: false,
+    expired: false,
+    ...overrides,
+  };
+}
+
+const NOW = new Date("2026-05-01T00:00:00Z").getTime();
+
+describe("statusDisplay", () => {
+  it("shows a plain 'Active' when expiry is comfortably in the future", () => {
+    const status = statusDisplay(key({ expiresAt: "2026-12-01T00:00:00Z" }), NOW);
+    expect(status).toEqual({ label: "Active", className: "text-neon-cyan" });
+  });
+
+  it("warns in amber once expiry is within 14 days", () => {
+    const status = statusDisplay(key({ expiresAt: "2026-05-10T00:00:00Z" }), NOW);
+    expect(status.label).toBe("Active · 9d left");
+    expect(status.className).toBe("text-neon-amber");
+  });
+
+  it("shows 'Revoked' regardless of expiry proximity", () => {
+    const status = statusDisplay(key({ revoked: true, expiresAt: "2026-05-02T00:00:00Z" }), NOW);
+    expect(status).toEqual({ label: "Revoked", className: "text-slate-500" });
+  });
+
+  it("shows 'Expired' rather than a negative day count once past expiry", () => {
+    const status = statusDisplay(key({ expired: true, expiresAt: "2026-04-01T00:00:00Z" }), NOW);
+    expect(status).toEqual({ label: "Expired", className: "text-neon-amber" });
   });
 });
