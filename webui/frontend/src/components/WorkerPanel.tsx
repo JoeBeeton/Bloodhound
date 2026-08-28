@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../lib/apiClient";
+import { workerEndpoint } from "../lib/attackSurfaceGraph";
 import { moduleLabel } from "../lib/moduleLabel";
 import type { WorkerStatus } from "../lib/types";
 
@@ -22,11 +23,16 @@ const STATUS_DOT: Record<WorkerStatus["status"], string> = {
 };
 
 function WorkerRow({ worker }: { worker: WorkerStatus }) {
+  // Same hostname:port split the Attack Surface Map already shows for a worker node - the raw
+  // "hostname-randomsuffix" id (see WorkerApplication#workerId) is real but not something an
+  // analyst needs to read at a glance here; it's still available in the tooltip.
+  const endpoint = workerEndpoint(worker.workerId);
   return (
     <div className={`rounded-lg border bg-panel/60 px-3 py-2.5 ${STATUS_STYLES[worker.status]}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-xs text-slate-200" title={worker.workerId}>
-          {worker.workerId}
+        <span className="flex items-baseline gap-1.5 truncate font-mono text-xs text-slate-200" title={worker.workerId}>
+          {endpoint.hostname}
+          <span className="text-[10px] text-slate-500">:{endpoint.port}</span>
         </span>
         <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[worker.status]}`} />
       </div>
