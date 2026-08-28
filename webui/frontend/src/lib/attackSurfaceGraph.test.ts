@@ -220,6 +220,41 @@ describe("buildGraph", () => {
 
     expect(graph.links.some((l) => l.kind === "scanning")).toBe(false);
   });
+
+  it("a Tier 2 worker whose currentHost is a rendered subdomain gets its scanning link pointed at that subdomain, not the target", () => {
+    const t = target({ id: "t1", hostname: "example.com" });
+    const subs = [sub("s1", "api.example.com"), sub("s2", "www.example.com")];
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", currentHost: "api.example.com" });
+    const graph = buildGraph([t], new Map([["t1", { sample: subs, total: 2 }]]), [w]);
+
+    expect(graph.links).toContainEqual({ source: "worker:w1", target: "sub:t1:s1", kind: "scanning" });
+    expect(graph.links.some((l) => l.target === "target:t1" && l.kind === "scanning")).toBe(false);
+  });
+
+  it("a Tier 2 worker whose currentHost is the target's own apex hostname still points at the target node", () => {
+    const t = target({ id: "t1", hostname: "example.com" });
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", currentHost: "example.com" });
+    const graph = buildGraph([t], new Map([["t1", { sample: [], total: 0 }]]), [w]);
+
+    expect(graph.links).toContainEqual({ source: "worker:w1", target: "target:t1", kind: "scanning" });
+  });
+
+  it("a currentHost outside the capped/rendered subdomain sample falls back to the target node, not a nonexistent node", () => {
+    const t = target({ id: "t1", hostname: "example.com" });
+    const subs = [sub("s1", "api.example.com")];
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", currentHost: "hidden-beyond-the-cap.example.com" });
+    const graph = buildGraph([t], new Map([["t1", { sample: subs, total: 50 }]]), [w]);
+
+    expect(graph.links).toContainEqual({ source: "worker:w1", target: "target:t1", kind: "scanning" });
+  });
+
+  it("a Tier 1 fanout worker with no currentHost keeps pointing at the target node, same as before", () => {
+    const t = target({ id: "t1" });
+    const w = worker({ workerId: "w1", status: "BUSY", targetId: "t1", currentHost: null });
+    const graph = buildGraph([t], new Map([["t1", { sample: [], total: 0 }]]), [w]);
+
+    expect(graph.links).toContainEqual({ source: "worker:w1", target: "target:t1", kind: "scanning" });
+  });
 });
 
 describe("colorForTargetType", () => {
