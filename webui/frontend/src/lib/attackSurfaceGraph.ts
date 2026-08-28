@@ -82,7 +82,7 @@ export const PLATFORM_ENDPOINTS: Record<"hub" | "database" | "webui", { hostname
  * container (see WorkerApplication#workerId: InetAddress.getLocalHost().getHostName(), then a
  * random suffix appended to disambiguate replicas started at the same instant). Splitting that
  * back out here shows the real per-replica hostname rather than the combined id string. */
-function workerEndpoint(workerId: string): { hostname: string; port: number } {
+export function workerEndpoint(workerId: string): { hostname: string; port: number } {
   const match = /^(.+)-([0-9a-f]{8})$/i.exec(workerId);
   return { hostname: match ? match[1] : workerId, port: 8081 };
 }
