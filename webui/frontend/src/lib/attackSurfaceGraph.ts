@@ -201,10 +201,24 @@ export function buildGraph(
 
   // Live "currently scanning" overlay - a worker whose in-flight job's target is actually in
   // this graph gets a second link straight to it, distinct in kind from the structural ones
-  // above so the renderer can style it differently (animated, amber, drawn on top).
+  // above so the renderer can style it differently (animated, amber, drawn on top). Tier 2
+  // (one-job-per-host) jobs carry currentHost - if that host is the target's own apex hostname,
+  // or isn't one of the (capped) rendered subdomain nodes, the link still points at the target
+  // node itself; if it names a subdomain that IS rendered, the link points there instead so the
+  // arrow reads as "scanning this specific subdomain," not just "scanning this target." Tier 1
+  // fanout jobs process a whole batch of subdomains in one job (no single currentHost - see
+  // WorkerStatusDto's javadoc) and always point at the target node, same as before.
   for (const worker of workers) {
     if (worker.status === "BUSY" && worker.targetId && targetNodeIds.has(worker.targetId)) {
-      links.push({ source: `worker:${worker.workerId}`, target: `target:${worker.targetId}`, kind: "scanning" });
+      let scanTargetNodeId = `target:${worker.targetId}`;
+      if (worker.currentHost) {
+        const subdomainInfo = subdomainsByTarget.get(worker.targetId);
+        const matchedSub = subdomainInfo?.sample.find((sub) => sub.hostname === worker.currentHost);
+        if (matchedSub) {
+          scanTargetNodeId = `sub:${worker.targetId}:${matchedSub.id}`;
+        }
+      }
+      links.push({ source: `worker:${worker.workerId}`, target: scanTargetNodeId, kind: "scanning" });
     }
   }
 
