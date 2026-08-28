@@ -52,6 +52,7 @@ const SEVERITY_TEXT: Record<Severity, string> = {
   LOW: "text-severity-low",
   INFO: "text-severity-info",
 };
+const SEVERITY_WEIGHT: Record<Severity, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
 
 function highestSeverity(severities: Severity[]): Severity | null {
   for (const s of SEVERITY_ORDER) {
@@ -60,12 +61,28 @@ function highestSeverity(severities: Severity[]): Severity | null {
   return null;
 }
 
+/** Worst-first: the whole point of this sort mode is triage - "which subdomain needs
+ * attention first" - so it ranks by severity before count, same convention ScansPage's
+ * STATUS_PRIORITY and TargetDetailPage's score-impact sort both already use. */
+export function byMostSevereFindingsFirst(rows: Subdomain[], findingsByHostname: Map<string, Finding[]>): Subdomain[] {
+  return rows.slice().sort((a, b) => {
+    const findingsA = findingsByHostname.get(a.hostname) ?? [];
+    const findingsB = findingsByHostname.get(b.hostname) ?? [];
+    const worstA = highestSeverity(findingsA.map((f) => f.severity));
+    const worstB = highestSeverity(findingsB.map((f) => f.severity));
+    const weightA = worstA ? SEVERITY_WEIGHT[worstA] : -1;
+    const weightB = worstB ? SEVERITY_WEIGHT[worstB] : -1;
+    return weightB - weightA || findingsB.length - findingsA.length;
+  });
+}
+
 /** Full subdomain inventory for a target: fingerprint + open-findings summary per subdomain, clicking through to detail. */
 export function SubdomainsPage() {
   const { id } = useParams<{ id: string }>();
   const targetId = id!;
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [sortByFindings, setSortByFindings] = useState(false);
   // Debounced so typing doesn't fire a request per keystroke - the search now genuinely
   // queries the server (see fetchSubdomains), not just the already-fetched page, so it's
   // a real network round trip each time it changes.
@@ -105,7 +122,9 @@ export function SubdomainsPage() {
   // stays correct against a target's FULL subdomain set, not just whatever page was
   // fetched - filtered === subdomains, kept as its own name only so the JSX below reads
   // the same as before.
-  const filtered = subdomainsQuery.data?.items ?? [];
+  const filtered = sortByFindings
+    ? byMostSevereFindingsFirst(subdomainsQuery.data?.items ?? [], findingsByHostname)
+    : (subdomainsQuery.data?.items ?? []);
   const subdomainsTruncated = !!subdomainsQuery.data && subdomainsQuery.data.totalCount > subdomainsQuery.data.items.length;
   const findingsTruncated = !!findingsQuery.data && findingsQuery.data.totalCount > findingsQuery.data.items.length;
 
@@ -162,12 +181,24 @@ export function SubdomainsPage() {
                 Use the filter below to narrow results.
               </p>
             )}
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by hostname…"
-              className="mb-4 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-neon-cyan"
-            />
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter by hostname…"
+                className="w-full flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-neon-cyan"
+              />
+              <button
+                onClick={() => setSortByFindings((v) => !v)}
+                className={`shrink-0 whitespace-nowrap rounded border px-3 py-2 font-mono text-xs uppercase tracking-widest transition ${
+                  sortByFindings
+                    ? "border-neon-cyan/50 text-neon-cyan"
+                    : "border-slate-700 text-slate-400 hover:border-slate-500"
+                }`}
+              >
+                Sort: {sortByFindings ? "Worst findings first ▾" : "Default order ▾"}
+              </button>
+            </div>
             {filtered.length > 0 && (
             <div className="overflow-x-auto rounded-lg border border-neon-cyan/20 bg-panel/60">
               <table className="w-full min-w-[720px] text-left font-mono text-xs">
