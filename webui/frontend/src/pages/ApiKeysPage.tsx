@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CopyButton } from "../components/CopyButton";
 import { ErrorState } from "../components/ErrorState";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
@@ -216,12 +217,7 @@ export function ApiKeysPage() {
           </p>
           <div className="mb-1 flex items-center gap-2 rounded border border-neon-amber/40 bg-void/60 px-3 py-2">
             <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">{created.apiKey}</code>
-            <button
-              onClick={() => navigator.clipboard?.writeText(created.apiKey)}
-              className="shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
-            >
-              Copy
-            </button>
+            <CopyButton value={created.apiKey} />
           </div>
           <p className="mb-4 font-mono text-xs text-severity-critical">
             This key is shown once and cannot be retrieved again — copy it now.
