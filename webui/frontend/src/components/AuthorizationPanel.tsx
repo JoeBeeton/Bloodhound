@@ -37,6 +37,7 @@ async function revoke(targetId: string): Promise<AuthorizationStatusResponse> {
 export function AuthorizationPanel({ targetId }: { targetId: string }) {
   const queryClient = useQueryClient();
   const [attestationText, setAttestationText] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
 
   const authQuery = useQuery({
     queryKey: ["authorization", targetId],
@@ -68,8 +69,14 @@ export function AuthorizationPanel({ targetId }: { targetId: string }) {
   }
 
   const status = authQuery.data!.authorizationStatus;
-  const current = authQuery.data!.history.find((entry) => entry.revokedAt === null);
+  const history = authQuery.data!.history;
+  const current = history.find((entry) => entry.revokedAt === null);
   const isAuthorized = status === "AUTHORIZED";
+  // Every past entry, not just the live one - "authorize, revoke, re-authorize" is exactly the
+  // kind of history a logged/auditable attestation exists to preserve, and it was already being
+  // fetched here without ever being shown. Most-recent-first, current entry (if any) excluded
+  // since it's already shown above.
+  const past = history.filter((entry) => entry.id !== current?.id).sort((a, b) => b.authorizedAt.localeCompare(a.authorizedAt));
 
   return (
     <div
@@ -127,6 +134,30 @@ export function AuthorizationPanel({ targetId }: { targetId: string }) {
       )}
       {(authorizeMutation.isError || revokeMutation.isError) && (
         <p className="mt-2 font-mono text-xs text-severity-critical">Action failed — please try again.</p>
+      )}
+
+      {past.length > 0 && (
+        <div className="mt-3 border-t border-white/5 pt-2">
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className="font-mono text-[11px] uppercase tracking-widest text-slate-500 transition hover:text-slate-300"
+          >
+            {showHistory ? "▾" : "▸"} Authorization history ({past.length})
+          </button>
+          {showHistory && (
+            <div className="mt-2 flex flex-col gap-2">
+              {past.map((entry) => (
+                <div key={entry.id} className="rounded border border-slate-800 bg-void/40 px-3 py-2">
+                  <p className="font-mono text-[11px] text-slate-400">
+                    {new Date(entry.authorizedAt).toLocaleString()}
+                    {entry.revokedAt && ` — revoked ${new Date(entry.revokedAt).toLocaleString()}`}
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-slate-300">"{entry.attestationText}"</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
