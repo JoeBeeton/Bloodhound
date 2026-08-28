@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CenteredState } from "../components/CenteredState";
@@ -59,6 +60,59 @@ function AttemptHistory({ attempts }: { attempts: ScanJobAttempt[] }) {
           {a.errorDetail && <p className="mt-0.5 text-slate-500">{a.errorDetail}</p>}
         </div>
       ))}
+    </div>
+  );
+}
+
+interface JobGroup {
+  moduleType: string;
+  jobs: ScanJobStatus[];
+}
+
+/** Tier 2 dispatches one job per authorized host (see ScanRunService#createDeepScan) - a
+ * 15-subdomain target's deep scan is 3 modules * 16 hosts = 48 flat rows, which is unreadable
+ * as one undifferentiated list. Tier 1's one-job-per-module scans (the common case) stay
+ * completely unaffected: a group of size 1 renders exactly as a bare JobRow always has. */
+export function groupJobsByModule(jobs: ScanJobStatus[]): JobGroup[] {
+  const byType = new Map<string, ScanJobStatus[]>();
+  for (const j of jobs) {
+    const list = byType.get(j.moduleType) ?? [];
+    list.push(j);
+    byType.set(j.moduleType, list);
+  }
+  return Array.from(byType.entries()).map(([moduleType, groupJobs]) => ({ moduleType, jobs: groupJobs }));
+}
+
+function JobGroupSection({ group }: { group: JobGroup }) {
+  const failedCount = group.jobs.filter((j) => j.status === "FAILED").length;
+  const doneCount = group.jobs.filter((j) => j.status === "COMPLETE" || j.status === "FAILED").length;
+  // Nothing to review by default when every host in this module cleanly succeeded - the
+  // analyst's attention belongs on groups with something still running or gone wrong. Keyed by
+  // moduleType (stable across this page's 3s poll while RUNNING) so a manual toggle sticks.
+  const [collapsed, setCollapsed] = useState(() => failedCount === 0 && doneCount === group.jobs.length);
+  return (
+    <div className="border-b border-slate-800 py-3 last:border-0">
+      <button onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center justify-between gap-3 text-left">
+        <span className="font-mono text-sm text-slate-200">
+          {moduleLabel(group.moduleType)}
+          <span className="ml-2 text-xs text-slate-500">{collapsed ? "▸" : "▾"}</span>
+        </span>
+        <span
+          className={`font-mono text-xs uppercase tracking-widest ${
+            failedCount > 0 ? "text-severity-critical" : doneCount === group.jobs.length ? "text-neon-cyan" : "text-neon-amber"
+          }`}
+        >
+          {doneCount}/{group.jobs.length} complete
+          {failedCount > 0 && ` · ${failedCount} failed`}
+        </span>
+      </button>
+      {!collapsed && (
+        <div className="mt-1 border-l-2 border-slate-800 pl-3">
+          {group.jobs.map((job) => (
+            <JobRow key={job.id} job={job} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -154,9 +208,13 @@ export function ScanDetailPage() {
         </div>
 
         <div className="rounded-lg border border-neon-cyan/20 bg-panel/80 px-4">
-          {run.jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
-          ))}
+          {groupJobsByModule(run.jobs).map((group) =>
+            group.jobs.length === 1 ? (
+              <JobRow key={group.moduleType} job={group.jobs[0]} />
+            ) : (
+              <JobGroupSection key={group.moduleType} group={group} />
+            ),
+          )}
         </div>
       </div>
     </Shell>
