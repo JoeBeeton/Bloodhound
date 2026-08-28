@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.jobqueue;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceIngestionService;
 import org.freedonia.bloodhound.server.ctmonitor.CtCheckResultService;
 import org.freedonia.bloodhound.server.findings.FindingPayload;
 import org.freedonia.bloodhound.server.findings.ResultIngestionService;
@@ -29,6 +30,7 @@ public class JobLifecycleService {
     private final CtCheckResultService ctCheckResultService;
     private final FingerprintIngestionService fingerprintIngestionService;
     private final TyposquatIngestionService typosquatIngestionService;
+    private final BucketBruteForceIngestionService bucketBruteForceIngestionService;
     private final TargetRepository targetRepository;
     private final WorkerRepository workerRepository;
     private final int leaseMinutes;
@@ -43,6 +45,7 @@ public class JobLifecycleService {
             CtCheckResultService ctCheckResultService,
             FingerprintIngestionService fingerprintIngestionService,
             TyposquatIngestionService typosquatIngestionService,
+            BucketBruteForceIngestionService bucketBruteForceIngestionService,
             TargetRepository targetRepository,
             WorkerRepository workerRepository,
             @Value("${bloodhound.jobqueue.lease-minutes:5}") int leaseMinutes) {
@@ -55,6 +58,7 @@ public class JobLifecycleService {
         this.ctCheckResultService = ctCheckResultService;
         this.fingerprintIngestionService = fingerprintIngestionService;
         this.typosquatIngestionService = typosquatIngestionService;
+        this.bucketBruteForceIngestionService = bucketBruteForceIngestionService;
         this.targetRepository = targetRepository;
         this.workerRepository = workerRepository;
         this.leaseMinutes = leaseMinutes;
@@ -98,8 +102,13 @@ public class JobLifecycleService {
         // data via rawMetadata (the full checked-candidate list, persisted
         // into typosquat_candidates), but - unlike TECH_FINGERPRINT - it DOES
         // emit its own findings via the normal list, since "is this candidate
-        // registered" needs no target history to decide. Every other module
-        // type's rawMetadata is ignored here.
+        // registered" needs no target history to decide. BUCKET_BRUTE_FORCE
+        // is the identical shape: stateless, emits its own findings via the
+        // normal list, and separately persists every (candidate, provider)
+        // it checked into bucket_brute_force_checks purely so the *next*
+        // deep scan's job payload can exclude names already tried recently
+        // (see ScanRunService#createDeepScan). Every other module type's
+        // rawMetadata is ignored here.
         List<FindingPayload> effectiveFindings;
         if ("SUBDOMAIN_ENUM".equals(job.moduleType())) {
             effectiveFindings = subdomainIngestionService.ingestAndSynthesizeFindings(job.targetId(), rawMetadata, findings);
@@ -123,6 +132,9 @@ public class JobLifecycleService {
             // needed) - this call is purely for its side effect of persisting the
             // full checked-candidate list into typosquat_candidates.
             typosquatIngestionService.ingest(job.targetId(), rawMetadata);
+            effectiveFindings = findings;
+        } else if ("BUCKET_BRUTE_FORCE".equals(job.moduleType())) {
+            bucketBruteForceIngestionService.ingest(job.targetId(), rawMetadata);
             effectiveFindings = findings;
         } else {
             effectiveFindings = findings;

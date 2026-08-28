@@ -100,9 +100,9 @@ export function AuthorizationPanel({ targetId }: { targetId: string }) {
       )}
       {!isAuthorized && (
         <p className="mb-3 text-sm text-slate-400">
-          Deep scans (full port range, service detection, NSE scripts) are meaningfully more intrusive than the
-          passive Tier 1 checks and only ever run against targets your organization has explicitly attested
-          authorization for.
+          Deep scans (full port range, service detection, NSE scripts, and brute-force guessing of cloud storage
+          bucket names related to this brand) are meaningfully more intrusive than the passive Tier 1 checks and
+          only ever run against targets your organization has explicitly attested authorization for.
         </p>
       )}
 
