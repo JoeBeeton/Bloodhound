@@ -47,10 +47,11 @@ import org.freedonia.bloodhound.server.findings.Finding;
  * brute-force approach across randomized inputs, not just the hand-derived formula.
  *
  * <p>One legitimate, provably-safe short-circuit: a finding whose category has no slot
- * in {@link ScoringEngine#CATEGORY_WEIGHTS} (WHOIS, WEB_APP) cannot affect any category
- * score no matter what else is in the findings list, since {@code scoreCategory} only
- * ever looks at findings matching its own category - removing it is skipped entirely
- * rather than paying for a no-op recomputation.
+ * in {@link ScoringEngine#CATEGORY_WEIGHTS} (WHOIS, BREACH, BRAND, COMPOUND) cannot affect
+ * any category score no matter what else is in the findings list, since {@code scoreCategory}
+ * only ever looks at findings matching its own category - removing it is skipped entirely
+ * rather than paying for a no-op recomputation. WEB_APP is NOT in this set - it carries real
+ * weight (15%, see CATEGORY_WEIGHTS) for ZAP/Nuclei findings.
  */
 public final class ScoreImpactCalculator {
 

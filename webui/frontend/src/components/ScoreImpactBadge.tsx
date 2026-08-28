@@ -2,11 +2,13 @@ import type { ScoreImpact } from "../lib/types";
 
 /**
  * "+2.34 if fixed" for a finding that genuinely moves the score, or an honest
- * "Doesn't affect score" for one in an unscored category (WHOIS, WEB_APP) -
- * deliberately not a bare "+0.00" for that case, since that could be misread
- * as "fixing this literally accomplishes nothing" rather than "this category
- * isn't part of the score." Renders nothing at all when the endpoint didn't
- * compute an impact (e.g. the historical run-diff view).
+ * "Doesn't affect score" for one in an unscored category (WHOIS, BREACH, BRAND,
+ * COMPOUND - see ScoreImpactCalculator's own short-circuit; WEB_APP carries real
+ * 15% weight, it's not in this set) - deliberately not a bare "+0.00" for that
+ * case, since that could be misread as "fixing this literally accomplishes
+ * nothing" rather than "this category isn't part of the score." Renders nothing
+ * at all when the endpoint didn't compute an impact (e.g. the historical
+ * run-diff view).
  */
 export function ScoreImpactBadge({ impact }: { impact: ScoreImpact | null | undefined }) {
   if (!impact) return null;
