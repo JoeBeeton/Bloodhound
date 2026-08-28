@@ -1,6 +1,16 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { colorForNode, colorForTargetType, hrefForNode, layoutGraph, PLATFORM_ENDPOINTS, type GraphData, type GraphNode } from "../lib/attackSurfaceGraph";
+import {
+  colorForNode,
+  colorForTargetType,
+  hrefForNode,
+  layoutGraph,
+  PLATFORM_ENDPOINTS,
+  selectNonOverlappingSubdomainLabels,
+  truncatedNodeLabel,
+  type GraphData,
+  type GraphNode,
+} from "../lib/attackSurfaceGraph";
 
 const WIDTH = 1200;
 const HEIGHT = 720;
@@ -30,6 +40,12 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
 
   const laidOut = useMemo(() => layoutGraph(data, WIDTH, HEIGHT), [data]);
   const subdomainLabelsVisible = viewBox.w < SUBDOMAIN_LABEL_ZOOM_THRESHOLD;
+  // Positions are fixed after layout (see layoutGraph's own comment) so this only needs
+  // recomputing when the node set itself changes, not on every zoom/pan.
+  const nonOverlappingSubdomainLabelIds = useMemo(
+    () => selectNonOverlappingSubdomainLabels(laidOut.nodes),
+    [laidOut.nodes],
+  );
 
   const nodesById = useMemo(() => new Map(laidOut.nodes.map((n) => [n.id, n])), [laidOut.nodes]);
 
@@ -177,7 +193,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
               node.kind === "database" ||
               node.kind === "webui" ||
               node.kind === "worker" ||
-              (node.kind === "subdomain" && subdomainLabelsVisible) ||
+              (node.kind === "subdomain" && subdomainLabelsVisible && nonOverlappingSubdomainLabelIds.has(node.id)) ||
               hoveredId === node.id;
             const isBusyWorker = node.kind === "worker" && node.workerStatus === "BUSY";
             return (
@@ -241,7 +257,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                       letterSpacing: node.kind === "hub" ? 2 : 0,
                     }}
                   >
-                    {node.label.length > 28 ? node.label.slice(0, 26) + "…" : node.label}
+                    {truncatedNodeLabel(node.label)}
                   </text>
                 )}
                 {/* hostname:port - a small always-visible second line under platform nodes (hub/database/webui/worker), per the request to surface every service's real endpoint on the map. */}

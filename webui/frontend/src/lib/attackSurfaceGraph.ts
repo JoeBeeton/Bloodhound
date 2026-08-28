@@ -228,6 +228,47 @@ export function hrefForNode(node: GraphNode): string | undefined {
   return undefined;
 }
 
+/** Truncation shared between the actual label text rendered (AttackSurfaceGraph) and the width
+ * estimate used to decide which labels fit (selectNonOverlappingSubdomainLabels below) - the
+ * two need to agree, or the collision math would be sized against text that isn't what's drawn. */
+export function truncatedNodeLabel(label: string): string {
+  return label.length > 28 ? label.slice(0, 26) + "…" : label;
+}
+
+/** Rough JetBrains Mono advance width per character at the 8px font-size subdomain labels
+ * render at (same coordinate units as node positions, since the whole SVG scales via viewBox) -
+ * an estimate for collision purposes only, not real text layout. */
+const SUBDOMAIN_LABEL_CHAR_WIDTH = 4.8;
+const SUBDOMAIN_LABEL_HEIGHT = 10;
+
+/**
+ * Which subdomain nodes get their name label rendered once zoomed in far enough to show them at
+ * all - greedily keeps the first (in node order) whose estimated label rectangle doesn't overlap
+ * an already-placed one, so a tight cluster reads as "some names, cleanly spaced" instead of an
+ * illegible pile of overlapping text. A skipped label's node is still visible as a plain dot, and
+ * hovering it always reveals its name regardless (AttackSurfaceGraph's separate hover branch).
+ */
+export function selectNonOverlappingSubdomainLabels(nodes: GraphNode[]): Set<string> {
+  const placed: { x1: number; x2: number; y1: number; y2: number }[] = [];
+  const visible = new Set<string>();
+  for (const node of nodes) {
+    if (node.kind !== "subdomain" || node.x == null || node.y == null) continue;
+    const label = truncatedNodeLabel(node.label);
+    const width = label.length * SUBDOMAIN_LABEL_CHAR_WIDTH;
+    const labelY = node.y + node.radius + 10;
+    const x1 = node.x - width / 2;
+    const x2 = node.x + width / 2;
+    const y1 = labelY - SUBDOMAIN_LABEL_HEIGHT / 2;
+    const y2 = labelY + SUBDOMAIN_LABEL_HEIGHT / 2;
+    const overlaps = placed.some((r) => x1 < r.x2 && x2 > r.x1 && y1 < r.y2 && y2 > r.y1);
+    if (!overlaps) {
+      placed.push({ x1, x2, y1, y2 });
+      visible.add(node.id);
+    }
+  }
+  return visible;
+}
+
 /**
  * Runs d3-force to completion synchronously and returns the same node array with x/y populated.
  * forceX/forceY per cluster gives the layout real structure instead of a directionless blob:
