@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
+import { CopyButton } from "../components/CopyButton";
 import { ErrorState } from "../components/ErrorState";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
@@ -155,12 +156,7 @@ export function AdminUsersPage() {
             <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">
               {createdUser.temporaryPassword}
             </code>
-            <button
-              onClick={() => navigator.clipboard?.writeText(createdUser.temporaryPassword)}
-              className="shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
-            >
-              Copy
-            </button>
+            <CopyButton value={createdUser.temporaryPassword} />
           </div>
           <p className="mb-4 font-mono text-xs text-severity-critical">
             This password is shown once and cannot be retrieved again. Relay it to {createdUser.user.displayName}{" "}
