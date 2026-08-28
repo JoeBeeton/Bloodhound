@@ -1,4 +1,5 @@
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { GRADE_BANDS } from "../lib/gradeBands";
 import type { ScoreSnapshot } from "../lib/types";
 
 /** `compact`: no axes/grid/border, smaller height - for the dashboard hero sparkline, which just needs "shape of the trend", not a fully readable chart (the full one is one click away on the target detail page). */
@@ -51,6 +52,25 @@ export function ScoreTrendChart({
             CompareTrendChart, found via Milestone 9's real screenshot review. */}
         <LineChart data={data} margin={{ top: 8, right: 20, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.1)" />
+          {GRADE_BANDS.map((band) => (
+            <ReferenceArea
+              key={band.label}
+              y1={band.y1}
+              y2={band.y2}
+              fill={band.color}
+              fillOpacity={band.opacity}
+              stroke="none"
+              ifOverflow="extendDomain"
+              label={{
+                value: band.label,
+                position: "insideLeft",
+                fill: band.color,
+                fillOpacity: 0.5,
+                fontSize: 10,
+                fontFamily: "JetBrains Mono, monospace",
+              }}
+            />
+          ))}
           <XAxis dataKey="label" stroke="#7a8aa0" fontSize={11} fontFamily="JetBrains Mono, monospace" />
           <YAxis domain={[0, 100]} stroke="#7a8aa0" fontSize={11} fontFamily="JetBrains Mono, monospace" width={40} />
           <Tooltip
