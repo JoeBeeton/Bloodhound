@@ -7,6 +7,7 @@ const CATEGORY_LABELS: Record<ScoreCategory, string> = {
   NETWORK: "Network",
   HEADERS: "Headers",
   SUBDOMAIN_HYGIENE: "Subdomain hygiene",
+  WEB_APP: "Web app",
 };
 
 /** Same A/B/C/D/F thresholds the backend grades on (>=90/80/70/60), applied continuously for the bar fill color. */
