@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
@@ -38,23 +38,11 @@ export function AdminRulesCatalogPage() {
   return (
     <Shell>
       <div className="w-full max-w-4xl text-left">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
-            <h1 className="font-display text-2xl font-bold text-neon-cyan">Rules catalog</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link to="/admin/users" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              Users →
-            </Link>
-            <Link to="/admin/sso" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              SSO →
-            </Link>
-            <Link to="/dashboard" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-              ← Dashboard
-            </Link>
-          </div>
+        <div className="mb-2">
+          <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
+          <h1 className="font-display text-2xl font-bold text-neon-cyan">Rules catalog</h1>
         </div>
+        <AdminSubNav />
 
         {rulesQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading rules…</p>}
         {rulesQuery.isError && <ErrorState message="Failed to load the rules catalog." onRetry={() => rulesQuery.refetch()} />}
