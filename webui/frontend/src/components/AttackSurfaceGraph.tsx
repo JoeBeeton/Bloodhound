@@ -5,6 +5,12 @@ import { colorForNode, colorForTargetType, hrefForNode, layoutGraph, PLATFORM_EN
 const WIDTH = 1200;
 const HEIGHT = 720;
 
+/** Subdomain names stay hidden at the default overview zoom - hundreds of them packed around
+ * a busy target would be unreadable clutter - and appear once zoomed in past ~1.8x (viewBox
+ * width below this), where there's actually room to read them. viewBox.w IS the zoom level
+ * here (see handleWheel): it shrinks as you zoom in, grows as you zoom out. */
+const SUBDOMAIN_LABEL_ZOOM_THRESHOLD = WIDTH * 0.55;
+
 /**
  * Renders an already-shaped GraphData as a force-directed SVG map: central-server at the hub,
  * the platform's own topology (postgres, webui, live workers) clustered to one side, and every
@@ -23,6 +29,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
   const [isPanning, setIsPanning] = useState(false);
 
   const laidOut = useMemo(() => layoutGraph(data, WIDTH, HEIGHT), [data]);
+  const subdomainLabelsVisible = viewBox.w < SUBDOMAIN_LABEL_ZOOM_THRESHOLD;
 
   const nodesById = useMemo(() => new Map(laidOut.nodes.map((n) => [n.id, n])), [laidOut.nodes]);
 
@@ -170,6 +177,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
               node.kind === "database" ||
               node.kind === "webui" ||
               node.kind === "worker" ||
+              (node.kind === "subdomain" && subdomainLabelsVisible) ||
               hoveredId === node.id;
             const isBusyWorker = node.kind === "worker" && node.workerStatus === "BUSY";
             return (
@@ -316,6 +324,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         <LegendRow color="#a78bfa" label="Platform" />
         <LegendRow color="#ffb800" label="Worker busy" />
         <p className="mt-1 text-slate-600">scroll to zoom · drag to pan</p>
+        <p className="text-slate-600">zoom in to reveal subdomain names</p>
       </div>
     </div>
   );

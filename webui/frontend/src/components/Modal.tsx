@@ -15,12 +15,12 @@ export function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-void/80 px-4 backdrop-blur-sm"
+      className="animate-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-void/80 px-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[85vh] overflow-y-auto rounded-lg border border-neon-cyan/30 bg-panel p-5 shadow-[0_0_30px_rgba(0,240,255,0.1)]`}
+        className={`animate-modal-panel w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[85vh] overflow-y-auto rounded-lg border border-neon-cyan/30 bg-panel p-5 shadow-[0_0_30px_rgba(0,240,255,0.1)]`}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-display text-lg font-bold text-neon-cyan">{title}</h2>
