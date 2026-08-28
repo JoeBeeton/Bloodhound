@@ -244,6 +244,66 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void actuatorThreaddumpLoggersIndex_flaggedHigh() {
+        String threaddumpBody = "{\"threads\":[{\"threadName\":\"main\"}]}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ACTUATOR_THREADDUMP",
+                new ProbeResponse(200, "application/json", (long) threaddumpBody.length(), threaddumpBody)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_ACTUATOR_THREADDUMP");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+        });
+    }
+
+    @Test
+    void actuatorHealth_actuatorContentType_flaggedInfo() {
+        String body = "{}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ACTUATOR_HEALTH",
+                new ProbeResponse(200, "application/vnd.spring-boot.actuator.v3+json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_ACTUATOR_HEALTH");
+            assertThat(f.severity().name()).isEqualTo("INFO");
+        });
+    }
+
+    @Test
+    void actuatorHealth_plainJsonWithStatusUp_stillFlaggedViaBodyFallback() {
+        String body = "{\"status\":\"UP\"}";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_ACTUATOR_HEALTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).contains("EXPOSURE_ACTUATOR_HEALTH");
+    }
+
+    @Test
+    void actuatorInfo_actuatorContentType_flaggedInfo() {
+        String body = "{\"build\":{\"version\":\"1.0.0\"}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ACTUATOR_INFO",
+                new ProbeResponse(200, "application/vnd.spring-boot.actuator.v3+json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_ACTUATOR_INFO");
+            assertThat(f.severity().name()).isEqualTo("INFO");
+        });
+    }
+
+    /**
+     * Unlike health (which has the "status":"UP" body fallback), an empty-ish info body has no
+     * reliable content-based signature on its own - a generic API coincidentally returning "{}" on
+     * plain application/json must not be flagged just because it differs from the baseline body.
+     */
+    @Test
+    void actuatorInfo_plainJsonContentType_notFlagged() {
+        String body = "{}";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_ACTUATOR_INFO", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_ACTUATOR_INFO");
+    }
+
+    @Test
     void securityTxtPresent_flaggedInfoAsPositiveSignal() {
         String body = "Contact: mailto:security@example.com\nExpires: 2027-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(

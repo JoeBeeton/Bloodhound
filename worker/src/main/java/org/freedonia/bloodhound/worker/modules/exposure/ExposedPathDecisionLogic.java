@@ -92,6 +92,16 @@ public final class ExposedPathDecisionLogic {
             findings.add(finding("EXPOSURE_ACTUATOR_INDEX", hostname, r.get("EXPOSURE_ACTUATOR_INDEX")));
         }
 
+        // Deliberately NOT gated by anyActuatorSubpathFired like the bare index above: health/info being
+        // reachable doesn't make the index finding redundant (or vice versa) - each is independently
+        // useful, and these two are reported at INFO severity precisely because they're near-universally
+        // intentional (load balancer health checks, build-info banners), unlike the rest of the actuator
+        // surface.
+        addIfMatches(findings, hostname, r, "EXPOSURE_ACTUATOR_HEALTH", baselineBody,
+                b -> isActuatorContentType(r.get("EXPOSURE_ACTUATOR_HEALTH")) || looksLikeActuatorHealthBody(b));
+        addIfMatches(findings, hostname, r, "EXPOSURE_ACTUATOR_INFO", baselineBody,
+                b -> isActuatorContentType(r.get("EXPOSURE_ACTUATOR_INFO")));
+
         if (addIfMatches(findings, hostname, r, "EXPOSURE_GIT_CONFIG", baselineBody,
                 b -> b.contains("[core]") && b.contains("repositoryformatversion"))) {
             addSecretScanFinding(findings, hostname, r.get("EXPOSURE_GIT_CONFIG"), ".git/config");
@@ -142,6 +152,31 @@ public final class ExposedPathDecisionLogic {
             return false; // soft-404: identical to what a nonexistent path returns
         }
         return positive.test(response.body());
+    }
+
+    /**
+     * Spring Boot Actuator, by default, answers with the {@code
+     * vnd.spring-boot.actuator.v2+json}/{@code v3+json} content type when no
+     * explicit {@code Accept} header is sent (this codebase never sends
+     * one) - a signature specific to actuator itself, not just "this looks
+     * like JSON that happens to contain a status field." Used for
+     * health/info, where the body alone (an unauthenticated {@code
+     * {"status":"UP"}} or even {@code {}}) is otherwise too generic a
+     * signature to trust on its own.
+     */
+    private static boolean isActuatorContentType(ProbeResponse response) {
+        return response != null
+                && response.status() == 200
+                && response.contentType() != null
+                && response.contentType().toLowerCase(Locale.ROOT).contains("vnd.spring-boot.actuator");
+    }
+
+    /** Fallback for actuator/health when content negotiation still returned plain application/json. */
+    private static boolean looksLikeActuatorHealthBody(String body) {
+        return body.contains("\"status\":\"UP\"")
+                || body.contains("\"status\":\"DOWN\"")
+                || body.contains("\"status\":\"OUT_OF_SERVICE\"")
+                || body.contains("\"status\":\"UNKNOWN\"");
     }
 
     private static boolean isHeapdumpPositive(ProbeResponse response) {
@@ -257,15 +292,23 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_ACTUATOR_CONFIGPROPS", new RuleMeta(Severity.HIGH,
                     "Spring Boot Actuator configprops endpoint exposed",
                     "The /actuator/configprops endpoint is publicly reachable and can disclose configuration secrets.")),
-            Map.entry("EXPOSURE_ACTUATOR_THREADDUMP", new RuleMeta(Severity.MEDIUM,
+            Map.entry("EXPOSURE_ACTUATOR_THREADDUMP", new RuleMeta(Severity.HIGH,
                     "Spring Boot Actuator thread dump endpoint exposed",
                     "The /actuator/threaddump endpoint is publicly reachable, disclosing JVM thread state.")),
-            Map.entry("EXPOSURE_ACTUATOR_LOGGERS", new RuleMeta(Severity.MEDIUM,
+            Map.entry("EXPOSURE_ACTUATOR_LOGGERS", new RuleMeta(Severity.HIGH,
                     "Spring Boot Actuator loggers endpoint exposed",
                     "The /actuator/loggers endpoint is publicly reachable.")),
-            Map.entry("EXPOSURE_ACTUATOR_INDEX", new RuleMeta(Severity.MEDIUM,
+            Map.entry("EXPOSURE_ACTUATOR_INDEX", new RuleMeta(Severity.HIGH,
                     "Spring Boot Actuator index exposed",
                     "The base /actuator endpoint is publicly reachable and lists management sub-endpoints.")),
+            Map.entry("EXPOSURE_ACTUATOR_HEALTH", new RuleMeta(Severity.INFO,
+                    "Spring Boot Actuator health endpoint exposed",
+                    "The /actuator/health endpoint is publicly reachable. This is commonly intentional (used by "
+                            + "load balancers/orchestrators for health checks) and is reported for visibility only.")),
+            Map.entry("EXPOSURE_ACTUATOR_INFO", new RuleMeta(Severity.INFO,
+                    "Spring Boot Actuator info endpoint exposed",
+                    "The /actuator/info endpoint is publicly reachable. This is commonly intentional (build/version "
+                            + "banners) and is reported for visibility only.")),
             Map.entry("EXPOSURE_GIT_CONFIG", new RuleMeta(Severity.CRITICAL,
                     "Exposed .git/config",
                     "The .git/config file is publicly readable, often enabling full source repository reconstruction.")),
