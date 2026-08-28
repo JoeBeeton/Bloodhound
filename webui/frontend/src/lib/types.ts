@@ -51,13 +51,17 @@ export interface Target {
   tier1Grade: Grade | null;
 }
 
-export const SCORE_CATEGORIES = ["EXPOSURE", "TLS", "DNS", "NETWORK", "HEADERS", "SUBDOMAIN_HYGIENE"] as const;
+/** Mirrors ScoringEngine.CATEGORY_WEIGHTS on the backend exactly - WEB_APP (ZAP/Nuclei
+ * findings) carries real weight (15%) same as the other six, it's just Tier2-only (see
+ * Target.tier1OverallScore's own doc comment) so it only ever shows up for authorized/owned
+ * targets. Confirmed live: a real snapshot's categoryScores includes a WEB_APP key. */
+export const SCORE_CATEGORIES = ["EXPOSURE", "TLS", "DNS", "NETWORK", "HEADERS", "SUBDOMAIN_HYGIENE", "WEB_APP"] as const;
 export type ScoreCategory = (typeof SCORE_CATEGORIES)[number];
 
 /**
- * Every category a real finding can carry - SCORE_CATEGORIES above (the 6 that
+ * Every category a real finding can carry - SCORE_CATEGORIES above (the 7 that
  * factor into ScoringEngine's weight table) plus the categories that deliberately
- * don't (WHOIS, BREACH, WEB_APP, BRAND, COMPOUND - see ScoringEngineTest's
+ * don't (WHOIS, BREACH, BRAND, COMPOUND - see ScoringEngineTest's
  * "unmapped category" precedent). Used for findings-filter UI, not scoring.
  */
 export const FINDING_CATEGORIES = [
