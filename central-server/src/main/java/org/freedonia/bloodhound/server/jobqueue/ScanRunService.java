@@ -1,10 +1,14 @@
 package org.freedonia.bloodhound.server.jobqueue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceCheckRepository;
 import org.freedonia.bloodhound.server.compound.CompoundRiskAnalysisService;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.notification.NotificationService;
@@ -88,6 +92,25 @@ public class ScanRunService {
     private static final List<String> TIER2_MODULE_TYPES = List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN");
 
     /**
+     * Tier 2 module types that are properties of the target's *brand*, not of any one host -
+     * dispatched once per target (payload carries an exclusion list, see below), never fanned
+     * out across {@link #TIER2_SUBDOMAIN_CAP} hosts the way {@link #TIER2_MODULE_TYPES} is.
+     * A guessed bucket name isn't tied to any particular subdomain, so running the identical
+     * candidate list once per host (up to 16 times) would just repeat the same requests for no
+     * benefit - the same "domain-wide, not per-host" reasoning that excludes DNS_POSTURE/WHOIS
+     * from {@link #SUBDOMAIN_FANOUT_MODULE_TYPES} above.
+     */
+    private static final List<String> TIER2_TARGET_SCOPED_MODULE_TYPES = List.of("BUCKET_BRUTE_FORCE");
+
+    /**
+     * How recently a (candidate, provider) pair must have been checked to be excluded from the
+     * next BUCKET_BRUTE_FORCE job's payload - long enough that re-running a deep scan doesn't
+     * re-issue the same few hundred requests against AWS/GCS/etc. every time, short enough that
+     * a bucket created or made public after the last check is still eventually found.
+     */
+    private static final Duration BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN = Duration.ofDays(14);
+
+    /**
      * Meaningfully tighter than {@link #TIER1_SUBDOMAIN_CAP}: a single deep
      * port scan or ZAP active scan against ONE host can already take several
      * minutes, so a target with dozens of subdomains would turn a deep scan
@@ -107,6 +130,7 @@ public class ScanRunService {
     private final TargetRepository targetRepository;
     private final FindingRepository findingRepository;
     private final NotificationService notificationService;
+    private final BucketBruteForceCheckRepository bucketBruteForceCheckRepository;
 
     public ScanRunService(
             ScanRunRepository scanRunRepository,
@@ -117,7 +141,8 @@ public class ScanRunService {
             ObjectMapper objectMapper,
             TargetRepository targetRepository,
             FindingRepository findingRepository,
-            NotificationService notificationService) {
+            NotificationService notificationService,
+            BucketBruteForceCheckRepository bucketBruteForceCheckRepository) {
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
         this.scoreSnapshotService = scoreSnapshotService;
@@ -127,6 +152,7 @@ public class ScanRunService {
         this.targetRepository = targetRepository;
         this.findingRepository = findingRepository;
         this.notificationService = notificationService;
+        this.bucketBruteForceCheckRepository = bucketBruteForceCheckRepository;
     }
 
     public ScanRun createManualScan(UUID targetId, UUID triggeredByUserId) {
@@ -221,6 +247,8 @@ public class ScanRunService {
         hosts.addAll(fanout.selectedHostnames());
         TIER2_MODULE_TYPES.forEach(moduleType ->
                 hosts.forEach(host -> scanJobRepository.insert(run.id(), targetId, moduleType, hostPayload(host))));
+        TIER2_TARGET_SCOPED_MODULE_TYPES.forEach(
+                moduleType -> scanJobRepository.insert(run.id(), targetId, moduleType, targetScopedPayload(targetId)));
         subdomainRepository.markScanned(targetId, fanout.selectedHostnames());
         notifyScanStarted(run);
         return run;
@@ -232,6 +260,26 @@ public class ScanRunService {
             return objectMapper.writeValueAsString(Map.of("host", host));
         } catch (Exception e) {
             throw new IllegalStateException("failed to serialize a plain single-hostname job payload", e);
+        }
+    }
+
+    /**
+     * The payload for a {@link #TIER2_TARGET_SCOPED_MODULE_TYPES} job - no host at all (the
+     * module reads {@code context.hostname()} directly, the target's own root), just an
+     * exclusion list of "candidateName|provider" keys already checked within {@link
+     * #BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN} (see BucketBruteForceCheckRepository), so a re-run
+     * skips names already tried recently instead of re-issuing the same requests every time.
+     */
+    private String targetScopedPayload(UUID targetId) {
+        Set<String> excludeKeys = bucketBruteForceCheckRepository.findRecentlyCheckedKeys(
+                targetId, Instant.now().minus(BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN));
+        try {
+            return objectMapper.writeValueAsString(Map.of("excludeKeys", excludeKeys));
+        } catch (Exception e) {
+            // Falls back to "check everything" rather than failing job creation over a
+            // serialization problem in an optional exclusion list - worse for politeness this
+            // one run, never worse for correctness.
+            return "{}";
         }
     }
 

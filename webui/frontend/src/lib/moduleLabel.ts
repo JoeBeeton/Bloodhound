@@ -17,6 +17,13 @@ const MODULE_LABELS: Record<string, string> = {
   PORT_SCAN_DEEP: "Deep Port Scan",
   ZAP_ACTIVE_SCAN: "Active Scan (OWASP ZAP)",
   CVE_CORRELATION: "CVE / KEV Correlation",
+  BUCKET_BRUTE_FORCE: "Cloud Bucket Brute Force",
+  // Pre-existing gaps, backfilled while adding the entry above - both already degraded
+  // gracefully to their raw enum string rather than rendering blank, but there's no reason
+  // for them to stay unmapped now that this file is already being touched.
+  NUCLEI_SCAN: "Template Vulnerability Scan (Nuclei)",
+  BREACH_CORRELATION: "Breach Correlation",
+  DOCUMENT_METADATA: "Document Metadata",
 };
 
 export function moduleLabel(moduleType: string | null | undefined): string {

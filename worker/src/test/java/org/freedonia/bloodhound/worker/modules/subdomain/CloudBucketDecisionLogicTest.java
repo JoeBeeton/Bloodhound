@@ -92,4 +92,30 @@ class CloudBucketDecisionLogicTest {
     void nullBody_notListable() {
         assertThat(CloudBucketDecisionLogic.isPubliclyListable(200, null)).isFalse();
     }
+
+    @Test
+    void directBucketUrl_buildsCorrectEndpointPerProvider() {
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.AWS_S3, "acme-backup"))
+                .isEqualTo("https://acme-backup.s3.amazonaws.com/");
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.GCS, "acme-backup"))
+                .isEqualTo("https://storage.googleapis.com/acme-backup");
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.DIGITALOCEAN_SPACES, "acme-backup"))
+                .isEqualTo("https://acme-backup.nyc3.digitaloceanspaces.com/");
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.LINODE, "acme-backup"))
+                .isEqualTo("https://acme-backup.us-east-1.linodeobjects.com/");
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.SCALEWAY, "acme-backup"))
+                .isEqualTo("https://acme-backup.s3.fr-par.scw.cloud/");
+    }
+
+    @Test
+    void rateLimitKeyFor_isTheSharedProviderHost_notThePerCandidateHostname() {
+        // Every candidate resolves to a distinct hostname on the same shared provider
+        // infrastructure - the rate-limit key must be the provider host, not the candidate's
+        // own generated hostname, or a brute-force run could burst far more traffic at one
+        // provider than a per-hostname limiter would ever catch.
+        assertThat(CloudBucketDecisionLogic.rateLimitKeyFor(CloudBucketDecisionLogic.Provider.AWS_S3))
+                .isEqualTo("s3.amazonaws.com");
+        assertThat(CloudBucketDecisionLogic.rateLimitKeyFor(CloudBucketDecisionLogic.Provider.GCS))
+                .isEqualTo("storage.googleapis.com");
+    }
 }

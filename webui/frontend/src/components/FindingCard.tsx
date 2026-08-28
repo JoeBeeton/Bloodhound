@@ -12,7 +12,9 @@ const SEVERITY_STYLES: Record<Severity, string> = {
 // Tier 2 module_types don't all share the "_DEEP" suffix (ZAP_ACTIVE_SCAN doesn't),
 // so this can't just be a string-suffix check - keep the actual list here rather
 // than duplicating central-server's TIER2_MODULE_TYPES constant across the wire.
-const TIER2_MODULE_TYPES = new Set(["PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN"]);
+// NUCLEI_SCAN and BUCKET_BRUTE_FORCE are Tier 2 too - see
+// ScanRunService.TIER2_MODULE_TYPES/TIER2_TARGET_SCOPED_MODULE_TYPES.
+const TIER2_MODULE_TYPES = new Set(["PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "BUCKET_BRUTE_FORCE"]);
 function isTier2Finding(moduleType: string): boolean {
   return TIER2_MODULE_TYPES.has(moduleType);
 }

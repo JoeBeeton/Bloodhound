@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceIngestionService;
 import org.freedonia.bloodhound.server.ctmonitor.CtCheckResultService;
 import org.freedonia.bloodhound.server.findings.FindingPayload;
 import org.freedonia.bloodhound.server.findings.ResultIngestionService;
@@ -37,12 +38,14 @@ class JobLifecycleServiceTest {
     private final CtCheckResultService ctCheckResultService = mock(CtCheckResultService.class);
     private final FingerprintIngestionService fingerprintIngestionService = mock(FingerprintIngestionService.class);
     private final TyposquatIngestionService typosquatIngestionService = mock(TyposquatIngestionService.class);
+    private final BucketBruteForceIngestionService bucketBruteForceIngestionService =
+            mock(BucketBruteForceIngestionService.class);
     private final TargetRepository targetRepository = mock(TargetRepository.class);
     private final WorkerRepository workerRepository = mock(WorkerRepository.class);
     private final JobLifecycleService service = new JobLifecycleService(
             scanJobRepository, scanJobAttemptRepository, scanRunService, resultIngestionService,
             subdomainIngestionService, whoisIngestionService, ctCheckResultService, fingerprintIngestionService,
-            typosquatIngestionService, targetRepository, workerRepository, 5);
+            typosquatIngestionService, bucketBruteForceIngestionService, targetRepository, workerRepository, 5);
 
     private final UUID jobId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

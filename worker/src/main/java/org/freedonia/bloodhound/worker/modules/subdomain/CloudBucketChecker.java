@@ -15,6 +15,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 
 /**
  * Fetch side of cloud-bucket public-listing exposure detection. Same shape
@@ -84,7 +85,8 @@ class CloudBucketChecker {
             // subdomain's CNAME, never validated the way a user-submitted target hostname
             // is - see SafeAddressValidator's javadoc.
             SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
-            HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
+            HttpRequest request =
+                    HttpRequest.newBuilder(uri).timeout(TIMEOUT).header("User-Agent", ScanUserAgent.VALUE).GET().build();
             // ofInputStream()+readCappedUtf8, not ofString(): a security review found ofString()
             // buffers the ENTIRE response into memory with no size limit - a scanned target
             // could stream gigabytes within the request timeout and exhaust the shared worker
