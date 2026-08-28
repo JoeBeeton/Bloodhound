@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -84,7 +85,11 @@ public class NucleiFetcher {
                 "-etags", "dos,fuzz",
                 "-timeout", "8",
                 "-rate-limit", "50",
-                "-c", "25");
+                "-c", "25",
+                // -H, not a shell string: one argv element ("Name: Value"), identifies every
+                // request nuclei's template engine fires the same way every other outbound
+                // request this platform makes does - see ScanUserAgent.
+                "-H", "User-Agent: " + ScanUserAgent.VALUE);
         Process process = null;
         try {
             final Process started = pb.start();

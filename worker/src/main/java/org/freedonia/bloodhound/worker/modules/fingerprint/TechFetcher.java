@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -85,7 +86,7 @@ public class TechFetcher {
                 client,
                 url,
                 Duration.ofSeconds(8),
-                "Bloodhound-ASM/1.0 (+passive surface scan)",
+                ScanUserAgent.VALUE,
                 HttpResponse.BodyHandlers.ofInputStream(),
                 MAX_REDIRECTS);
     }

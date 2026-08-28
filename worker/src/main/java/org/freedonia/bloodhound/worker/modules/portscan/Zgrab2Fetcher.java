@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -51,8 +52,13 @@ public class Zgrab2Fetcher {
     }
 
     public String httpJson(String ip, int port, boolean tls) throws ScanModuleException {
+        // --user-agent: the http submodule is the only zgrab2 mode that speaks HTTP at all
+        // (banner grabs below are raw TCP for self-announcing protocols with no header
+        // mechanism) - identifies this probe the same way every other outbound HTTP request
+        // this platform makes does, see ScanUserAgent.
         List<String> command = new ArrayList<>(List.of(
-                "zgrab2", "http", "-b", BLOCKLIST_FILE, "-p", String.valueOf(port), "--connect-timeout", "4s"));
+                "zgrab2", "http", "-b", BLOCKLIST_FILE, "-p", String.valueOf(port), "--connect-timeout", "4s",
+                "--user-agent", ScanUserAgent.VALUE));
         if (tls) {
             command.add("--use-https");
         }

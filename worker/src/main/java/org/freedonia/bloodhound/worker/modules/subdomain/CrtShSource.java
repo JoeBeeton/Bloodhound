@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.TreeSet;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.springframework.stereotype.Component;
 
 /**
@@ -47,7 +48,7 @@ public class CrtShSource implements SubdomainSource {
         URI uri = URI.create("https://crt.sh/?q=%25." + rootDomain + "&output=json");
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "Bloodhound-ASM/1.0 (+passive surface scan)")
+                .header("User-Agent", ScanUserAgent.VALUE)
                 .GET()
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

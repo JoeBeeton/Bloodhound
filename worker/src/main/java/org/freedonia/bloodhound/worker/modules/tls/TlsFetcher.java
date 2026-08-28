@@ -21,6 +21,7 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -191,7 +192,7 @@ public class TlsFetcher {
                     .build();
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://" + hostname + "/"))
                     .timeout(Duration.ofSeconds(8))
-                    .header("User-Agent", "Bloodhound-ASM/1.0 (+passive surface scan)")
+                    .header("User-Agent", ScanUserAgent.VALUE)
                     .GET()
                     .build();
             HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
