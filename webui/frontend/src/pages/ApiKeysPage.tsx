@@ -6,7 +6,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 
-interface ApiKeySummary {
+export interface ApiKeySummary {
   id: string;
   label: string;
   keyPrefix: string;
@@ -48,6 +48,29 @@ async function revokeKey(id: string): Promise<void> {
 }
 
 const DEFAULT_EXPIRY_DAYS = 90;
+
+/** A key sitting at "Active" right up until the instant it lapses gives no warning that an
+ * integration is about to break - this surfaces the same urgency the rest of the app already
+ * uses amber for (RUNNING scans, near-critical scores) once expiry is close enough to act on. */
+const EXPIRY_WARNING_DAYS = 14;
+
+function daysUntil(iso: string, now: number = Date.now()): number {
+  return Math.ceil((new Date(iso).getTime() - now) / (24 * 60 * 60 * 1000));
+}
+
+export function statusDisplay(key: ApiKeySummary, now: number = Date.now()): { label: string; className: string } {
+  if (key.revoked) return { label: "Revoked", className: "text-slate-500" };
+  if (key.expired) return { label: "Expired", className: "text-neon-amber" };
+  // Trust the server's `expired` flag as authoritative for "has it lapsed" - this is purely
+  // "is it lapsing soon", so a negative/zero remainder (clock skew, or expiresAt already
+  // passed but the server hasn't flagged it expired yet) falls back to plain "Active" rather
+  // than rendering a nonsensical negative day count.
+  const remaining = daysUntil(key.expiresAt, now);
+  if (remaining > 0 && remaining <= EXPIRY_WARNING_DAYS) {
+    return { label: `Active · ${remaining}d left`, className: "text-neon-amber" };
+  }
+  return { label: "Active", className: "text-neon-cyan" };
+}
 
 /** Self-service management of the caller's own read-only external API keys - any authenticated role, not admin-gated (a key only ever grants what its creator could already see). */
 export function ApiKeysPage() {
@@ -163,13 +186,10 @@ export function ApiKeysPage() {
                     <td className="py-2 text-slate-400">{new Date(k.expiresAt).toLocaleDateString()}</td>
                     <td className="py-2 text-slate-400">{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "Never"}</td>
                     <td className="py-2">
-                      {k.revoked ? (
-                        <span className="text-slate-500">Revoked</span>
-                      ) : k.expired ? (
-                        <span className="text-neon-amber">Expired</span>
-                      ) : (
-                        <span className="text-neon-cyan">Active</span>
-                      )}
+                      {(() => {
+                        const status = statusDisplay(k);
+                        return <span className={status.className}>{status.label}</span>;
+                      })()}
                     </td>
                     <td className="py-2 text-right">
                       {!k.revoked && !k.expired && (
