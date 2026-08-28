@@ -6,6 +6,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { moduleLabel } from "../lib/moduleLabel";
+import { groupJobsByModule, type JobGroup } from "../lib/scanJobs";
 import type { ScanJobAttempt, ScanJobStatus, ScanRunDetail } from "../lib/types";
 
 async function fetchRun(runId: string): Promise<ScanRunDetail> {
@@ -62,25 +63,6 @@ function AttemptHistory({ attempts }: { attempts: ScanJobAttempt[] }) {
       ))}
     </div>
   );
-}
-
-interface JobGroup {
-  moduleType: string;
-  jobs: ScanJobStatus[];
-}
-
-/** Tier 2 dispatches one job per authorized host (see ScanRunService#createDeepScan) - a
- * 15-subdomain target's deep scan is 3 modules * 16 hosts = 48 flat rows, which is unreadable
- * as one undifferentiated list. Tier 1's one-job-per-module scans (the common case) stay
- * completely unaffected: a group of size 1 renders exactly as a bare JobRow always has. */
-export function groupJobsByModule(jobs: ScanJobStatus[]): JobGroup[] {
-  const byType = new Map<string, ScanJobStatus[]>();
-  for (const j of jobs) {
-    const list = byType.get(j.moduleType) ?? [];
-    list.push(j);
-    byType.set(j.moduleType, list);
-  }
-  return Array.from(byType.entries()).map(([moduleType, groupJobs]) => ({ moduleType, jobs: groupJobs }));
 }
 
 function JobGroupSection({ group }: { group: JobGroup }) {

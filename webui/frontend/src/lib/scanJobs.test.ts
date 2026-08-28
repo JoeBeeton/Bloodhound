@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groupJobsByModule } from "./ScanDetailPage";
-import type { ScanJobStatus } from "../lib/types";
+import { groupJobsByModule } from "./scanJobs";
+import type { ScanJobStatus } from "./types";
 
 function job(moduleType: string, host: string | null = null, status = "COMPLETE"): ScanJobStatus {
   return {
