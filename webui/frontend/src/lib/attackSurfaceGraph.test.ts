@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildGraph, colorForNode, colorForTargetType, hrefForNode, SUBDOMAINS_PER_TARGET_CAP } from "./attackSurfaceGraph";
+import {
+  buildGraph,
+  colorForNode,
+  colorForTargetType,
+  hrefForNode,
+  selectNonOverlappingSubdomainLabels,
+  SUBDOMAINS_PER_TARGET_CAP,
+} from "./attackSurfaceGraph";
+import type { GraphNode } from "./attackSurfaceGraph";
 import type { Subdomain, Target, WorkerStatus } from "./types";
 
 function target(overrides: Partial<Target> = {}): Target {
@@ -270,5 +278,41 @@ describe("hrefForNode", () => {
     expect(hrefForNode({ id: "database", kind: "database", label: "POSTGRES", radius: 10 })).toBeUndefined();
     expect(hrefForNode({ id: "webui", kind: "webui", label: "WEBUI", radius: 9 })).toBeUndefined();
     expect(hrefForNode({ id: "worker:w1", kind: "worker", label: "w1", radius: 8 })).toBeUndefined();
+  });
+});
+
+function subdomainNode(id: string, x: number, y: number, label = id): GraphNode {
+  return { id, kind: "subdomain", label, radius: 5, x, y };
+}
+
+describe("selectNonOverlappingSubdomainLabels", () => {
+  it("keeps a single subdomain's label", () => {
+    const visible = selectNonOverlappingSubdomainLabels([subdomainNode("a", 0, 0)]);
+    expect(visible.has("a")).toBe(true);
+  });
+
+  it("keeps two subdomains' labels when they're far enough apart not to overlap", () => {
+    const visible = selectNonOverlappingSubdomainLabels([subdomainNode("a", 0, 0), subdomainNode("b", 500, 500)]);
+    expect(visible.has("a")).toBe(true);
+    expect(visible.has("b")).toBe(true);
+  });
+
+  it("drops the later node's label when two subdomains sit close enough for their labels to overlap", () => {
+    // Same label text, same y, 3px apart on x - their label rectangles are guaranteed to
+    // overlap regardless of the exact width estimate used.
+    const visible = selectNonOverlappingSubdomainLabels([
+      subdomainNode("a", 0, 0, "example.example.co.uk"),
+      subdomainNode("b", 3, 0, "example.example.co.uk"),
+    ]);
+    expect(visible.has("a")).toBe(true);
+    expect(visible.has("b")).toBe(false);
+  });
+
+  it("ignores non-subdomain nodes and nodes with no laid-out position", () => {
+    const visible = selectNonOverlappingSubdomainLabels([
+      { id: "target:t1", kind: "target", label: "example.com", radius: 12, x: 0, y: 0 },
+      { id: "sub:t1:no-pos", kind: "subdomain", label: "unpositioned.example.com", radius: 5 },
+    ]);
+    expect(visible.size).toBe(0);
   });
 });
