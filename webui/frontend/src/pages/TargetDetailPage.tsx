@@ -431,7 +431,11 @@ export function TargetDetailPage() {
         <h2 id="diff" className="mb-3 mt-10 scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
           Compare with previous scan
         </h2>
-        <FindingDiffView targetId={targetId} runId={scoreHistoryQuery.data?.at(-1)?.scanRunId} />
+        <FindingDiffView
+          targetId={targetId}
+          runId={scoreHistoryQuery.data?.at(-1)?.scanRunId}
+          onSelectFinding={setSelectedFinding}
+        />
       </div>
       {selectedFinding && <FindingDetailModal finding={selectedFinding} onClose={() => setSelectedFinding(null)} />}
     </Shell>

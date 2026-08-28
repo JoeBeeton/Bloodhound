@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../lib/apiClient";
 import type { Finding, FindingDiffResponse } from "../lib/types";
 import { ErrorState } from "./ErrorState";
+import { FindingCard } from "./FindingCard";
 
 async function fetchDiff(targetId: string, runId: string): Promise<FindingDiffResponse> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/runs/${runId}/diff?against=previous`);
@@ -20,7 +21,18 @@ async function fetchDiff(targetId: string, runId: string): Promise<FindingDiffRe
  * scanRunId - the parent page owns fetching that, this component just needs
  * somewhere to diff against.
  */
-export function FindingDiffView({ targetId, runId }: { targetId: string; runId: string | undefined }) {
+export function FindingDiffView({
+  targetId,
+  runId,
+  onSelectFinding,
+}: {
+  targetId: string;
+  runId: string | undefined;
+  /** Same FindingCard used in "Open findings" above renders here too - a diff entry deserves
+   * the same click-through-to-detail behavior as every other finding card on this page, not a
+   * dead-end summary. */
+  onSelectFinding: (finding: Finding) => void;
+}) {
   const [showUnchanged, setShowUnchanged] = useState(false);
   const diffQuery = useQuery({
     queryKey: ["diff", targetId, runId],
@@ -56,15 +68,15 @@ export function FindingDiffView({ targetId, runId }: { targetId: string; runId: 
         title="New findings"
         findings={diff.newFindings}
         emptyLabel="No new findings since the previous scan."
-        accent="border-severity-critical/50"
         titleColor="text-severity-critical"
+        onSelectFinding={onSelectFinding}
       />
       <DiffSection
         title="Resolved findings"
         findings={diff.resolvedFindings}
         emptyLabel="Nothing resolved since the previous scan."
-        accent="border-neon-cyan/50"
         titleColor="text-neon-cyan"
+        onSelectFinding={onSelectFinding}
       />
       <div>
         <button
@@ -78,9 +90,9 @@ export function FindingDiffView({ targetId, runId }: { targetId: string; runId: 
             title=""
             findings={diff.unchangedFindings}
             emptyLabel="—"
-            accent="border-slate-700"
             titleColor="text-slate-400"
             muted
+            onSelectFinding={onSelectFinding}
           />
         )}
       </div>
@@ -92,16 +104,16 @@ function DiffSection({
   title,
   findings,
   emptyLabel,
-  accent,
   titleColor,
   muted,
+  onSelectFinding,
 }: {
   title: string;
   findings: Finding[];
   emptyLabel: string;
-  accent: string;
   titleColor: string;
   muted?: boolean;
+  onSelectFinding: (finding: Finding) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? findings : findings.slice(0, DISPLAY_CAP);
@@ -117,14 +129,8 @@ function DiffSection({
       ) : (
         <div className="flex flex-col gap-2">
           {visible.map((f) => (
-            <div key={f.id} className={`rounded-lg border ${accent} bg-panel/60 p-3 ${muted ? "opacity-60" : ""}`}>
-              <div className="mb-1 flex items-center justify-between gap-3">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                  {f.severity} · {f.category}
-                </span>
-              </div>
-              <p className="font-mono text-sm text-slate-200">{f.title}</p>
-              <p className="mt-1 font-mono text-xs text-slate-400">asset: {f.affectedAsset}</p>
+            <div key={f.id} className={muted ? "opacity-60" : ""}>
+              <FindingCard finding={f} onSelect={() => onSelectFinding(f)} />
             </div>
           ))}
           {findings.length > DISPLAY_CAP && (
