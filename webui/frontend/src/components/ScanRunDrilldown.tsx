@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { ScanRunDetail } from "../lib/types";
+import { groupJobsByModule } from "../lib/scanJobs";
+import type { ScanJobStatus, ScanRunDetail } from "../lib/types";
 
 const STATUS_STYLES: Record<string, string> = {
   COMPLETE: "text-neon-cyan",
@@ -10,17 +11,29 @@ const STATUS_STYLES: Record<string, string> = {
   RUNNING: "text-neon-amber",
 };
 
+/** The one error detail worth surfacing inline for a module group - the failure that hasn't
+ * exhausted its retries yet is still "in progress, might resolve itself" (matches
+ * ScanDetailPage's own JobGroupSection convention), so a genuinely FAILED job's message beats
+ * one that's merely between retry attempts. */
+function representativeFailure(jobs: ScanJobStatus[]): ScanJobStatus | undefined {
+  return jobs.find((j) => j.status === "FAILED" && j.errorDetail) ?? jobs.find((j) => j.status === "FAILED");
+}
+
 /**
  * A run only "completed" in the loose sense that every module reached a
  * terminal state - PARTIAL_FAILURE means at least one didn't. This is the
  * per-module breakdown showing exactly which ones and why, using
  * scan_jobs.error_detail (populated by the job-failure path since Phase 1
- * Milestone 2, but never surfaced anywhere in the UI until now).
+ * Milestone 2, but never surfaced anywhere in the UI until now). Grouped by
+ * moduleType (see groupJobsByModule) rather than one row per job - a Tier 2
+ * deep scan dispatches one job per host, so a failed 16-host module would
+ * otherwise dump 16 near-identical rows into this inline summary.
  */
 export function ScanRunDrilldown({ run }: { run: ScanRunDetail }) {
   const [expanded, setExpanded] = useState(false);
-  const failedJobs = run.jobs.filter((j) => j.status === "FAILED");
-  if (failedJobs.length === 0) {
+  const groups = groupJobsByModule(run.jobs);
+  const failedGroups = groups.filter((g) => g.jobs.some((j) => j.status === "FAILED"));
+  if (failedGroups.length === 0) {
     return null;
   }
 
@@ -32,24 +45,38 @@ export function ScanRunDrilldown({ run }: { run: ScanRunDetail }) {
       >
         {expanded
           ? "Hide details ▴"
-          : `Why? (${failedJobs.length} module${failedJobs.length === 1 ? "" : "s"} failed) ▾`}
+          : `Why? (${failedGroups.length} module${failedGroups.length === 1 ? "" : "s"} failed) ▾`}
       </button>
       {expanded && (
         <div className="mt-3 space-y-2 rounded-lg border border-severity-critical/30 bg-void/60 p-4 font-mono text-xs">
-          {run.jobs.map((job) => (
-            <div key={job.id} className="border-b border-slate-800 pb-2 last:border-0 last:pb-0">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-slate-300">{job.moduleType}</span>
-                <span className={STATUS_STYLES[job.status] ?? "text-slate-400"}>{job.status}</span>
-              </div>
-              {job.status === "FAILED" && (
-                <div className="mt-1 text-slate-400">
-                  Failed after {job.attemptCount}/{job.maxAttempts} attempts
-                  {job.errorDetail ? `: ${job.errorDetail}` : "."}
+          {groups.map((group) => {
+            const failedInGroup = group.jobs.filter((j) => j.status === "FAILED");
+            const status = failedInGroup.length > 0 ? "FAILED" : group.jobs[0].status;
+            const failure = representativeFailure(group.jobs);
+            return (
+              <div key={group.moduleType} className="border-b border-slate-800 pb-2 last:border-0 last:pb-0">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-300">
+                    {group.moduleType}
+                    {group.jobs.length > 1 && <span className="text-slate-500"> ({group.jobs.length} hosts)</span>}
+                  </span>
+                  <span className={STATUS_STYLES[status] ?? "text-slate-400"}>
+                    {failedInGroup.length > 0
+                      ? group.jobs.length > 1
+                        ? `${failedInGroup.length}/${group.jobs.length} FAILED`
+                        : "FAILED"
+                      : status}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
+                {failure && (
+                  <div className="mt-1 text-slate-400">
+                    Failed after {failure.attemptCount}/{failure.maxAttempts} attempts
+                    {failure.errorDetail ? `: ${failure.errorDetail}` : "."}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           <Link
             to={`/scans/${run.id}`}
             className="mt-1 inline-block font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline"
