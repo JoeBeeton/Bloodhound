@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
@@ -101,7 +102,7 @@ public class DnsRecordFetcher {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofSeconds(6))
-                    .header("User-Agent", "Bloodhound-ASM/1.0 (+passive surface scan)")
+                    .header("User-Agent", ScanUserAgent.VALUE)
                     .GET()
                     .build();
             HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());

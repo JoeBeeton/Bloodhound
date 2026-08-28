@@ -6,6 +6,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.OptionalLong;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.worker.ratelimit.HostnameRateLimiter;
 import org.slf4j.Logger;
@@ -23,7 +24,7 @@ public class DocumentFetcher {
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final int MAX_REDIRECTS = 5;
-    private static final String USER_AGENT = "Bloodhound-ASM/1.0 (+passive surface scan)";
+    private static final String USER_AGENT = ScanUserAgent.VALUE;
 
     /** A legitimate handbook/whitepaper-sized PDF is often several MB; this bounds worst-case memory/time without rejecting realistic documents. */
     static final long MAX_DOCUMENT_BYTES = 20L * 1024 * 1024;

@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.worker.ratelimit.HostnameRateLimiter;
 
 /**
@@ -138,7 +139,7 @@ public class ExposedPathFetcher {
                 .build();
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_S))
-                .header("User-Agent", "Bloodhound-ASM/1.0 (+passive surface scan)");
+                .header("User-Agent", ScanUserAgent.VALUE);
         if ("POST".equals(method)) {
             builder.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(postBody));
         } else {

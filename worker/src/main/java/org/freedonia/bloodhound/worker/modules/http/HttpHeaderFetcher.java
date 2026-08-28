@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -45,7 +46,7 @@ public class HttpHeaderFetcher {
                 client,
                 url,
                 Duration.ofSeconds(8),
-                "Bloodhound-ASM/1.0 (+passive surface scan)",
+                ScanUserAgent.VALUE,
                 HttpResponse.BodyHandlers.discarding(),
                 MAX_REDIRECTS);
     }

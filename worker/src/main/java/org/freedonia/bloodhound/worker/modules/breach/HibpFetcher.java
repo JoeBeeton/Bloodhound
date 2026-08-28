@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import org.freedonia.bloodhound.common.net.ScanUserAgent;
 
 /**
  * Fetch side of Have I Been Pwned's public API - no interpretation here (see
@@ -23,7 +24,9 @@ class HibpFetcher {
     record RawResponse(int statusCode, String body) {}
 
     private static final String BASE_URL = "https://haveibeenpwned.com/api/v3";
-    private static final String USER_AGENT = "Bloodhound-ASM/1.0 (+passive breach correlation)";
+    /** Was its own drifted string ("passive breach correlation") - unified to the shared
+     * ScanUserAgent so every outbound request identifies as Bloodhound the same way. */
+    private static final String USER_AGENT = ScanUserAgent.VALUE;
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
