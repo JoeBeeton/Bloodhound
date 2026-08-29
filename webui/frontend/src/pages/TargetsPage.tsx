@@ -181,7 +181,7 @@ export function TargetsPage() {
             <select
               value={targetType}
               onChange={(e) => setTargetType(e.target.value as TargetType)}
-              className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan sm:w-auto"
+              className="select-cyber w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan sm:w-auto"
             >
               {TARGET_TYPES.map((t) => (
                 <option key={t} value={t}>
