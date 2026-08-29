@@ -68,7 +68,7 @@ public class CveLookupCacheRepository {
                 maxSeverity);
     }
 
-    /** Every currently-fingerprinted (target, hostname) whose detected (technology, version) has a real cached CVE match - the direct input to finding synthesis. Re-derived fresh on every scheduler tick rather than tracked as "already synthesized", since re-ingesting an unchanged finding is a cheap, idempotent no-op via the normal FindingReconciler dedup path. */
+    /** Every currently-fingerprinted (target, hostname) whose detected (technology, version) has a real cached CVE match - the direct input to finding synthesis. Re-derived fresh on every scheduler tick (re-ingesting an unchanged finding is a cheap, idempotent no-op via the normal FindingReconciler dedup path) - but see {@link #maxCheckedAtByTarget}, which is what actually gates whether the scheduler creates a new scan_run/notification for a target this tick, since the ingestion path being idempotent doesn't make repeating the scan_run/notify side effects harmless. */
     public List<MatchedFingerprint> findMatchedFingerprints() {
         return jdbc.query(
                 """
@@ -88,6 +88,37 @@ public class CveLookupCacheRepository {
                         readStringList(rs.getString("cve_ids")),
                         readStringList(rs.getString("kev_matches")),
                         rs.getString("max_severity")));
+    }
+
+    /**
+     * For every target with at least one currently-matched fingerprint, the most recent {@code
+     * checked_at} among its matches - lets {@link VulnerabilityCorrelationScheduler} tell "this
+     * target's match set hasn't changed since I last synthesized findings for it" from "there's a
+     * genuinely newer CVE/KEV match", so it only creates a new scan_run (and notifies) when
+     * something has actually changed, not on every scheduler tick. {@code checked_at} only moves
+     * when {@link #upsert} actually runs for a (technology, version) pair - see {@link
+     * #findPendingPairs}'s staleness gate - so this is stable between real NVD re-checks, not a
+     * constantly-advancing clock.
+     */
+    public java.util.Map<UUID, java.time.Instant> maxCheckedAtByTarget() {
+        return jdbc.query(
+                """
+                SELECT f.target_id, MAX(c.checked_at) AS max_checked_at
+                FROM fingerprints f
+                CROSS JOIN jsonb_array_elements(f.technologies) AS tech
+                JOIN cve_lookup_cache c
+                    ON c.technology_name = tech->>'name' AND c.version = tech->>'version'
+                JOIN targets t ON t.id = f.target_id
+                WHERE jsonb_array_length(c.cve_ids) > 0 AND t.is_active = true
+                GROUP BY f.target_id
+                """,
+                rs -> {
+                    java.util.Map<UUID, java.time.Instant> result = new java.util.HashMap<>();
+                    while (rs.next()) {
+                        result.put(UUID.fromString(rs.getString("target_id")), rs.getTimestamp("max_checked_at").toInstant());
+                    }
+                    return result;
+                });
     }
 
     private List<String> readStringList(String json) {

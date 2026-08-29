@@ -61,6 +61,21 @@ public class ScanRunRepository {
                 .findFirst();
     }
 
+    /** Most recent started_at among this target's runs of the given trigger type - e.g. used by
+     * VulnerabilityCorrelationScheduler to tell "nothing new since I last synthesized CVE findings
+     * for this target" from "there's a genuinely newer CVE/KEV match" without re-deriving it from
+     * finding rows. Empty means this target has never had a run of that trigger type. */
+    public Optional<Instant> findLastStartedAt(UUID targetId, String triggeredBy) {
+        return jdbc.query(
+                        "SELECT started_at FROM scan_runs WHERE target_id = ? AND triggered_by = ? "
+                                + "ORDER BY started_at DESC LIMIT 1",
+                        (rs, rowNum) -> rs.getTimestamp("started_at").toInstant(),
+                        targetId,
+                        triggeredBy)
+                .stream()
+                .findFirst();
+    }
+
     private static final RowMapper<OrgScanRun> ORG_RUN_MAPPER =
             (rs, rowNum) -> new OrgScanRun(ROW_MAPPER.mapRow(rs, rowNum), rs.getString("target_hostname"));
 
