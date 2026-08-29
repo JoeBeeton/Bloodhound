@@ -11,4 +11,5 @@ public record ScanJobAttempt(
         Instant startedAt,
         Instant endedAt,
         String outcome,
-        String errorDetail) {}
+        String errorDetail,
+        String logOutput) {}

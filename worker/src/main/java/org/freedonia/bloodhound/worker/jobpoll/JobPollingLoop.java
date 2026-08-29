@@ -83,21 +83,27 @@ public class JobPollingLoop {
         log.info("claimed job {} module={} target={}", job.id(), job.moduleType(), job.hostname());
         Optional<ScanModule> module = registry.find(job.moduleType());
         if (module.isEmpty()) {
-            reportFailure(job, "no worker module registered for type " + job.moduleType());
+            reportFailure(job, "no worker module registered for type " + job.moduleType(), List.of());
             return;
         }
         JobHeartbeatSender.Handle heartbeat = heartbeatSender.start(job.id());
+        JobLogCapture.begin();
+        // Guarantees every attempt's captured log has at least one line, even for a module that
+        // logs nothing on its own successful happy path (most of them, by this codebase's own
+        // sparse-logging convention) - also doubles as the definitive live-verification signal
+        // for JobLogCapture/JobLogCaptureAppender's wiring itself.
+        log.info("starting execution of {} against {}", job.moduleType(), job.hostname());
         try {
             ScanContext context = new ScanContext(job.targetId(), job.hostname(), List.of(), job.payload());
             ModuleResult result = module.get().execute(context);
-            reportResult(job, result);
+            reportResult(job, result, JobLogCapture.end());
         } catch (ScanModuleException e) {
             String detail = withCause(e);
             log.warn("job {} failed: {}", job.id(), detail);
-            reportFailure(job, detail);
+            reportFailure(job, detail, JobLogCapture.end());
         } catch (Exception e) {
             log.error("job {} failed unexpectedly", job.id(), e);
-            reportFailure(job, "unexpected error: " + e.getMessage());
+            reportFailure(job, "unexpected error: " + e.getMessage(), JobLogCapture.end());
         } finally {
             heartbeat.stop();
         }
@@ -122,7 +128,7 @@ public class JobPollingLoop {
         return e.getMessage() + " (caused by " + cause.getClass().getSimpleName() + ": " + cause.getMessage() + ")";
     }
 
-    private void reportResult(ClaimedJob job, ModuleResult result) {
+    private void reportResult(ClaimedJob job, ModuleResult result, List<String> logLines) {
         try {
             List<FindingPayload> findings = result.findings().stream()
                     .map(f -> new FindingPayload(
@@ -137,7 +143,7 @@ public class JobPollingLoop {
             centralServerClient
                     .post()
                     .uri("/api/v1/jobs/{id}/result", job.id())
-                    .body(new ResultRequest(workerId, findings, result.rawMetadata()))
+                    .body(new ResultRequest(workerId, findings, result.rawMetadata(), logLines))
                     .retrieve()
                     .toBodilessEntity();
             log.info("job {} complete, {} finding(s) reported", job.id(), findings.size());
@@ -146,12 +152,12 @@ public class JobPollingLoop {
         }
     }
 
-    private void reportFailure(ClaimedJob job, String errorDetail) {
+    private void reportFailure(ClaimedJob job, String errorDetail, List<String> logLines) {
         try {
             centralServerClient
                     .post()
                     .uri("/api/v1/jobs/{id}/fail", job.id())
-                    .body(new FailRequest(workerId, errorDetail))
+                    .body(new FailRequest(workerId, errorDetail, logLines))
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

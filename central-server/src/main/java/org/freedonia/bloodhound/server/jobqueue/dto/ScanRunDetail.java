@@ -31,5 +31,7 @@ public record ScanRunDetail(
             Instant startedAt,
             Instant endedAt,
             String outcome,
-            String errorDetail) {}
+            String errorDetail,
+            /** Captured worker log output for this attempt - see JobLogCapture (worker). Null, not empty, when nothing was captured. */
+            String logOutput) {}
 }

@@ -79,7 +79,7 @@ class JobLifecycleServiceTest {
     void result_jobNotFound_throws404() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of()))
+        assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of(), List.of()))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
@@ -90,7 +90,7 @@ class JobLifecycleServiceTest {
         when(subdomainIngestionService.ingestAndSynthesizeFindings(eq(targetId), any(), any())).thenReturn(synthesized);
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
 
-        service.result(jobId, workerId, null, List.of(), Map.of("hostnames", List.of()));
+        service.result(jobId, workerId, null, List.of(), Map.of("hostnames", List.of()), List.of());
 
         verify(subdomainIngestionService).ingestAndSynthesizeFindings(eq(targetId), any(), any());
         verify(whoisIngestionService, never()).ingestAndSynthesizeFindings(any(), any(), any(), any());
@@ -106,7 +106,7 @@ class JobLifecycleServiceTest {
                 .thenReturn(List.of());
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
 
-        service.result(jobId, workerId, null, List.of(), Map.of());
+        service.result(jobId, workerId, null, List.of(), Map.of(), List.of());
 
         verify(whoisIngestionService).ingestAndSynthesizeFindings(eq(targetId), eq("example.com"), any(), any());
     }
@@ -117,7 +117,7 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         Map<String, Object> rawMetadata = Map.of("hostnames", List.of("new.example.com"));
 
-        service.result(jobId, workerId, null, List.of(), rawMetadata);
+        service.result(jobId, workerId, null, List.of(), rawMetadata, List.of());
 
         verify(ctCheckResultService).handle(targetId, rawMetadata);
         verify(resultIngestionService).ingest(scanRunId, targetId, "CT_CHECK", List.of());
@@ -129,7 +129,7 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         Map<String, Object> rawMetadata = Map.of("technologies", List.of());
 
-        service.result(jobId, workerId, null, List.of(), rawMetadata);
+        service.result(jobId, workerId, null, List.of(), rawMetadata, List.of());
 
         verify(fingerprintIngestionService).ingest(targetId, rawMetadata);
     }
@@ -141,7 +141,7 @@ class JobLifecycleServiceTest {
         FindingPayload payload = findingPayload();
         Map<String, Object> rawMetadata = Map.of("candidates", List.of());
 
-        service.result(jobId, workerId, null, List.of(payload), rawMetadata);
+        service.result(jobId, workerId, null, List.of(payload), rawMetadata, List.of());
 
         verify(typosquatIngestionService).ingest(targetId, rawMetadata);
         verify(resultIngestionService).ingest(scanRunId, targetId, "TYPOSQUAT_MONITOR", List.of(payload));
@@ -153,7 +153,7 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         FindingPayload payload = findingPayload();
 
-        service.result(jobId, workerId, null, List.of(payload), Map.of());
+        service.result(jobId, workerId, null, List.of(payload), Map.of(), List.of());
 
         verify(resultIngestionService).ingest(scanRunId, targetId, "HTTP_HEADERS", List.of(payload));
     }
@@ -167,9 +167,9 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.complete(jobId, workerId, "meta")).thenReturn(true);
 
-        service.result(jobId, workerId, "meta", List.of(), Map.of());
+        service.result(jobId, workerId, "meta", List.of(), Map.of(), List.of("line one", "line two"));
 
-        verify(scanJobAttemptRepository).completeAttempt(jobId, "SUCCESS", null);
+        verify(scanJobAttemptRepository).completeAttempt(jobId, "SUCCESS", null, "line one\nline two");
         verify(workerRepository).clearCurrentJob(workerId, jobId);
         verify(scanRunService).checkAndCompleteRun(scanRunId);
     }
@@ -179,17 +179,17 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of()))
+        assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of(), List.of()))
                 .isInstanceOf(ResponseStatusException.class);
         // The job never got marked complete, so its attempt shouldn't be marked SUCCESS either.
-        verify(scanJobAttemptRepository, never()).completeAttempt(any(), eq("SUCCESS"), any());
+        verify(scanJobAttemptRepository, never()).completeAttempt(any(), eq("SUCCESS"), any(), any());
     }
 
     @Test
     void fail_jobNotFound_throws404() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of())).isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
@@ -197,7 +197,7 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of())).isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
@@ -205,9 +205,9 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.of("PENDING"));
 
-        service.fail(jobId, workerId, "boom");
+        service.fail(jobId, workerId, "boom", List.of());
 
-        verify(scanJobAttemptRepository).completeAttempt(jobId, "FAILED", "boom");
+        verify(scanJobAttemptRepository).completeAttempt(jobId, "FAILED", "boom", null);
         verify(workerRepository).clearCurrentJob(workerId, jobId);
         verify(scanRunService, never()).checkAndCompleteRun(any());
     }
@@ -217,7 +217,7 @@ class JobLifecycleServiceTest {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.of("FAILED"));
 
-        service.fail(jobId, workerId, "boom");
+        service.fail(jobId, workerId, "boom", List.of());
 
         verify(scanRunService).checkAndCompleteRun(scanRunId);
     }

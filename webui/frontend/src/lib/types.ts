@@ -104,6 +104,8 @@ export interface ScanJobAttempt {
   endedAt: string | null;
   outcome: "SUCCESS" | "FAILED" | "TIMED_OUT_REAPED" | null;
   errorDetail: string | null;
+  /** Captured worker log output for this attempt, newline-joined - null when nothing was captured (e.g. a TIMED_OUT_REAPED attempt the worker never got to report on). */
+  logOutput: string | null;
 }
 
 export interface ScanJobStatus {

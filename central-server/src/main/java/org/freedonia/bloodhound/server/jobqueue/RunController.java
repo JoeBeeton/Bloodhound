@@ -56,7 +56,8 @@ public class RunController {
                                         a.startedAt(),
                                         a.endedAt(),
                                         a.outcome(),
-                                        a.errorDetail()))
+                                        a.errorDetail(),
+                                        a.logOutput()))
                                 .toList(),
                         JobPayloadHost.extract(j.payloadJson())))
                 .toList();

@@ -59,8 +59,30 @@ function AttemptHistory({ attempts }: { attempts: ScanJobAttempt[] }) {
             </span>
           </div>
           {a.errorDetail && <p className="mt-0.5 text-slate-500">{a.errorDetail}</p>}
+          {a.logOutput && <AttemptLogToggle logOutput={a.logOutput} />}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Collapsed by default - most attempts a user looks at never need the full log, and a 500-line
+ * capture rendered open by default on every attempt would overwhelm a job with several retries. */
+function AttemptLogToggle({ logOutput }: { logOutput: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-1">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="font-mono text-[10px] uppercase tracking-widest text-neon-cyan/70 transition hover:text-neon-cyan"
+      >
+        {open ? "▾ hide logs" : "▸ view logs"}
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-neon-cyan/10 bg-void/60 p-2 text-[10px] text-slate-400">
+          {logOutput}
+        </pre>
+      )}
     </div>
   );
 }
