@@ -5,7 +5,7 @@ plugins {
 
 dependencyManagement {
     imports {
-        mavenBom("org.springframework.boot:spring-boot-dependencies:3.5.16")
+        mavenBom("org.springframework.boot:spring-boot-dependencies:4.1.1")
     }
 }
 
@@ -18,7 +18,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
-    implementation("org.flywaydb:flyway-core")
+    // Boot 4's own Flyway starter only pulls in flyway-core - the PostgreSQL-specific database
+    // support module is still a separate dependency (confirmed live: without it, Flyway throws
+    // "Unsupported Database: PostgreSQL 16.15" at startup), same as it was on Boot 3.
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
 
@@ -29,7 +32,9 @@ dependencies {
     // OpenAPI/Swagger UI for the external read-only API (Apache-2.0). Serves the
     // generated spec + interactive docs from the same running app, no separate
     // toolchain - see config.OpenApiConfig for the apiKey security scheme.
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0")
+    // 3.x line specifically: springdoc-openapi's major version tracks Spring Boot's
+    // major version in lockstep, so this must move in step with the Boot 4 bump above.
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
