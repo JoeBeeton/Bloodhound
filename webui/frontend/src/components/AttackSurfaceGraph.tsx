@@ -1,4 +1,11 @@
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   colorForNode,
@@ -21,6 +28,21 @@ const HEIGHT = 720;
  * here (see handleWheel): it shrinks as you zoom in, grows as you zoom out. */
 const SUBDOMAIN_LABEL_ZOOM_THRESHOLD = WIDTH * 0.55;
 
+/** Same min/max zoom bounds handleWheel already clamps manual scroll-to-zoom to - the initial
+ * auto-fit (see the mount effect below) reuses them so the starting view never lands somewhere
+ * a user couldn't also reach by scrolling. */
+const MIN_VIEWBOX_WIDTH = WIDTH * 0.35;
+const MAX_VIEWBOX_WIDTH = WIDTH * 2.5;
+
+/** Rough on-screen footprint of the legend overlay (an absolutely-positioned HTML box in the
+ * bottom-left corner, outside the SVG coordinate space - see the legend div below), converted to
+ * roughly the same svg-unit scale the default 1200x720 viewBox uses. Reserved as extra padding
+ * around the bottom-left of the initial auto-fit's bounding box so "zoom in as much as possible"
+ * doesn't also mean "sit the legend on top of real nodes." An estimate, not a live measurement -
+ * good enough since the legend's own size only changes if someone edits it. */
+const LEGEND_RESERVED_LEFT = 170;
+const LEGEND_RESERVED_BOTTOM = 140;
+
 /**
  * Renders an already-shaped GraphData as a force-directed SVG map: central-server at the hub,
  * the platform's own topology (postgres, webui, live workers) clustered to one side, and every
@@ -37,8 +59,60 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
   const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const laidOut = useMemo(() => layoutGraph(data, WIDTH, HEIGHT), [data]);
+
+  // Auto-fit the starting view to however much of the map actually has content, rather than
+  // always opening on the full fixed 1200x720 extent regardless of how sparse or dense the real
+  // graph is. Deliberately runs ONCE on mount only (empty deps), not on every `laidOut` change -
+  // workersQuery polls every WORKER_POLL_INTERVAL_MS (see AttackSurfaceMapPage), which gives
+  // `data`/`laidOut` a new identity on every poll; re-fitting on that cadence would silently
+  // reset any pan/zoom the user just did.
+  useEffect(() => {
+    const svgEl = svgRef.current;
+    const positioned = laidOut.nodes.filter(
+      (n): n is GraphNode & { x: number; y: number } => n.x != null && n.y != null,
+    );
+    if (!svgEl || positioned.length === 0) return;
+
+    const LABEL_ROOM = 24; // vertical room below a node for its label text
+    const MARGIN = 30;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const n of positioned) {
+      minX = Math.min(minX, n.x - n.radius);
+      maxX = Math.max(maxX, n.x + n.radius);
+      minY = Math.min(minY, n.y - n.radius);
+      maxY = Math.max(maxY, n.y + n.radius + LABEL_ROOM);
+    }
+    minX -= MARGIN + LEGEND_RESERVED_LEFT;
+    minY -= MARGIN;
+    maxX += MARGIN;
+    maxY += MARGIN + LEGEND_RESERVED_BOTTOM;
+
+    const rect = svgEl.getBoundingClientRect();
+    const containerAspect = rect.width > 0 && rect.height > 0 ? rect.width / rect.height : WIDTH / HEIGHT;
+
+    // Expand whichever axis is the tighter constraint so the fitted box matches the container's
+    // actual on-screen aspect ratio - the same "meet" behavior preserveAspectRatio gives via
+    // letterboxing, computed explicitly here since the viewBox itself is what's being chosen.
+    let w = maxX - minX;
+    let h = maxY - minY;
+    if (w / h > containerAspect) {
+      h = w / containerAspect;
+    } else {
+      w = h * containerAspect;
+    }
+    w = Math.min(MAX_VIEWBOX_WIDTH, Math.max(MIN_VIEWBOX_WIDTH, w));
+    h = w / containerAspect;
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    setViewBox({ x: cx - w / 2, y: cy - h / 2, w, h });
+  }, []);
   const subdomainLabelsVisible = viewBox.w < SUBDOMAIN_LABEL_ZOOM_THRESHOLD;
   // Positions are fixed after layout (see layoutGraph's own comment) so this only needs
   // recomputing when the node set itself changes, not on every zoom/pan.
@@ -101,6 +175,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
           built-in Tailwind equivalent. */}
       <style>{"@keyframes asm-flow { to { stroke-dashoffset: -16; } }"}</style>
       <svg
+        ref={svgRef}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
         className={`h-[70vh] w-full select-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
         onWheel={handleWheel}
