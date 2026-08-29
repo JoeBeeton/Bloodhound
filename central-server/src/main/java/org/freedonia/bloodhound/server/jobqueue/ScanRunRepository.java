@@ -79,23 +79,42 @@ public class ScanRunRepository {
     private static final RowMapper<OrgScanRun> ORG_RUN_MAPPER =
             (rs, rowNum) -> new OrgScanRun(ROW_MAPPER.mapRow(rs, rowNum), rs.getString("target_hostname"));
 
-    /** Org-wide, cross-target recent scan activity - backs the dashboard's "recent activity" feed. */
+    /**
+     * Org-wide, cross-target recent scan activity - backs the dashboard's "recent activity" feed
+     * and the Scans page's "Recent Scans" list. Excludes CT_CHECK and CVE_CORRELATION: both are
+     * background system processes (a ~20-minute crt.sh sweep, a ~35-second NVD/KEV correlation
+     * tick), not something a human asked for or would recognize as "a scan" - already excluded
+     * from notifications for the same reason (see ScanRunService#notifyScanStarted). Surfacing
+     * them here would flood this list with system noise even under correct, working conditions.
+     */
     public java.util.List<OrgScanRun> findRecentByOrganization(UUID organizationId, int limit) {
         return jdbc.query(
                 "SELECT sr.*, t.hostname AS target_hostname FROM scan_runs sr "
                         + "JOIN targets t ON t.id = sr.target_id "
-                        + "WHERE t.organization_id = ? AND t.is_active = true ORDER BY sr.started_at DESC LIMIT ?",
+                        + "WHERE t.organization_id = ? AND t.is_active = true "
+                        + "AND sr.triggered_by NOT IN ('CT_CHECK', 'CVE_CORRELATION') "
+                        + "ORDER BY sr.started_at DESC LIMIT ?",
                 ORG_RUN_MAPPER,
                 organizationId,
                 limit);
     }
 
-    /** Every currently-RUNNING scan_run for the org's active targets - backs the /scans/active page. */
+    /**
+     * Every currently-RUNNING scan_run for the org's active targets - backs the /scans/active
+     * "what's happening right now" page. Excludes CT_CHECK for the same reason {@link
+     * #findRecentByOrganization} does: a ~20-minute background crt.sh sweep renders as a full-size
+     * card indistinguishable from a real MANUAL/SCHEDULED scan, and with several targets each on
+     * their own sweep cadence, a handful of them land in the RUNNING window simultaneously often
+     * enough to bury the scans a human actually cares about. CVE_CORRELATION doesn't need the same
+     * exclusion here - it's created already-COMPLETE (see VulnerabilityCorrelationScheduler), so it
+     * never has a RUNNING row to filter in the first place.
+     */
     public java.util.List<OrgScanRun> findRunningByOrganization(UUID organizationId) {
         return jdbc.query(
                 "SELECT sr.*, t.hostname AS target_hostname FROM scan_runs sr "
                         + "JOIN targets t ON t.id = sr.target_id "
                         + "WHERE t.organization_id = ? AND t.is_active = true AND sr.status = 'RUNNING' "
+                        + "AND sr.triggered_by != 'CT_CHECK' "
                         + "ORDER BY sr.started_at ASC",
                 ORG_RUN_MAPPER,
                 organizationId);
