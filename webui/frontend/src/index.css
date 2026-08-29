@@ -64,3 +64,12 @@ body {
 .select-cyber:disabled {
   cursor: not-allowed;
 }
+
+/* Every checkbox in the app (SSO/Slack admin settings) opts into this - same reasoning as
+   .select-cyber above: the OS-default checkbox tint clashes with the rest of the cyan/pink
+   chrome. accent-color is the standard, broadly-supported way to recolor a native checkbox
+   without giving up its built-in keyboard/accessibility behavior for a custom-built control. */
+.checkbox-cyber {
+  accent-color: #00f0ff;
+  cursor: pointer;
+}
