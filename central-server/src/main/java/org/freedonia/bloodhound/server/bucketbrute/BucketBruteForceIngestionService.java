@@ -18,14 +18,25 @@ import org.springframework.stereotype.Service;
  * service's only job is persisting the checked list into
  * bucket_brute_force_checks, which is what lets the *next* deep scan's job
  * payload exclude names already tried recently (see ScanRunService).
+ *
+ * <p>Also advances the target's position in {@code BucketNameGenerator}'s
+ * large wordlist (see BucketBruteForceCursorRepository): the worker reports
+ * back {@code nextLargeWordlistOffset} in rawMetadata regardless of what it
+ * was asked to check, so this service always persists it - the read
+ * (ScanRunService#targetScopedPayload) - process (worker) - write (here)
+ * round trip is what lets each deep scan pick up where the last one's sweep
+ * through the large wordlist left off.
  */
 @Service
 public class BucketBruteForceIngestionService {
 
     private final BucketBruteForceCheckRepository repository;
+    private final BucketBruteForceCursorRepository cursorRepository;
 
-    public BucketBruteForceIngestionService(BucketBruteForceCheckRepository repository) {
+    public BucketBruteForceIngestionService(
+            BucketBruteForceCheckRepository repository, BucketBruteForceCursorRepository cursorRepository) {
         this.repository = repository;
+        this.cursorRepository = cursorRepository;
     }
 
     public void ingest(UUID targetId, Map<String, Object> rawMetadata) {
@@ -37,6 +48,10 @@ public class BucketBruteForceIngestionService {
             }
             boolean wasListable = Boolean.TRUE.equals(entry.get("wasListable"));
             repository.upsert(targetId, candidateName, provider, wasListable);
+        }
+        Object nextOffset = rawMetadata == null ? null : rawMetadata.get("nextLargeWordlistOffset");
+        if (nextOffset instanceof Number number) {
+            cursorRepository.advance(targetId, number.intValue());
         }
     }
 

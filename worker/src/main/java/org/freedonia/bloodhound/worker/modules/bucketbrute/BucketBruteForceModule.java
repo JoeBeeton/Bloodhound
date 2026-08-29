@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -67,6 +68,18 @@ import org.springframework.stereotype.Component;
  * check (regardless of outcome) via rawMetadata's {@code checkedCandidates},
  * which is what lets central-server refresh the "recently checked" record
  * for next time (see BucketBruteForceIngestionService).
+ *
+ * <p>Same stateless-worker/stateful-central-server split governs the
+ * incremental sweep through {@link BucketNameGenerator}'s much larger
+ * (18,696-term) wordlist: the payload also carries {@code
+ * largeWordlistOffset}/{@code largeWordlistBatchSize} (central-server's
+ * per-target cursor - see BucketBruteForceCursorRepository), this module
+ * generates just that one slice via {@link
+ * BucketNameGenerator#generateFromLargeWordlist} and merges it into the
+ * candidate set for this run, and reports back {@code
+ * nextLargeWordlistOffset} in rawMetadata for central-server to persist -
+ * so coverage of the full list grows a little further with every deep scan
+ * rather than restarting from the top each time.
  */
 @Component
 public class BucketBruteForceModule implements ScanModule {
@@ -99,8 +112,15 @@ public class BucketBruteForceModule implements ScanModule {
     @Override
     public ModuleResult execute(ScanContext context) throws ScanModuleException {
         String hostname = context.hostname();
-        List<String> candidates = BucketNameGenerator.generate(hostname);
         Set<String> excludeKeys = ExcludeKeys.from(context);
+
+        Set<String> candidateSet = new LinkedHashSet<>(BucketNameGenerator.generate(hostname));
+        int largeWordlistOffset = intFromPayload(context, "largeWordlistOffset", 0);
+        int largeWordlistBatchSize = intFromPayload(context, "largeWordlistBatchSize", 0);
+        BucketNameGenerator.LargeWordlistBatch largeBatch =
+                BucketNameGenerator.generateFromLargeWordlist(hostname, largeWordlistOffset, largeWordlistBatchSize);
+        candidateSet.addAll(largeBatch.candidates());
+        List<String> candidates = new ArrayList<>(candidateSet);
 
         List<Check> checks = new ArrayList<>();
         for (String candidate : candidates) {
@@ -133,6 +153,11 @@ public class BucketBruteForceModule implements ScanModule {
         rawMetadata.put("checksSkippedAlreadyChecked", (candidates.size() * CloudBucketDecisionLogic.Provider.values().length) - checks.size());
         rawMetadata.put("checksAttempted", checks.size());
         rawMetadata.put("checkedCandidates", checkedCandidates);
+        // Reported unconditionally (even when largeWordlistBatchSize is 0, where nextOffset just
+        // equals the offset we were given) - central-server always persists whatever comes back,
+        // so this keeps the cursor's read-modify-write round trip uniform regardless of whether a
+        // batch was actually requested this run.
+        rawMetadata.put("nextLargeWordlistOffset", largeBatch.nextOffset());
         return new ModuleResult(findings, rawMetadata);
     }
 
@@ -220,6 +245,16 @@ public class BucketBruteForceModule implements ScanModule {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Tolerant numeric payload read - Jackson deserializes a JSON job payload into {@code
+     * Map<String, Object>} with JSON numbers landing as some {@link Number} subtype (Integer for
+     * anything in int range, which is all a wordlist offset/batch size ever needs), so this
+     * doesn't need to handle String-encoded numbers the way ExcludeKeys tolerates odd list-item
+     * shapes; missing/wrong-shaped values just fall back rather than failing the module. */
+    private static int intFromPayload(ScanContext context, String key, int fallback) {
+        Object raw = context.jobPayload() == null ? null : context.jobPayload().get(key);
+        return raw instanceof Number number ? number.intValue() : fallback;
     }
 
     /** Reads the {@code excludeKeys} list ScanRunService's target-scoped job payload carries -

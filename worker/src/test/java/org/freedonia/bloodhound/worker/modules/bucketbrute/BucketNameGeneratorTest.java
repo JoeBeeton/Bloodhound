@@ -65,4 +65,66 @@ class BucketNameGeneratorTest {
     void generationIsDeterministic() {
         assertThat(BucketNameGenerator.generate("acme.com")).isEqualTo(BucketNameGenerator.generate("acme.com"));
     }
+
+    @Test
+    void smallWordlist_isCloudBrutesCuratedListNotTheOldHandRolledOne() {
+        // "filestorage" and "productcontent" are real CloudBrute storage_small.txt terms that were
+        // never in this project's old hand-rolled 85-term list - their presence confirms the swap
+        // actually happened, not just that *a* wordlist is being used.
+        List<String> candidates = BucketNameGenerator.generate("acme.com");
+
+        assertThat(candidates).contains("acme-filestorage", "acme-productcontent");
+    }
+
+    @Test
+    void generateFromLargeWordlist_producesHyphenAndNoHyphenJoinsFromTheRequestedSlice() {
+        BucketNameGenerator.LargeWordlistBatch batch = BucketNameGenerator.generateFromLargeWordlist("acme.com", 0, 5);
+
+        assertThat(batch.candidates()).isNotEmpty().allSatisfy(c -> assertThat(c).startsWith("acme"));
+        assertThat(batch.nextOffset()).isEqualTo(5);
+    }
+
+    @Test
+    void generateFromLargeWordlist_sameOffsetAndBatchSize_isDeterministic() {
+        BucketNameGenerator.LargeWordlistBatch first = BucketNameGenerator.generateFromLargeWordlist("acme.com", 200, 10);
+        BucketNameGenerator.LargeWordlistBatch second = BucketNameGenerator.generateFromLargeWordlist("acme.com", 200, 10);
+
+        assertThat(first.candidates()).isEqualTo(second.candidates());
+        assertThat(first.nextOffset()).isEqualTo(second.nextOffset());
+    }
+
+    @Test
+    void generateFromLargeWordlist_consecutiveBatches_advanceWithoutGapOrOverlap() {
+        int total = BucketNameGenerator.largeWordlistSize();
+        BucketNameGenerator.LargeWordlistBatch first = BucketNameGenerator.generateFromLargeWordlist("acme.com", 100, 50);
+        assertThat(first.nextOffset()).isEqualTo(150 % total);
+
+        BucketNameGenerator.LargeWordlistBatch second =
+                BucketNameGenerator.generateFromLargeWordlist("acme.com", first.nextOffset(), 50);
+        assertThat(second.nextOffset()).isEqualTo(200 % total);
+    }
+
+    @Test
+    void generateFromLargeWordlist_wrapsAroundAtEndOfWordlist() {
+        int total = BucketNameGenerator.largeWordlistSize();
+        BucketNameGenerator.LargeWordlistBatch batch = BucketNameGenerator.generateFromLargeWordlist("acme.com", total - 2, 5);
+
+        // Took terms at indices total-2, total-1, 0, 1, 2 - wrapped around rather than stopping at the end.
+        assertThat(batch.nextOffset()).isEqualTo(3);
+    }
+
+    @Test
+    void generateFromLargeWordlist_zeroBatchSize_yieldsNoCandidates_offsetUnchanged() {
+        BucketNameGenerator.LargeWordlistBatch batch = BucketNameGenerator.generateFromLargeWordlist("acme.com", 42, 0);
+
+        assertThat(batch.candidates()).isEmpty();
+        assertThat(batch.nextOffset()).isEqualTo(42);
+    }
+
+    @Test
+    void generateFromLargeWordlist_tooShortStem_yieldsNoCandidates() {
+        BucketNameGenerator.LargeWordlistBatch batch = BucketNameGenerator.generateFromLargeWordlist("a.com", 0, 10);
+
+        assertThat(batch.candidates()).isEmpty();
+    }
 }

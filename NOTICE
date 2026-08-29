@@ -70,6 +70,12 @@ worker (bundled CLI tools and their base image)
     University of Michigan.
     https://github.com/zmap/zgrab2
 
+  CloudBrute storage wordlists (data files only, not the tool  MIT License
+    itself - bundled as worker/src/main/resources/wordlists/*,
+    sanitized to bucket-name-safe characters and lowercased)
+    Copyright 0xsha.
+    https://github.com/0xsha/CloudBrute
+
 ================================================================================
 webui/frontend (npm dependencies bundled into the built SPA)
 ================================================================================

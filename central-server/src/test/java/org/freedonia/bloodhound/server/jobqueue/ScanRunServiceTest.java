@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceCheckRepository;
+import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceCursorRepository;
 import org.freedonia.bloodhound.server.compound.CompoundRiskAnalysisService;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.notification.NotificationService;
@@ -44,6 +45,8 @@ class ScanRunServiceTest {
     private final NotificationService notificationService = mock(NotificationService.class);
     private final BucketBruteForceCheckRepository bucketBruteForceCheckRepository =
             mock(BucketBruteForceCheckRepository.class);
+    private final BucketBruteForceCursorRepository bucketBruteForceCursorRepository =
+            mock(BucketBruteForceCursorRepository.class);
 
     private final ScanRunService service = new ScanRunService(
             scanRunRepository,
@@ -55,7 +58,8 @@ class ScanRunServiceTest {
             targetRepository,
             findingRepository,
             notificationService,
-            bucketBruteForceCheckRepository);
+            bucketBruteForceCheckRepository,
+            bucketBruteForceCursorRepository);
 
     private final UUID targetId = UUID.randomUUID();
     private final UUID triggeredByUserId = UUID.randomUUID();
@@ -129,5 +133,32 @@ class ScanRunServiceTest {
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(scanJobRepository).insert(eq(runId), eq(targetId), eq("BUCKET_BRUTE_FORCE"), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue()).contains("\"excludeKeys\":[]");
+    }
+
+    @Test
+    void bucketBruteForcePayload_carriesCurrentLargeWordlistCursorPosition() {
+        stub(List.of());
+        when(bucketBruteForceCursorRepository.currentPosition(targetId)).thenReturn(4350);
+
+        service.createDeepScan(targetId, triggeredByUserId);
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(scanJobRepository).insert(eq(runId), eq(targetId), eq("BUCKET_BRUTE_FORCE"), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue())
+                .contains("\"largeWordlistOffset\":4350")
+                .contains("\"largeWordlistBatchSize\":150");
+    }
+
+    @Test
+    void bucketBruteForcePayload_noCursorRowYet_startsFromZero() {
+        stub(List.of());
+        // No stubbing of currentPosition - Mockito's default int return is 0, matching
+        // BucketBruteForceCursorRepository's own documented "no row yet -> position 0" contract.
+
+        service.createDeepScan(targetId, triggeredByUserId);
+
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(scanJobRepository).insert(eq(runId), eq(targetId), eq("BUCKET_BRUTE_FORCE"), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue()).contains("\"largeWordlistOffset\":0");
     }
 }

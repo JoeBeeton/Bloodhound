@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceCheckRepository;
+import org.freedonia.bloodhound.server.bucketbrute.BucketBruteForceCursorRepository;
 import org.freedonia.bloodhound.server.compound.CompoundRiskAnalysisService;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.notification.NotificationService;
@@ -111,6 +112,19 @@ public class ScanRunService {
     private static final Duration BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN = Duration.ofDays(14);
 
     /**
+     * How many terms of BucketNameGenerator's large (18,696-term) wordlist a single deep scan
+     * consumes before the cursor advances - crossed with hyphen/no-hyphen joins and 5 providers,
+     * that's up to 1,500 extra checks per run. Combined with the always-included small-wordlist
+     * baseline (~400 candidates x 5 providers, mostly cooldown-excluded after the first pass),
+     * this stays comfortably inside BucketBruteForceModule's 10-minute overall budget even before
+     * accounting for rate-limiting headroom (live-verified: ~810 checks completed in ~89s). At this
+     * rate a full pass through the large wordlist takes roughly 18,696 / 150 ≈ 125 deep scans for
+     * one target - a deliberate slow burn, not something meant to finish quickly; coverage widens
+     * with every deep scan the user actually runs rather than trying to front-load it into one.
+     */
+    private static final int BUCKET_BRUTE_FORCE_LARGE_WORDLIST_BATCH_SIZE = 150;
+
+    /**
      * Meaningfully tighter than {@link #TIER1_SUBDOMAIN_CAP}: a single deep
      * port scan or ZAP active scan against ONE host can already take several
      * minutes, so a target with dozens of subdomains would turn a deep scan
@@ -131,6 +145,7 @@ public class ScanRunService {
     private final FindingRepository findingRepository;
     private final NotificationService notificationService;
     private final BucketBruteForceCheckRepository bucketBruteForceCheckRepository;
+    private final BucketBruteForceCursorRepository bucketBruteForceCursorRepository;
 
     public ScanRunService(
             ScanRunRepository scanRunRepository,
@@ -142,7 +157,8 @@ public class ScanRunService {
             TargetRepository targetRepository,
             FindingRepository findingRepository,
             NotificationService notificationService,
-            BucketBruteForceCheckRepository bucketBruteForceCheckRepository) {
+            BucketBruteForceCheckRepository bucketBruteForceCheckRepository,
+            BucketBruteForceCursorRepository bucketBruteForceCursorRepository) {
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
         this.scoreSnapshotService = scoreSnapshotService;
@@ -153,6 +169,7 @@ public class ScanRunService {
         this.findingRepository = findingRepository;
         this.notificationService = notificationService;
         this.bucketBruteForceCheckRepository = bucketBruteForceCheckRepository;
+        this.bucketBruteForceCursorRepository = bucketBruteForceCursorRepository;
     }
 
     public ScanRun createManualScan(UUID targetId, UUID triggeredByUserId) {
@@ -265,20 +282,26 @@ public class ScanRunService {
 
     /**
      * The payload for a {@link #TIER2_TARGET_SCOPED_MODULE_TYPES} job - no host at all (the
-     * module reads {@code context.hostname()} directly, the target's own root), just an
-     * exclusion list of "candidateName|provider" keys already checked within {@link
-     * #BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN} (see BucketBruteForceCheckRepository), so a re-run
-     * skips names already tried recently instead of re-issuing the same requests every time.
+     * module reads {@code context.hostname()} directly, the target's own root). Carries two
+     * independent pieces of "don't redo work you already did" state: an exclusion list of
+     * "candidateName|provider" keys already checked within {@link
+     * #BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN} (see BucketBruteForceCheckRepository), and where this
+     * target's sweep through BucketNameGenerator's large wordlist left off last time (see
+     * BucketBruteForceCursorRepository/{@link #BUCKET_BRUTE_FORCE_LARGE_WORDLIST_BATCH_SIZE}).
      */
     private String targetScopedPayload(UUID targetId) {
         Set<String> excludeKeys = bucketBruteForceCheckRepository.findRecentlyCheckedKeys(
                 targetId, Instant.now().minus(BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN));
+        int largeWordlistOffset = bucketBruteForceCursorRepository.currentPosition(targetId);
         try {
-            return objectMapper.writeValueAsString(Map.of("excludeKeys", excludeKeys));
+            return objectMapper.writeValueAsString(Map.of(
+                    "excludeKeys", excludeKeys,
+                    "largeWordlistOffset", largeWordlistOffset,
+                    "largeWordlistBatchSize", BUCKET_BRUTE_FORCE_LARGE_WORDLIST_BATCH_SIZE));
         } catch (Exception e) {
-            // Falls back to "check everything" rather than failing job creation over a
-            // serialization problem in an optional exclusion list - worse for politeness this
-            // one run, never worse for correctness.
+            // Falls back to "check everything, from the top of the large wordlist" rather than
+            // failing job creation over a serialization problem in optional dedup/cursor state -
+            // worse for politeness this one run, never worse for correctness.
             return "{}";
         }
     }
