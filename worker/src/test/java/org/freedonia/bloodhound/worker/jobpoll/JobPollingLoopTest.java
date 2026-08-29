@@ -176,6 +176,28 @@ class JobPollingLoopTest {
     }
 
     @Test
+    void moduleThrowsScanModuleExceptionWithCause_reportsFailureIncludingCauseDetail() {
+        // The bare outer message alone (e.g. "failed to reach ZAP at ...") was previously the
+        // ONLY thing that reached error_detail/the UI - the actual wire-level cause (connection
+        // refused vs. a timeout vs. something else) was silently dropped, making a real,
+        // diagnosable failure indistinguishable from any other. See withCause's own javadoc.
+        ScanModule module = fakeModule("ZAP_ACTIVE_SCAN", ctx -> {
+            throw new ScanModuleException(
+                    "failed to reach ZAP at http://zap:8080/JSON/core/view/numberOfMessages/",
+                    new java.io.IOException("request timed out"));
+        });
+        stubClaimReturns(List.of(claimedJob("ZAP_ACTIVE_SCAN")));
+
+        loop(module).poll();
+
+        verify(preBodySpec)
+                .body(argThat((Object arg) -> arg instanceof FailRequest fr
+                        && fr.errorDetail().contains("failed to reach ZAP")
+                        && fr.errorDetail().contains("IOException")
+                        && fr.errorDetail().contains("request timed out")));
+    }
+
+    @Test
     void moduleThrowsUnexpectedException_reportsFailureWithWrappedMessage_stillStopsHeartbeat() {
         ScanModule module = fakeModule("DNS_POSTURE", ctx -> {
             throw new IllegalStateException("boom");

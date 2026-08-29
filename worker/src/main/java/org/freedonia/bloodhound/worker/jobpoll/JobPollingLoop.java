@@ -92,14 +92,34 @@ public class JobPollingLoop {
             ModuleResult result = module.get().execute(context);
             reportResult(job, result);
         } catch (ScanModuleException e) {
-            log.warn("job {} failed: {}", job.id(), e.getMessage());
-            reportFailure(job, e.getMessage());
+            String detail = withCause(e);
+            log.warn("job {} failed: {}", job.id(), detail);
+            reportFailure(job, detail);
         } catch (Exception e) {
             log.error("job {} failed unexpectedly", job.id(), e);
             reportFailure(job, "unexpected error: " + e.getMessage());
         } finally {
             heartbeat.stop();
         }
+    }
+
+    /**
+     * ScanModuleException's own message ({@code e.getMessage()}) is deliberately terse ("failed
+     * to reach ZAP at ...") - a stable, addressable string for the outer failure, not a dump of
+     * the wire-level cause. But that cause (a raw java.io.IOException - could be connection
+     * refused, a read timeout, a reset, ...) was previously logged nowhere at all: neither the
+     * worker's own log line nor the error_detail persisted to scan_jobs (and shown in the UI)
+     * carried it, making a real failure (confirmed live: OWASP ZAP's single shared sidecar
+     * pegging CPU under concurrent scan load and timing out its own status-check API) look
+     * identical to a dozen other possible causes from the log/UI alone. Appends the cause's own
+     * class + message when present so this is diagnosable without shelling into a container.
+     */
+    private static String withCause(ScanModuleException e) {
+        Throwable cause = e.getCause();
+        if (cause == null) {
+            return e.getMessage();
+        }
+        return e.getMessage() + " (caused by " + cause.getClass().getSimpleName() + ": " + cause.getMessage() + ")";
     }
 
     private void reportResult(ClaimedJob job, ModuleResult result) {
