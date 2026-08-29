@@ -9,6 +9,18 @@ const SEVERITY_STYLES: Record<Severity, string> = {
   INFO: "border-severity-info/50 text-severity-info",
 };
 
+/** A bold, fully-opaque left-edge accent on top of the existing thin/muted all-around border -
+ * scanning a long findings list (a real target detail page can have hundreds) by severity text
+ * alone means reading every card; a strong color bar down the left edge is the standard
+ * security-dashboard pattern for triaging by eye before reading a word. */
+const SEVERITY_ACCENT: Record<Severity, string> = {
+  CRITICAL: "border-l-severity-critical",
+  HIGH: "border-l-severity-high",
+  MEDIUM: "border-l-severity-medium",
+  LOW: "border-l-severity-low",
+  INFO: "border-l-severity-info",
+};
+
 // Tier 2 module_types don't all share the "_DEEP" suffix (ZAP_ACTIVE_SCAN doesn't),
 // so this can't just be a string-suffix check - keep the actual list here rather
 // than duplicating central-server's TIER2_MODULE_TYPES constant across the wire.
@@ -29,7 +41,7 @@ export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect:
   return (
     <button
       onClick={onSelect}
-      className={`w-full rounded-lg border bg-panel/60 p-4 text-left transition hover:bg-panel ${SEVERITY_STYLES[finding.severity]}`}
+      className={`w-full rounded-lg border border-l-4 bg-panel/60 p-4 text-left transition hover:bg-panel ${SEVERITY_STYLES[finding.severity]} ${SEVERITY_ACCENT[finding.severity]}`}
     >
       <div className="mb-1 flex items-center justify-between gap-3">
         <span className={`font-mono text-xs font-bold uppercase tracking-widest ${SEVERITY_STYLES[finding.severity]}`}>
