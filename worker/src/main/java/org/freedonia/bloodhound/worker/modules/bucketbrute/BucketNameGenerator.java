@@ -1,5 +1,10 @@
 package org.freedonia.bloodhound.worker.modules.bucketbrute;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,24 +27,25 @@ import java.util.Set;
 final class BucketNameGenerator {
 
     /** Bounds total output regardless of stem length - keeps per-scan request volume
-     * predictable. Sized to land comfortably in the 200-500 range the wordlist below produces. */
+     * predictable. Sized to land comfortably in the 200-500 range SMALL_WORDLIST produces. */
     private static final int MAX_CANDIDATES = 400;
 
-    /** Common bucket-naming conventions - environment/lifecycle, content-type, and
-     * infrastructure-role terms real organizations actually use for cloud storage buckets. */
-    private static final List<String> SUFFIXES = List.of(
-            "backup", "backups", "prod", "production", "dev", "development", "staging", "stage", "test",
-            "testing", "uat", "qa", "assets", "static", "media", "images", "img", "files", "uploads",
-            "downloads", "data", "database", "db", "logs", "log", "archive", "archives", "temp", "tmp",
-            "cache", "cdn", "public", "private", "internal", "secure", "admin", "api", "www", "web", "app",
-            "apps", "mobile", "docs", "documents", "reports", "exports", "imports", "config", "secrets",
-            "keys", "source", "src", "build", "dist", "release", "deploy", "terraform", "infra", "ops",
-            "monitoring", "analytics", "marketing", "sales", "finance", "billing", "content", "storage",
-            "bucket", "share", "shared", "old", "new", "legacy", "migration", "sandbox", "demo", "training",
-            "hr", "legal", "corp", "us", "eu", "prod-data", "user-data", "customer-data");
+    /**
+     * CloudBrute's own storage-name wordlists (MIT-licensed - see NOTICE), bundled as classpath
+     * resources rather than a hand-rolled list: a purpose-built, community-maintained corpus of
+     * real bucket-naming conventions beats guessing our own. SMALL (112 terms) replaces what used
+     * to be an inline hardcoded list, at the same ~200-500-candidate scale every deep scan already
+     * budgets for. LARGE (18,696 terms, sanitized to bucket-name-safe characters - the upstream
+     * file also mixes in web-content-discovery terms like "Contact Us"/"~admin" that can never be
+     * a valid bucket name) is FAR too big to check in one run; see {@link #generateFromLargeWordlist}
+     * for how a deep scan instead works through it incrementally across many runs.
+     */
+    private static final List<String> SMALL_WORDLIST = loadWordlist("/wordlists/cloudbrute-storage-small.txt");
+
+    private static final List<String> LARGE_WORDLIST = loadWordlist("/wordlists/cloudbrute-storage-large.txt");
 
     /** Smaller prefix set - a prefix reads more naturally for a handful of these than every
-     * suffix would as a prefix too, so kept separate rather than reusing SUFFIXES both ways. */
+     * suffix would as a prefix too, so kept separate rather than reusing SMALL_WORDLIST both ways. */
     private static final List<String> PREFIXES =
             List.of("www", "dev", "prod", "staging", "backup", "old", "new", "legacy", "static", "cdn", "assets");
 
@@ -58,7 +64,7 @@ final class BucketNameGenerator {
 
         Set<String> candidates = new LinkedHashSet<>();
         candidates.add(stem);
-        for (String suffix : SUFFIXES) {
+        for (String suffix : SMALL_WORDLIST) {
             candidates.add(stem + "-" + suffix);
             candidates.add(stem + suffix);
         }
@@ -81,6 +87,69 @@ final class BucketNameGenerator {
             result.add(candidate);
         }
         return result;
+    }
+
+    /** One incremental slice through {@link #LARGE_WORDLIST}, plus where the next slice should
+     * pick up - see {@link #generateFromLargeWordlist}. */
+    record LargeWordlistBatch(List<String> candidates, int nextOffset) {}
+
+    /**
+     * The resumable counterpart to {@link #generate}: rather than the ~200-500 candidates that
+     * fit in one scan's budget, {@link #LARGE_WORDLIST} has 18,696 terms - crossed with a stem and
+     * checked across 5 providers, that's ~187,000 requests, hours even at a healthy rate limit.
+     * Central-server persists a per-target cursor (see BucketBruteForceCursorRepository) and hands
+     * this module a starting {@code offset} plus how many terms to take (see
+     * ScanRunService#targetScopedPayload); this module reports back {@link
+     * LargeWordlistBatch#nextOffset} for central-server to save for next time. Wraps around at the
+     * end of the list (via floorMod) rather than stopping, so a target's coverage keeps growing
+     * across every deep scan indefinitely, revisiting the start once a full pass completes - by
+     * then names once absent from the list may have appeared upstream, or the target's own stem
+     * may have changed.
+     */
+    static LargeWordlistBatch generateFromLargeWordlist(String rootHostname, int offset, int batchSize) {
+        String stem = sanitizedStem(rootHostname);
+        if (stem == null || batchSize <= 0 || LARGE_WORDLIST.isEmpty()) {
+            return new LargeWordlistBatch(List.of(), offset);
+        }
+        int total = LARGE_WORDLIST.size();
+        int start = Math.floorMod(offset, total);
+        Set<String> candidates = new LinkedHashSet<>();
+        for (int i = 0; i < batchSize; i++) {
+            String term = LARGE_WORDLIST.get((start + i) % total);
+            candidates.add(stem + "-" + term);
+            candidates.add(stem + term);
+        }
+        int nextOffset = (start + batchSize) % total;
+        return new LargeWordlistBatch(new ArrayList<>(candidates), nextOffset);
+    }
+
+    /** Test-only visibility into the large wordlist's real size, so tests can exercise wraparound
+     * behavior without hardcoding a count that would silently drift if the bundled resource changes. */
+    static int largeWordlistSize() {
+        return LARGE_WORDLIST.size();
+    }
+
+    /** Tolerant of a missing resource (returns empty, same "degrade, don't fail the module"
+     * philosophy as the rest of this class) - the classpath resource not being found would mean a
+     * packaging bug, not a runtime condition worth throwing over. */
+    private static List<String> loadWordlist(String resourcePath) {
+        try (InputStream is = BucketNameGenerator.class.getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                return List.of();
+            }
+            List<String> lines = new ArrayList<>();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    lines.add(trimmed);
+                }
+            }
+            return List.copyOf(lines);
+        } catch (IOException e) {
+            return List.of();
+        }
     }
 
     /**
