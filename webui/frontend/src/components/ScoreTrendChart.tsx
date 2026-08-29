@@ -61,9 +61,10 @@ export function ScoreTrendChart({
               fillOpacity={band.opacity}
               stroke="none"
               ifOverflow="extendDomain"
+              // insideRight, not insideLeft - see the identical fix/reasoning in CompareTrendChart.
               label={{
                 value: band.label,
-                position: "insideLeft",
+                position: "insideRight",
                 fill: band.color,
                 fillOpacity: 0.5,
                 fontSize: 10,

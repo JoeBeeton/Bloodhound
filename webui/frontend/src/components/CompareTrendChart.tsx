@@ -52,9 +52,13 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
               fillOpacity={band.opacity}
               stroke="none"
               ifOverflow="extendDomain"
+              // insideRight, not insideLeft: the numeric Y-axis ticks (0/25/50/75/100) already
+              // live right at the left edge - a grade letter landing at the same height (e.g.
+              // "C" beside "75") read as visual clutter, confirmed via a real screenshot review.
+              // The right edge is otherwise empty space.
               label={{
                 value: band.label,
-                position: "insideLeft",
+                position: "insideRight",
                 fill: band.color,
                 fillOpacity: 0.5,
                 fontSize: 10,
