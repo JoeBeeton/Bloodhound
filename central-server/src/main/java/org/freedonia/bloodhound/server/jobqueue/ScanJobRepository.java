@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.jobqueue;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -14,6 +15,24 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public class ScanJobRepository {
+
+    /**
+     * Unlike every other Tier 2 module, ZAP_ACTIVE_SCAN drives a single shared {@code zap}
+     * sidecar container (not scaled per worker replica - see docker-compose.yml), and OWASP ZAP
+     * itself is CPU/thread-heavy per concurrent spider+active-scan session. Confirmed live: with
+     * 4 worker replicas each independently running their own ZAP_ACTIVE_SCAN job, the zap
+     * container pegged at 100%+ CPU and stopped answering even trivial status-check API calls
+     * within their 30s timeout, failing every in-flight scan with "failed to reach ZAP". The job
+     * queue has no other concept of "this module type shares an external bottleneck" - {@link
+     * #claim} caps how many ZAP_ACTIVE_SCAN jobs can be CLAIMED/RUNNING at once, independent of
+     * how many workers exist, so scaling workers up for every other module type doesn't also
+     * scale up load against the one shared ZAP instance. A small approximate-not-exact race is
+     * possible (two concurrent claim() calls could both see the cap not yet reached and each
+     * claim one, momentarily exceeding it by one) - acceptable, same tolerance for benign
+     * raciness FOR UPDATE SKIP LOCKED already accepts elsewhere in this query.
+     */
+    @Value("${bloodhound.zap.max-concurrent-scans:1}")
+    private int zapMaxConcurrentScans = 1;
 
     private static final RowMapper<ScanJob> ROW_MAPPER = (rs, rowNum) -> new ScanJob(
             UUID.fromString(rs.getString("id")),
@@ -113,6 +132,10 @@ public class ScanJobRepository {
                 WITH claimed AS (
                     SELECT id FROM scan_jobs
                     WHERE status = 'PENDING' AND run_after <= now()
+                      AND (
+                          module_type != 'ZAP_ACTIVE_SCAN'
+                          OR (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
+                      )
                     ORDER BY priority DESC, created_at ASC
                     LIMIT ?
                     FOR UPDATE SKIP LOCKED
@@ -124,7 +147,7 @@ public class ScanJobRepository {
                 WHERE sj.id = claimed.id
                 RETURNING sj.*
                 """;
-        return jdbc.query(sql, ROW_MAPPER, capacity, workerId, leaseMinutes);
+        return jdbc.query(sql, ROW_MAPPER, zapMaxConcurrentScans, capacity, workerId, leaseMinutes);
     }
 
     /** Returns true iff a matching, still-leased job was found and extended. */
