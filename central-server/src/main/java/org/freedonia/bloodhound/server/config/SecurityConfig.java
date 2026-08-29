@@ -51,8 +51,9 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(
             CustomUserDetailsService userDetailsService, PasswordEncoder passwordEncoder) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService);
+        // Spring Security 7 removed the no-arg constructor + setUserDetailsService() -
+        // UserDetailsService is now a required constructor argument.
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
         return new ProviderManager(provider);
     }
