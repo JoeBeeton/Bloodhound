@@ -26,7 +26,7 @@ export function Modal({
           <h2 className="font-display text-lg font-bold text-neon-cyan">{title}</h2>
           <button
             onClick={onClose}
-            className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-slate-700 font-mono text-sm text-slate-400 transition hover:border-neon-cyan/50 hover:bg-neon-cyan/10 hover:text-neon-cyan"
             aria-label="Close"
           >
             ✕
