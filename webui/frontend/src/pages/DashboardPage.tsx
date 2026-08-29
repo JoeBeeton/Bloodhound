@@ -33,6 +33,18 @@ const SEVERITY_STYLES: Record<Severity, string> = {
   INFO: "border-severity-info/50 text-severity-info",
 };
 
+/** Same bold left-edge accent as FindingCard - only used on "Top open findings" below, which
+ * (like FindingCard) is severity-ranked. "Recent findings" deliberately stays neutral-bordered
+ * (see the comment at its own render site) since it mixes in INFO-level items not meant to read
+ * as alarming, so it doesn't get this treatment. */
+const SEVERITY_ACCENT: Record<Severity, string> = {
+  CRITICAL: "border-l-severity-critical",
+  HIGH: "border-l-severity-high",
+  MEDIUM: "border-l-severity-medium",
+  LOW: "border-l-severity-low",
+  INFO: "border-l-severity-info",
+};
+
 /** Own-target scores averaged for the header gauge - null while none of them have a
  * completed scan yet (overallScore stays null until then, see Target's own doc comment). */
 function averageOwnScore(ownTargets: Target[]): number | null {
@@ -137,7 +149,7 @@ export function DashboardPage() {
                       <button
                         key={f.id}
                         onClick={() => setSelectedFinding(f)}
-                        className={`block w-full rounded-lg border bg-panel/60 p-3 text-left transition hover:bg-panel ${SEVERITY_STYLES[f.severity]}`}
+                        className={`block w-full rounded-lg border border-l-4 bg-panel/60 p-3 text-left transition hover:bg-panel ${SEVERITY_STYLES[f.severity]} ${SEVERITY_ACCENT[f.severity]}`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-3">
                           <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[f.severity]}`}>
