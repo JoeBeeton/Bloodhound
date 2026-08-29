@@ -134,7 +134,7 @@ export function AdminSlackPage() {
           )}
 
           <label className="mt-3 flex items-center gap-2 font-mono text-xs text-slate-300">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <input className="checkbox-cyber" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
             Enabled
           </label>
 
@@ -142,7 +142,7 @@ export function AdminSlackPage() {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {NOTIFICATION_TYPES.map((t) => (
               <label key={t.value} className="flex items-center gap-2 font-mono text-xs text-slate-300">
-                <input type="checkbox" checked={types.includes(t.value)} onChange={() => toggleType(t.value)} />
+                <input className="checkbox-cyber" type="checkbox" checked={types.includes(t.value)} onChange={() => toggleType(t.value)} />
                 {t.label}
               </label>
             ))}
@@ -150,6 +150,7 @@ export function AdminSlackPage() {
 
           <label className="mt-4 flex items-center gap-2 font-mono text-xs text-slate-300">
             <input
+              className="checkbox-cyber"
               type="checkbox"
               checked={ownTargetsOnly}
               onChange={(e) => setOwnTargetsOnly(e.target.checked)}
@@ -165,7 +166,7 @@ export function AdminSlackPage() {
             <button
               type="submit"
               disabled={saveMutation.isPending || !urlLooksValid || webhookUrl === ""}
-              className="rounded bg-neon-cyan/90 px-4 py-2 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-cyan disabled:opacity-50"
+              className="rounded bg-neon-magenta/90 px-4 py-2 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
             >
               {saveMutation.isPending ? "Saving…" : "Save"}
             </button>

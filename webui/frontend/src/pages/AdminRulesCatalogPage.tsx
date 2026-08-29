@@ -20,6 +20,17 @@ const SEVERITY_STYLES: Record<Severity, string> = {
   INFO: "text-severity-info",
 };
 
+/** Same left-edge accent bar as FindingCard/Dashboard's "Top open findings" - a security team
+ * browsing "what does this tool check for" benefits from the same at-a-glance severity scan as
+ * the actual findings views, for consistency across the whole app. */
+const SEVERITY_ACCENT: Record<Severity, string> = {
+  CRITICAL: "border-l-severity-critical",
+  HIGH: "border-l-severity-high",
+  MEDIUM: "border-l-severity-medium",
+  LOW: "border-l-severity-low",
+  INFO: "border-l-severity-info",
+};
+
 /** Every check Bloodhound runs, grouped by category - in-product documentation of the whole rules catalog built up across Milestones 3-6b. */
 export function AdminRulesCatalogPage() {
   const rulesQuery = useQuery({ queryKey: ["rules-catalog"], queryFn: fetchRulesCatalog });
@@ -60,7 +71,10 @@ export function AdminRulesCatalogPage() {
             </p>
             <div className="flex flex-col gap-2">
               {filtered.map((rule) => (
-                <div key={rule.ruleId} className="rounded-lg border border-neon-cyan/10 bg-panel/60 p-4">
+                <div
+                  key={rule.ruleId}
+                  className={`rounded-lg border border-l-4 border-neon-cyan/10 bg-panel/60 p-4 ${SEVERITY_ACCENT[rule.defaultSeverity]}`}
+                >
                   <div className="mb-1 flex items-center justify-between gap-3">
                     <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[rule.defaultSeverity]}`}>
                       {rule.defaultSeverity} · {rule.category}

@@ -179,7 +179,7 @@ export function AdminSsoPage() {
               </div>
 
               <label className="mb-4 flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-slate-300">
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+                <input className="checkbox-cyber" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
                 Enabled
               </label>
 
