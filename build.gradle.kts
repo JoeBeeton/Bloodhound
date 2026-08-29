@@ -2,7 +2,7 @@ import org.gradle.testing.jacoco.tasks.JacocoReport
 
 plugins {
     java
-    id("org.springframework.boot") version "3.4.1" apply false
+    id("org.springframework.boot") version "3.5.16" apply false
     id("io.spring.dependency-management") version "1.1.7" apply false
     // SBOM generation (CycloneDX Software Foundation, Apache-2.0 - build-time
     // tooling only, never shipped in a runtime artifact, so the license bar
