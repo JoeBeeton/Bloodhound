@@ -318,7 +318,20 @@ export function layoutGraph(data: GraphData, width: number, height: number): Gra
         .strength((l) => (l.kind === "scanning" ? 0.25 : 0.55)),
     )
     .force("charge", forceManyBody().strength(-90))
-    .force("collide", forceCollide<GraphNode>().radius((d) => d.radius + 6))
+    // Platform nodes (hub/database/webui/worker) always render a two-line label (name + a
+    // hostname:port sub-label - see AttackSurfaceGraph's showLabel/subLabel rendering), which
+    // extends well past a plain node+radius collision margin - confirmed live: with few workers,
+    // the platform cluster (postgres/webui/worker, all pulled toward the same corner by
+    // clusterFor) packed tight enough for "WEBUI"/"webui:8080" to render directly on top of
+    // "POSTGRES"/"postgres:5432". Everything else keeps the tighter margin so dense subdomain
+    // fans still pack reasonably close.
+    .force(
+      "collide",
+      forceCollide<GraphNode>().radius((d) => {
+        const twoLineLabel = d.kind === "hub" || d.kind === "database" || d.kind === "webui" || d.kind === "worker";
+        return d.radius + (twoLineLabel ? 28 : 6);
+      }),
+    )
     .force("center", forceCenter(width / 2, height / 2).strength(0.02))
     .force(
       "x",
