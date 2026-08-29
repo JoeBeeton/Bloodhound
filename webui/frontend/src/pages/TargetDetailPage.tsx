@@ -326,7 +326,7 @@ export function TargetDetailPage() {
               value={target.scanCadenceSeconds}
               disabled={updateScheduleMutation.isPending}
               onChange={(e) => updateScheduleMutation.mutate(Number(e.target.value))}
-              className="rounded border border-slate-700 bg-void px-2 py-1 font-mono text-xs text-slate-200 outline-none focus:border-neon-cyan disabled:opacity-40"
+              className="select-cyber rounded border border-slate-700 bg-void px-2 py-1 font-mono text-xs text-slate-200 outline-none focus:border-neon-cyan disabled:opacity-40"
             >
               {SCHEDULE_OPTIONS.map((opt) => (
                 <option key={opt.seconds} value={opt.seconds}>

@@ -44,3 +44,23 @@ body {
     animation: none;
   }
 }
+
+/* Every <select> in the app (target type, user role/status, ...) opts into this - the browser's
+   default dropdown arrow is a plain OS-native triangle that clashes hard with the rest of the
+   retro-synthwave chrome (custom borders, glow, JetBrains Mono everywhere). `appearance: none`
+   strips it; the inline SVG chevron below replaces it in the same cyan the rest of the UI's
+   interactive accents use, so a select reads as "part of this design system" at a glance instead
+   of "an unstyled form control that slipped through." Colors/borders/sizing stay on the element's
+   own Tailwind classes per call site - this only owns the arrow and its clickable affordance. */
+.select-cyber {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2300f0ff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 1.75rem;
+  cursor: pointer;
+}
+.select-cyber:disabled {
+  cursor: not-allowed;
+}

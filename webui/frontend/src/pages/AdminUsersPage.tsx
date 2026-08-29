@@ -104,7 +104,7 @@ export function AdminUsersPage() {
                   value={u.role}
                   disabled={u.id === currentUser?.id || mutate.isPending}
                   onChange={(e) => mutate.mutate({ userId: u.id, patch: { role: e.target.value } })}
-                  className="rounded border border-slate-700 bg-void px-2 py-1 font-mono text-xs text-slate-200 outline-none focus:border-neon-cyan disabled:opacity-40"
+                  className="select-cyber rounded border border-slate-700 bg-void px-2 py-1 font-mono text-xs text-slate-200 outline-none focus:border-neon-cyan disabled:opacity-40"
                   title={u.id === currentUser?.id ? "You can't change your own role" : undefined}
                 >
                   {ROLES.map((r) => (
@@ -117,7 +117,7 @@ export function AdminUsersPage() {
                   value={u.status}
                   disabled={u.id === currentUser?.id || mutate.isPending}
                   onChange={(e) => mutate.mutate({ userId: u.id, patch: { status: e.target.value } })}
-                  className={`rounded border px-2 py-1 font-mono text-xs outline-none focus:border-neon-cyan disabled:opacity-40 ${
+                  className={`select-cyber rounded border px-2 py-1 font-mono text-xs outline-none focus:border-neon-cyan disabled:opacity-40 ${
                     u.status === "ACTIVE" ? "border-neon-cyan/40 text-neon-cyan" : "border-severity-critical/40 text-severity-critical"
                   }`}
                   title={u.id === currentUser?.id ? "You can't change your own status" : undefined}
@@ -227,7 +227,7 @@ function AddUserModal({
           <select
             value={role}
             onChange={(e) => setRole(e.target.value as UserRole)}
-            className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+            className="select-cyber w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
           >
             {ROLES.map((r) => (
               <option key={r} value={r}>
