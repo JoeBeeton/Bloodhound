@@ -62,7 +62,7 @@ public class JobClaimService {
             log.warn("lease reaper: {} job(s) had an expired lease", reaped.size());
         }
         reaped.forEach(r -> {
-            scanJobAttemptRepository.completeAttempt(r.jobId(), "TIMED_OUT_REAPED", "lease expired without heartbeat/result");
+            scanJobAttemptRepository.completeAttempt(r.jobId(), "TIMED_OUT_REAPED", "lease expired without heartbeat/result", null);
             if (r.workerId() != null) {
                 workerRepository.clearCurrentJob(r.workerId(), r.jobId());
             }

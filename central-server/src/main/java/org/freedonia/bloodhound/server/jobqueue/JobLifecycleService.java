@@ -83,7 +83,8 @@ public class JobLifecycleService {
             String workerId,
             String resultMetadataJson,
             List<FindingPayload> findings,
-            Map<String, Object> rawMetadata) {
+            Map<String, Object> rawMetadata,
+            List<String> logLines) {
         ScanJob job = scanJobRepository.findById(jobId).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
         // SUBDOMAIN_ENUM and WHOIS are the module types whose results need
         // more than the generic findings-reconciliation path: each carries
@@ -146,18 +147,18 @@ public class JobLifecycleService {
         if (!scanJobRepository.complete(jobId, workerId, resultMetadataJson)) {
             throw notFoundOrNotOwned();
         }
-        scanJobAttemptRepository.completeAttempt(jobId, "SUCCESS", null);
+        scanJobAttemptRepository.completeAttempt(jobId, "SUCCESS", null, joinLogLines(logLines));
         workerRepository.clearCurrentJob(workerId, jobId);
         scanRunService.checkAndCompleteRun(job.scanRunId());
     }
 
-    public void fail(UUID jobId, String workerId, String errorDetail) {
+    public void fail(UUID jobId, String workerId, String errorDetail, List<String> logLines) {
         ScanJob job = scanJobRepository.findById(jobId).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
         String newStatus =
                 scanJobRepository.fail(jobId, workerId, errorDetail).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
         // The attempt itself failed either way - whether the job as a whole is now retrying
         // (PENDING) or terminal (FAILED) is a separate question from what happened to *this* try.
-        scanJobAttemptRepository.completeAttempt(jobId, "FAILED", errorDetail);
+        scanJobAttemptRepository.completeAttempt(jobId, "FAILED", errorDetail, joinLogLines(logLines));
         // The worker is done with this attempt regardless of whether the job itself is
         // now retrying (PENDING, no owner) or terminal (FAILED) - either way it's no
         // longer *this* worker's current job.
@@ -165,6 +166,14 @@ public class JobLifecycleService {
         if ("FAILED".equals(newStatus)) {
             scanRunService.checkAndCompleteRun(job.scanRunId());
         }
+    }
+
+    /** null (not an empty string) when there's nothing captured, so the UI can tell "no log output" from "a genuinely empty log" and skip rendering the section entirely. */
+    private static String joinLogLines(List<String> logLines) {
+        if (logLines == null || logLines.isEmpty()) {
+            return null;
+        }
+        return String.join("\n", logLines);
     }
 
     private static ResponseStatusException notFoundOrNotOwned() {

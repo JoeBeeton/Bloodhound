@@ -59,7 +59,8 @@ class RunControllerTest {
                 Instant.now(), Instant.now(), 1, 3, "{\"host\":\"sub.example.com\"}", null, null, Instant.now());
         when(scanJobRepository.findByScanRunId(runId)).thenReturn(List.of(job));
 
-        ScanJobAttempt attempt = new ScanJobAttempt(UUID.randomUUID(), jobId, 1, "worker-1", Instant.now(), Instant.now(), "SUCCESS", null);
+        ScanJobAttempt attempt =
+                new ScanJobAttempt(UUID.randomUUID(), jobId, 1, "worker-1", Instant.now(), Instant.now(), "SUCCESS", null, null);
         when(scanJobAttemptRepository.findByScanJobId(jobId)).thenReturn(List.of(attempt));
 
         ScanRunDetail detail = controller.get(runId, principal);

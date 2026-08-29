@@ -67,13 +67,13 @@ public class JobController {
         List<FindingPayload> findings = request.findings() == null ? List.of() : request.findings();
         Map<String, Object> rawMetadata = request.rawMetadata() == null ? Map.of() : request.rawMetadata();
         Map<String, Object> resultMetadata = Map.of("findingCount", findings.size(), "rawMetadata", rawMetadata);
-        jobLifecycleService.result(id, request.workerId(), writeJson(resultMetadata), findings, rawMetadata);
+        jobLifecycleService.result(id, request.workerId(), writeJson(resultMetadata), findings, rawMetadata, request.logLines());
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{id}/fail")
     public ResponseEntity<Void> fail(@PathVariable UUID id, @Valid @RequestBody JobFailRequest request) {
-        jobLifecycleService.fail(id, request.workerId(), request.errorDetail());
+        jobLifecycleService.fail(id, request.workerId(), request.errorDetail(), request.logLines());
         return ResponseEntity.noContent().build();
     }
 

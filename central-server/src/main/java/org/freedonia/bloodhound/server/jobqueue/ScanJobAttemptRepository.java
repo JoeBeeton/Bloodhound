@@ -21,7 +21,8 @@ public class ScanJobAttemptRepository {
             rs.getTimestamp("started_at").toInstant(),
             rs.getTimestamp("ended_at") != null ? rs.getTimestamp("ended_at").toInstant() : null,
             rs.getString("outcome"),
-            rs.getString("error_detail"));
+            rs.getString("error_detail"),
+            rs.getString("log_output"));
 
     private final JdbcTemplate jdbc;
 
@@ -44,10 +45,10 @@ public class ScanJobAttemptRepository {
      * there's exactly one at a time by construction (a job is only ever claimed once
      * before its current attempt is closed out, one way or another).
      */
-    public void completeAttempt(UUID scanJobId, String outcome, String errorDetail) {
+    public void completeAttempt(UUID scanJobId, String outcome, String errorDetail, String logOutput) {
         jdbc.update(
                 """
-                UPDATE scan_job_attempts SET ended_at = now(), outcome = ?, error_detail = ?
+                UPDATE scan_job_attempts SET ended_at = now(), outcome = ?, error_detail = ?, log_output = ?
                 WHERE id = (
                     SELECT id FROM scan_job_attempts
                     WHERE scan_job_id = ? AND outcome IS NULL
@@ -56,6 +57,7 @@ public class ScanJobAttemptRepository {
                 """,
                 outcome,
                 errorDetail,
+                logOutput,
                 scanJobId);
     }
 
