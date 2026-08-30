@@ -266,6 +266,19 @@ public class FindingRepository {
 
     /** Org-wide findings for the dashboard's "top open findings" widget - joined with hostname since these span multiple targets. */
     public List<OrgFinding> findOpenByOrganization(UUID organizationId, List<String> severities, int limit) {
+        return findOpenByOrganization(organizationId, severities, List.of(), limit, 0);
+    }
+
+    /**
+     * Same as the 3-arg overload, plus category filtering and offset pagination - backs the
+     * org-wide Findings page (a full, filterable, paginated browse of every open finding across
+     * every target - previously only viewable one target at a time, or capped to the dashboard's
+     * top 10). Kept as a separate overload rather than changing the original's signature, so the
+     * dashboard/MCP call sites (which only ever want an unpaginated top-N slice) don't need to
+     * pass params they don't use.
+     */
+    public List<OrgFinding> findOpenByOrganization(
+            UUID organizationId, List<String> severities, List<String> categories, int limit, int offset) {
         StringBuilder sql = new StringBuilder(
                 "SELECT f.*, t.hostname AS target_hostname, "
                         + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
@@ -277,17 +290,27 @@ public class FindingRepository {
                         + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN'");
         List<Object> args = new ArrayList<>();
         args.add(organizationId);
-        if (severities != null && !severities.isEmpty()) {
-            sql.append(" AND f.severity IN (")
-                    .append(String.join(",", severities.stream().map(s -> "?").toList()))
-                    .append(")");
-            args.addAll(severities);
-        }
+        appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
+        appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
         sql.append(" ORDER BY CASE f.severity "
                 + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
-                + "f.created_at DESC LIMIT ?");
+                + "f.created_at DESC LIMIT ? OFFSET ?");
         args.add(limit);
+        args.add(offset);
         return jdbc.query(sql.toString(), ORG_FINDING_MAPPER, args.toArray());
+    }
+
+    /** Unpaginated total matching {@link #findOpenByOrganization}'s filters - lets a caller show "showing N of TOTAL". */
+    public int countOpenByOrganizationFiltered(UUID organizationId, List<String> severities, List<String> categories) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT COUNT(*) FROM findings f JOIN targets t ON t.id = f.target_id "
+                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN'");
+        List<Object> args = new ArrayList<>();
+        args.add(organizationId);
+        appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
+        appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
+        return count != null ? count : 0;
     }
 
     /**
