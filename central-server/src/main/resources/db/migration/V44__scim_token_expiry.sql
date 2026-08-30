@@ -1,0 +1,12 @@
+-- A product/AppSec review found SCIM tokens were the one bearer credential type in this app with
+-- no expiry concept at all - API keys (api_keys.expires_at, 90-day default) already establish
+-- the "no forever-lived credentials by default" pattern this closes the gap on.
+--
+-- Nullable, not NOT NULL DEFAULT: unlike an API key (usually ad-hoc external tooling, safe to
+-- force through a 90-day default), a SCIM token backs a live, continuous directory-sync
+-- integration with an IdP - forcing an unannounced expiry on every already-configured
+-- integration in this migration would silently break real customers' user provisioning.
+-- expires_at therefore stays optional (NULL = never expires, preserving today's actual
+-- behavior for every existing token), while new tokens can opt into a bounded lifetime from
+-- here on - see ScimTokenAdminController#create.
+ALTER TABLE scim_tokens ADD COLUMN expires_at TIMESTAMPTZ;
