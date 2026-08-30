@@ -214,7 +214,7 @@ export function TargetsPage() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by hostname…"
+              placeholder="Filter by hostname or notes…"
               className="w-full rounded border border-slate-700 bg-void py-2 pl-8 pr-3 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
             />
           </div>
@@ -293,7 +293,15 @@ export function TargetsPage() {
               ? (targetsQuery.data?.filter((t) => !t.isActive) ?? [])
               : (targetsQuery.data ?? []);
             const needle = search.trim().toLowerCase();
-            const visible = needle ? byRemoved.filter((t) => t.hostname.toLowerCase().includes(needle)) : byRemoved;
+            // Notes are exactly the kind of thing someone searches for without remembering the
+            // hostname - "which target did I write 'staging' on again?" - so matching them here
+            // too, not just the hostname, is what makes the notes feature actually findable
+            // again later rather than a write-once field.
+            const visible = needle
+              ? byRemoved.filter(
+                  (t) => t.hostname.toLowerCase().includes(needle) || t.notes?.toLowerCase().includes(needle),
+                )
+              : byRemoved;
             if (targetsQuery.data && visible.length === 0) {
               return (
                 <p className="font-mono text-sm text-slate-400">
@@ -522,6 +530,19 @@ function TargetRow({
               aria-hidden="true"
             />
             {target.hostname}
+            {/* A glanceable "this target has notes" signal - without it, notes are only ever
+                visible after clicking into the target's own detail page, which defeats a lot of
+                the point of leaving one in the first place (e.g. "don't touch this one" is far
+                more useful seen from the list than discovered one click too late). */}
+            {target.notes && (
+              <span
+                className="shrink-0 text-slate-500"
+                title={target.notes}
+                aria-label={`Notes: ${target.notes}`}
+              >
+                📝
+              </span>
+            )}
           </Link>
           <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
             {target.targetType} · {target.isActive ? "active" : "removed"} · <LastScanLabel target={target} />
