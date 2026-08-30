@@ -2,15 +2,17 @@ package org.freedonia.bloodhound.server.mcp;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
+import org.freedonia.bloodhound.server.orgs.OrganizationRepository;
+import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.springaicommunity.mcp.security.authorizationserver.config.McpAuthorizationServerConfigurer;
 import org.springaicommunity.mcp.security.server.config.McpServerOAuth2Configurer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
-import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -36,15 +38,27 @@ public class McpSecurityConfig {
      * local-login already goes through) via formLogin, rather than building a bespoke bridge to
      * the SPA's own JWT-based login page - Spring's plain default login form for this first
      * version, same "functional, not styled" scope cut as the consent screen below.
+     *
+     * <p>Deliberately does NOT call {@code .authenticationManager(...)} explicitly on this chain:
+     * doing so replaces its shared AuthenticationManagerBuilder with a fixed manager, which stops
+     * McpAuthorizationServerConfigurer from registering its own OAuth2 authorization-request
+     * providers into it (confirmed live: ProviderNotFoundException for
+     * OAuth2AuthorizationCodeRequestAuthenticationToken - the AS filter never got a provider that
+     * could authenticate its own authorization requests). Leaving it unset lets Spring Security
+     * build this chain's manager the normal way - SecurityConfig's global authenticationManager
+     * bean as parent (so formLogin still authenticates local users) with the AS configurer's own
+     * providers layered on top.
      */
     @Bean
     @Order(-10)
-    public SecurityFilterChain mcpAuthorizationServerFilterChain(
-            HttpSecurity http, AuthenticationManager authenticationManager) throws Exception {
+    public SecurityFilterChain mcpAuthorizationServerFilterChain(HttpSecurity http) throws Exception {
         http.securityMatcher("/oauth2/**", "/.well-known/**", "/login", "/login/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
-                .authenticationManager(authenticationManager)
-                .with(McpAuthorizationServerConfigurer.mcpAuthorizationServer(), withDefaults())
+                // Dynamic Client Registration (RFC 7591) - lets an MCP client (e.g. claude.ai's
+                // connector UI) self-register a client_id/secret without an admin pre-creating one.
+                .with(
+                        McpAuthorizationServerConfigurer.mcpAuthorizationServer().dynamicClientRegistration(true),
+                        withDefaults())
                 .formLogin(withDefaults());
         return http.build();
     }
@@ -66,7 +80,11 @@ public class McpSecurityConfig {
     @Bean
     @Order(-9)
     public SecurityFilterChain mcpResourceServerFilterChain(
-            HttpSecurity http, JwtDecoder mcpJwtDecoder, @Value("${bloodhound.mcp.issuer-uri}") String issuerUri)
+            HttpSecurity http,
+            JwtDecoder mcpJwtDecoder,
+            @Value("${bloodhound.mcp.issuer-uri}") String issuerUri,
+            UserRepository userRepository,
+            OrganizationRepository organizationRepository)
             throws Exception {
         http.securityMatcher("/mcp/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
@@ -78,7 +96,10 @@ public class McpSecurityConfig {
                     mcpAuthorization.authorizationServer(issuerUri);
                     mcpAuthorization.jwtDecoder(mcpJwtDecoder);
                     mcpAuthorization.validateAudienceClaim(true);
-                });
+                })
+                .addFilterAfter(
+                        new McpEnabledGuardFilter(userRepository, organizationRepository),
+                        BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 }
