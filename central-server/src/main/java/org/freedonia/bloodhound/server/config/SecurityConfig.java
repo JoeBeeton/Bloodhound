@@ -43,9 +43,16 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * Cost 12, not BCryptPasswordEncoder's own default of 10 - current OWASP guidance for new
+     * deployments. Bumping this is safe for already-stored hashes: BCrypt encodes its own cost
+     * factor in the hash string itself, so verifying an existing cost-10 hash still works
+     * correctly against a cost-12 encoder - only newly-created/changed passwords get the higher
+     * cost, nothing needs a migration.
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(12);
     }
 
     @Bean

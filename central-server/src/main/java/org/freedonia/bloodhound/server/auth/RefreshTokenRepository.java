@@ -17,7 +17,8 @@ public class RefreshTokenRepository {
             rs.getString("token_hash"),
             rs.getTimestamp("expires_at").toInstant(),
             rs.getTimestamp("revoked_at") != null ? rs.getTimestamp("revoked_at").toInstant() : null,
-            rs.getTimestamp("created_at").toInstant());
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getTimestamp("session_started_at").toInstant());
 
     private final JdbcTemplate jdbc;
 
@@ -25,13 +26,19 @@ public class RefreshTokenRepository {
         this.jdbc = jdbc;
     }
 
-    public void insert(UUID id, UUID userId, String tokenHash, Timestamp expiresAt) {
+    /**
+     * @param sessionStartedAt fixed for the whole rotation lineage - a fresh login passes {@code
+     *     now()}, a rotation (see AuthenticationService#refresh) passes the token being replaced's
+     *     own sessionStartedAt through unchanged, so it never resets on activity.
+     */
+    public void insert(UUID id, UUID userId, String tokenHash, Timestamp expiresAt, Timestamp sessionStartedAt) {
         jdbc.update(
-                "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, session_started_at) VALUES (?, ?, ?, ?, ?)",
                 id,
                 userId,
                 tokenHash,
-                expiresAt);
+                expiresAt,
+                sessionStartedAt);
     }
 
     /** Returns the token only if it exists, is unrevoked, and unexpired. */
@@ -55,6 +62,17 @@ public class RefreshTokenRepository {
 
     public void revoke(UUID id) {
         jdbc.update("UPDATE refresh_tokens SET revoked_at = now() WHERE id = ?", id);
+    }
+
+    /**
+     * A security review found that changing your password left every other still-active refresh
+     * token (and the httpOnly cookie it lives in, on whatever other device/browser holds it)
+     * completely untouched - the primary self-remediation action a user takes when they suspect
+     * their account is compromised previously did nothing to actually end an attacker's existing
+     * session. Called from UserSelfController#changePassword.
+     */
+    public void revokeAllForUser(UUID userId) {
+        jdbc.update("UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = ? AND revoked_at IS NULL", userId);
     }
 
     /**

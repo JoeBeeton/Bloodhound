@@ -27,7 +27,7 @@ class AuthenticationServiceTest {
     private final JwtService jwtService = mock(JwtService.class);
     private final LoginAttemptLimiter loginAttemptLimiter = mock(LoginAttemptLimiter.class);
     private final AuthenticationService service = new AuthenticationService(
-            authenticationManager, userRepository, refreshTokenRepository, jwtService, loginAttemptLimiter, 30);
+            authenticationManager, userRepository, refreshTokenRepository, jwtService, loginAttemptLimiter, 30, 90);
 
     private User user(UUID id, String status) {
         return new User(id, UUID.randomUUID(), "u@example.com", "Name", "hash", "LOCAL", "VIEWER", status, Instant.now(), true);
@@ -72,7 +72,7 @@ class AuthenticationServiceTest {
         verify(loginAttemptLimiter).recordSuccess("u@example.com");
         verify(loginAttemptLimiter, never()).recordFailure(any());
         verify(userRepository).touchLastLogin(user.id());
-        verify(refreshTokenRepository).insert(eq(result.refreshTokenId()), eq(user.id()), any(), any());
+        verify(refreshTokenRepository).insert(eq(result.refreshTokenId()), eq(user.id()), any(), any(), any());
     }
 
     @Test
@@ -86,7 +86,7 @@ class AuthenticationServiceTest {
     void refresh_expiredToken_rejected_lineageNotTouched() {
         UUID userId = UUID.randomUUID();
         RefreshToken token =
-                new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().minusSeconds(1), null, Instant.now());
+                new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().minusSeconds(1), null, Instant.now(), Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
 
         assertThatThrownBy(() -> service.refresh("raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
@@ -103,7 +103,7 @@ class AuthenticationServiceTest {
         UUID userId = UUID.randomUUID();
         UUID revokedTokenId = UUID.randomUUID();
         RefreshToken revokedToken = new RefreshToken(
-                revokedTokenId, userId, "hash", Instant.now().plusSeconds(3600), Instant.now().minusSeconds(60), Instant.now());
+                revokedTokenId, userId, "hash", Instant.now().plusSeconds(3600), Instant.now().minusSeconds(60), Instant.now(), Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(revokedToken));
 
         assertThatThrownBy(() -> service.refresh("raw-stolen-token")).isInstanceOf(InvalidRefreshTokenException.class);
@@ -116,9 +116,57 @@ class AuthenticationServiceTest {
     }
 
     @Test
+    void refresh_pastAbsoluteSessionCap_rejected_revokesLineage_evenThoughTokenItselfNotExpiredOrRevoked() {
+        // The sliding TTL alone would happily keep renewing this token forever if it's used at
+        // least once per window - sessionStartedAt more than absoluteMaxSessionDays (90, per this
+        // test's service construction) in the past must be rejected regardless.
+        UUID userId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+        RefreshToken token = new RefreshToken(
+                tokenId,
+                userId,
+                "hash",
+                Instant.now().plusSeconds(3600),
+                null,
+                Instant.now(),
+                Instant.now().minus(java.time.Duration.ofDays(91)));
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
+
+        assertThatThrownBy(() -> service.refresh("raw-token")).isInstanceOf(InvalidRefreshTokenException.class);
+
+        verify(refreshTokenRepository).revokeLineageFrom(tokenId);
+        verify(userRepository, never()).findById(any());
+        verify(refreshTokenRepository, never()).tryRevoke(any());
+    }
+
+    @Test
+    void refresh_withinAbsoluteSessionCap_succeeds() {
+        UUID userId = UUID.randomUUID();
+        User user = user(userId, "ACTIVE");
+        UUID tokenId = UUID.randomUUID();
+        RefreshToken token = new RefreshToken(
+                tokenId,
+                userId,
+                "hash",
+                Instant.now().plusSeconds(3600),
+                null,
+                Instant.now(),
+                Instant.now().minus(java.time.Duration.ofDays(89)));
+        when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
+        when(refreshTokenRepository.tryRevoke(tokenId)).thenReturn(true);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(jwtService.issueAccessToken(any(), any(), any(), any())).thenReturn("new-jwt");
+        when(jwtService.accessTokenTtlSeconds()).thenReturn(900L);
+
+        AuthResult result = service.refresh("raw-token");
+
+        assertThat(result.accessToken()).isEqualTo("new-jwt");
+    }
+
+    @Test
     void refresh_tokenBelongsToSuspendedUser_rejected_evenThoughTokenItselfIsValid() {
         UUID userId = UUID.randomUUID();
-        RefreshToken token = new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
+        RefreshToken token = new RefreshToken(UUID.randomUUID(), userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now(), Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId, "SUSPENDED")));
 
@@ -131,7 +179,7 @@ class AuthenticationServiceTest {
         UUID userId = UUID.randomUUID();
         User user = user(userId, "ACTIVE");
         UUID oldTokenId = UUID.randomUUID();
-        RefreshToken token = new RefreshToken(oldTokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
+        RefreshToken token = new RefreshToken(oldTokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now(), Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
         when(refreshTokenRepository.tryRevoke(oldTokenId)).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
@@ -156,7 +204,7 @@ class AuthenticationServiceTest {
         UUID userId = UUID.randomUUID();
         User user = user(userId, "ACTIVE");
         UUID tokenId = UUID.randomUUID();
-        RefreshToken token = new RefreshToken(tokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now());
+        RefreshToken token = new RefreshToken(tokenId, userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now(), Instant.now());
         when(refreshTokenRepository.findByHash(any())).thenReturn(Optional.of(token));
         when(refreshTokenRepository.tryRevoke(tokenId)).thenReturn(false);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
@@ -170,7 +218,7 @@ class AuthenticationServiceTest {
     @Test
     void logout_activeToken_revoked() {
         UUID tokenId = UUID.randomUUID();
-        RefreshToken token = new RefreshToken(tokenId, UUID.randomUUID(), "hash", Instant.now().plusSeconds(3600), null, Instant.now());
+        RefreshToken token = new RefreshToken(tokenId, UUID.randomUUID(), "hash", Instant.now().plusSeconds(3600), null, Instant.now(), Instant.now());
         when(refreshTokenRepository.findActive(any())).thenReturn(Optional.of(token));
 
         service.logout("raw-token");
