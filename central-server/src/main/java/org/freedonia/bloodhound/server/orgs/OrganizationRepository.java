@@ -13,7 +13,8 @@ public class OrganizationRepository {
             UUID.fromString(rs.getString("id")),
             rs.getString("name"),
             rs.getString("slug"),
-            rs.getTimestamp("created_at").toInstant());
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getBoolean("mcp_enabled"));
 
     private final JdbcTemplate jdbc;
 
@@ -35,5 +36,10 @@ public class OrganizationRepository {
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)", id, name, slug);
         return findById(id).orElseThrow();
+    }
+
+    /** Org-wide MCP kill switch - see Organization#mcpEnabled and McpAccessGuard. */
+    public void setMcpEnabled(UUID id, boolean enabled) {
+        jdbc.update("UPDATE organizations SET mcp_enabled = ? WHERE id = ?", enabled, id);
     }
 }

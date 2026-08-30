@@ -8,6 +8,12 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  ai:
+    mcp:
+      server:
+        name: bloodhound-mcp-server
+        # STREAMABLE, not SSE: the current MCP spec's standard transport - SSE is deprecated.
+        protocol: STREAMABLE
 
 server:
   port: 8080
@@ -60,3 +66,10 @@ bloodhound:
     # genuinely different addresses: sp-base-url is central-server's own address
     # (SAML's ACS endpoint lives there), this is webui's (what a human actually opens).
     app-base-url: ${NOTIFICATIONS_APP_BASE_URL:http://localhost:8090}
+  mcp:
+    # central-server's own browser/MCP-client-reachable address, same "not the container-network
+    # hostname" reasoning as saml.sp-base-url - the OAuth2 issuer value is embedded in every
+    # token and metadata document, and must exactly match the URL clients actually use to reach
+    # this app. A separate property/env var from saml.sp-base-url on purpose (same precedent as
+    # notifications.app-base-url above), even though the default value is identical today.
+    issuer-uri: ${MCP_ISSUER_URI:http://localhost:8080}
