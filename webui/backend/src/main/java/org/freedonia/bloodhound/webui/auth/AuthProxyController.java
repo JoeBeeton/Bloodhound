@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import org.freedonia.bloodhound.webui.auth.dto.ClientAuthResponse;
 import org.freedonia.bloodhound.webui.auth.dto.LoginRequest;
+import org.freedonia.bloodhound.webui.auth.dto.LogoutOtherSessionsRequest;
 import org.freedonia.bloodhound.webui.auth.dto.RefreshTokenRequest;
 import org.freedonia.bloodhound.webui.auth.dto.SsoExchangeRequest;
 import org.freedonia.bloodhound.webui.auth.dto.UpstreamAuthResponse;
@@ -17,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpClientErrorException;
@@ -139,6 +141,37 @@ public class AuthProxyController {
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie(servletRequest).toString())
                 .build();
+    }
+
+    /**
+     * "Log out of all other devices" - needs both the httpOnly refresh cookie (webui/backend is
+     * the only party that can read it - see the class javadoc) AND the caller's own bearer access
+     * token, forwarded through to central-server's identity check. Unlike every other endpoint
+     * here, this one requires an authenticated caller - the plain /api/v1/** passthrough
+     * (ApiProxyController) already forwards Authorization transparently for ordinary data calls,
+     * but it never sees this cookie (its path is scoped to /api/auth), so this one action needs
+     * its own dedicated route here instead.
+     */
+    @PostMapping("/logout-others")
+    public ResponseEntity<Void> logoutOtherSessions(
+            @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        if (refreshToken == null || authorization == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        try {
+            centralServerClient
+                    .post()
+                    .uri("/api/v1/users/me/sessions/logout-others")
+                    .header(HttpHeaders.AUTHORIZATION, authorization)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LogoutOtherSessionsRequest(refreshToken))
+                    .retrieve()
+                    .toBodilessEntity();
+            return ResponseEntity.noContent().build();
+        } catch (HttpClientErrorException e) {
+            return ResponseEntity.status(e.getStatusCode()).build();
+        }
     }
 
     private ResponseEntity<ClientAuthResponse> respondWithSessionCookie(

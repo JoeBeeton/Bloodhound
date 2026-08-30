@@ -14,6 +14,8 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
+import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
+import org.freedonia.bloodhound.server.security.HashUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -75,6 +77,27 @@ class UserSelfControllerTest {
         assertThatThrownBy(() -> controller.changePassword(new ChangePasswordRequest("whatever", "new-pw"), principal))
                 .isInstanceOf(ResponseStatusException.class);
 
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void countActiveSessions_returnsCountFromRepository() {
+        when(refreshTokenRepository.countActiveForUser(userId)).thenReturn(3);
+
+        UserSelfController.ActiveSessionsCount result = controller.countActiveSessions(principal);
+
+        assertThat(result.count()).isEqualTo(3);
+    }
+
+    @Test
+    void logoutOtherSessions_revokesAllExceptTheCallersOwnCurrentToken() {
+        ResponseEntity<Void> response =
+                controller.logoutOtherSessions(new LogoutOtherSessionsRequest("raw-current-token"), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(refreshTokenRepository).revokeAllForUserExceptHash(userId, HashUtil.sha256Hex("raw-current-token"));
+        // The whole point: this must never be confused with the change-password path's
+        // revoke-literally-everything call.
         verify(refreshTokenRepository, never()).revokeAllForUser(any());
     }
 }
