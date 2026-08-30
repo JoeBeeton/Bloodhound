@@ -104,6 +104,17 @@ public class ScanRunService {
     private static final List<String> TIER2_TARGET_SCOPED_MODULE_TYPES = List.of("BUCKET_BRUTE_FORCE");
 
     /**
+     * Single source of truth for "which module types count as a deep scan" - lets other classes
+     * (e.g. TargetController, composing the Targets list' "last scan: regular/deep" display) ask
+     * the question without duplicating TIER2_MODULE_TYPES/TIER2_TARGET_SCOPED_MODULE_TYPES, which
+     * stay private here.
+     */
+    public static List<String> allTier2ModuleTypes() {
+        return java.util.stream.Stream.concat(TIER2_MODULE_TYPES.stream(), TIER2_TARGET_SCOPED_MODULE_TYPES.stream())
+                .toList();
+    }
+
+    /**
      * How recently a (candidate, provider) pair must have been checked to be excluded from the
      * next BUCKET_BRUTE_FORCE job's payload - long enough that re-running a deep scan doesn't
      * re-issue the same few hundred requests against AWS/GCS/etc. every time, short enough that

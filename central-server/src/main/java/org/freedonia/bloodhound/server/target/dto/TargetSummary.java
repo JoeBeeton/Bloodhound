@@ -20,14 +20,23 @@ public record TargetSummary(
         // "Fair comparison" score excluding Tier 2-exclusive findings - null on targets that
         // haven't been scanned since this was added.
         BigDecimal tier1OverallScore,
-        String tier1Grade) {
+        String tier1Grade,
+        /** Absent (null) until this target has had its first scan (CT_CHECK/CVE_CORRELATION don't count - see ScanRunRepository#findMostRecentByTarget). */
+        Instant lastScanAt,
+        /** Null alongside lastScanAt when there's no scan yet; otherwise true for a Tier 2 deep scan, false for a regular Tier 1 scan. */
+        Boolean lastScanWasDeep) {
 
     /** No scan has ever completed for this target yet - score/grade are absent, not zero. */
     public static TargetSummary from(Target target) {
-        return from(target, null);
+        return from(target, null, null, null);
     }
 
     public static TargetSummary from(Target target, ScoreSnapshot latestScore) {
+        return from(target, latestScore, null, null);
+    }
+
+    public static TargetSummary from(
+            Target target, ScoreSnapshot latestScore, Instant lastScanAt, Boolean lastScanWasDeep) {
         return new TargetSummary(
                 target.id(),
                 target.hostname(),
@@ -40,6 +49,8 @@ public record TargetSummary(
                 latestScore != null ? latestScore.overallScore() : null,
                 latestScore != null ? latestScore.grade() : null,
                 latestScore != null ? latestScore.tier1OverallScore() : null,
-                latestScore != null ? latestScore.tier1Grade() : null);
+                latestScore != null ? latestScore.tier1Grade() : null,
+                lastScanAt,
+                lastScanWasDeep);
     }
 }

@@ -373,7 +373,7 @@ function TargetRow({
           {target.hostname}
         </Link>
         <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
-          {target.targetType} · {target.isActive ? "active" : "removed"}
+          {target.targetType} · {target.isActive ? "active" : "removed"} · <LastScanLabel target={target} />
         </p>
       </div>
       <div className="flex items-center gap-4">
@@ -437,6 +437,29 @@ function TargetRow({
         )}
       </div>
     </div>
+  );
+}
+
+/** "Never scanned" for a brand-new target, otherwise the last scan's date/time plus whether it
+ * was a Tier 2 deep scan or a regular Tier 1 one - the two module sets look completely different
+ * in what they can find (deep scans require authorization and hit live web-app/port/bucket
+ * surface), so knowing which kind ran last is as useful at a glance as knowing when. */
+const LAST_SCAN_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+};
+
+function LastScanLabel({ target }: { target: Target }) {
+  if (!target.lastScanAt) {
+    return <span>Never scanned</span>;
+  }
+  return (
+    <span>
+      Last scan: {new Date(target.lastScanAt).toLocaleString(undefined, LAST_SCAN_DATE_FORMAT)}
+      {target.lastScanWasDeep && <span className="text-neon-amber"> (Deep)</span>}
+    </span>
   );
 }
 

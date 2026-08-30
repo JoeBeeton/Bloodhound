@@ -49,6 +49,10 @@ export interface Target {
    */
   tier1OverallScore: number | null;
   tier1Grade: Grade | null;
+  /** Absent until this target has had its first scan (CT_CHECK/CVE_CORRELATION don't count). */
+  lastScanAt: string | null;
+  /** Null alongside lastScanAt when there's no scan yet; true for a Tier 2 deep scan, false for a regular Tier 1 scan. */
+  lastScanWasDeep: boolean | null;
 }
 
 /** Mirrors ScoringEngine.CATEGORY_WEIGHTS on the backend exactly - WEB_APP (ZAP/Nuclei
