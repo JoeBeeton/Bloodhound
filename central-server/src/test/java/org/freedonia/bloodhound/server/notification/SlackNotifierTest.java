@@ -1,11 +1,77 @@
 package org.freedonia.bloodhound.server.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class SlackNotifierTest {
+
+    private final SlackNotifier slackNotifier = new SlackNotifier();
+    private HttpServer server;
+
+    @AfterEach
+    void tearDown() {
+        if (server != null) {
+            server.stop(0);
+        }
+    }
+
+    /** A real local listener, not a mock - SlackNotifier's own javadoc calls this out as exactly
+     * why {@link SlackNotifier#attemptDelivery} is URL-agnostic: it can be pointed at any HTTP
+     * endpoint, not just a genuine Slack webhook. */
+    private String startServer(int statusCode) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = statusCode == 200 ? "ok".getBytes() : "error".getBytes();
+            exchange.sendResponseHeaders(statusCode, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+    }
+
+    @Test
+    void attemptDelivery_200Response_reportedAsSuccess() throws IOException {
+        String url = startServer(200);
+
+        SlackNotifier.DeliveryResult result = slackNotifier.attemptDelivery(url, "Title", "msg", "INFO", "https://app/x");
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.detail()).isNull();
+    }
+
+    @Test
+    void attemptDelivery_non200Response_reportedAsFailureWithStatusInDetail() throws IOException {
+        String url = startServer(404);
+
+        SlackNotifier.DeliveryResult result = slackNotifier.attemptDelivery(url, "Title", "msg", "INFO", "https://app/x");
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.detail()).contains("404");
+    }
+
+    @Test
+    void attemptDelivery_unreachableHost_reportedAsFailureWithExceptionDetail_doesNotThrow() throws IOException {
+        // Bind a real local port, then stop the server before calling it - a reliably-refused
+        // connection on loopback, unlike guessing at a low/blocked port number, which can behave
+        // unpredictably (hang vs. immediately refuse) depending on the sandbox's network policy.
+        // The whole point is that a network failure comes back as a DeliveryResult, not an
+        // exception the caller (the test-send endpoint) has to catch.
+        String url = startServer(200);
+        server.stop(0);
+
+        SlackNotifier.DeliveryResult result = slackNotifier.attemptDelivery(url, "Title", "msg", "INFO", "https://app/x");
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.detail()).isNotBlank();
+    }
 
     @Test
     void criticalSeverityUsesMagentaAccent() {
