@@ -102,6 +102,49 @@ class SubdomainControllerTest {
     }
 
     @Test
+    void export_targetInAnotherOrg_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.export(targetId, null, principal)).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void export_ownedTarget_returnsCsvWithContentDisposition() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), eq(0)))
+                .thenReturn(List.of(subdomain("a.example.com")));
+
+        ResponseEntity<byte[]> response = controller.export(targetId, null, principal);
+
+        assertThat(response.getHeaders().getContentType().toString()).startsWith("text/csv");
+        assertThat(response.getHeaders().getFirst("Content-Disposition")).contains("example.com-subdomains-");
+        assertThat(new String(response.getBody())).contains("a.example.com,Active,CRTSH");
+    }
+
+    @Test
+    void export_fetchesFarMoreThanTheListEndpointsMaxLimit() {
+        // The point of a separate export endpoint - GET /subdomains is capped at 500 for the
+        // paginated UI table, but export must return the target's *entire* subdomain set.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), eq(0))).thenReturn(List.of());
+
+        controller.export(targetId, null, principal);
+
+        verify(subdomainRepository)
+                .findByTarget(eq(targetId), eq(null), org.mockito.ArgumentMatchers.intThat(limit -> limit > 500), eq(0));
+    }
+
+    @Test
+    void export_hostnameFilter_passedThroughToRepository() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTarget(eq(targetId), eq("admin"), anyInt(), eq(0))).thenReturn(List.of());
+
+        controller.export(targetId, "admin", principal);
+
+        verify(subdomainRepository).findByTarget(eq(targetId), eq("admin"), anyInt(), eq(0));
+    }
+
+    @Test
     void get_targetInAnotherOrg_notFound() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ErrorState } from "../components/ErrorState";
 import { HostingBadge } from "../components/TechHostingPanel";
 import { Shell } from "../components/Shell";
@@ -30,6 +30,31 @@ async function fetchSubdomains(targetId: string, hostnameSearch: string): Promis
   if (!res.ok) throw new Error("Failed to load subdomains.");
   const items: Subdomain[] = await res.json();
   return { items, totalCount: totalCountFromResponse(res, items.length) };
+}
+
+/**
+ * Same "fetch as a blob, drive the download through a synthetic object URL" constraint the
+ * findings and audit-log exports already hit - a plain `<a href>` can't carry the bearer token
+ * the export endpoint requires. Respects the current hostname filter, same as the fetched list.
+ */
+async function downloadSubdomainsCsv(targetId: string, hostnameSearch: string): Promise<void> {
+  const params = new URLSearchParams();
+  if (hostnameSearch) params.set("hostname", hostnameSearch);
+  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains/export?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to export subdomains.");
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : "subdomains.csv";
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function fetchFingerprints(targetId: string): Promise<FingerprintEntry[]> {
@@ -104,6 +129,9 @@ export function SubdomainsPage() {
     queryFn: () => fetchFingerprints(targetId),
   });
   const findingsQuery = useQuery({ queryKey: ["findings", targetId], queryFn: () => fetchFindings(targetId) });
+  const exportCsvMutation = useMutation({
+    mutationFn: () => downloadSubdomainsCsv(targetId, debouncedSearch),
+  });
 
   const fingerprintsByHostname = useMemo(
     () => new Map((fingerprintsQuery.data ?? []).map((f) => [f.hostname, f])),
@@ -146,13 +174,28 @@ export function SubdomainsPage() {
               {targetQuery.data?.hostname ?? "…"}
             </h1>
           </div>
-          <Link
-            to={`/targets/${targetId}`}
-            className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
-          >
-            ← Target
-          </Link>
+          <div className="flex items-center gap-4">
+            {subdomainsQuery.data && subdomainsQuery.data.totalCount > 0 && (
+              <button
+                onClick={() => exportCsvMutation.mutate()}
+                disabled={exportCsvMutation.isPending}
+                className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan disabled:opacity-50"
+                title="Export the currently filtered subdomains as CSV"
+              >
+                {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
+              </button>
+            )}
+            <Link
+              to={`/targets/${targetId}`}
+              className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+            >
+              ← Target
+            </Link>
+          </div>
         </div>
+        {exportCsvMutation.isError && (
+          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export subdomains. Try again.</p>
+        )}
 
         {isLoading && <p className="font-mono text-sm text-slate-400">Loading subdomains…</p>}
         {isError && (
