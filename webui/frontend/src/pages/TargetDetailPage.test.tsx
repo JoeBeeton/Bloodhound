@@ -53,6 +53,19 @@ describe("TargetNotes", () => {
     expect(screen.getByLabelText("Notes")).toHaveValue("");
   });
 
+  it("shows a character counter that tracks typing and caps the textarea at 2000 characters", async () => {
+    const user = userEvent.setup();
+    renderNotes(null);
+    await user.click(screen.getByRole("button", { name: "Add notes" }));
+
+    expect(screen.getByText("0 / 2000")).toBeInTheDocument();
+    expect(screen.getByLabelText("Notes")).toHaveAttribute("maxLength", "2000");
+
+    await user.type(screen.getByLabelText("Notes"), "hello");
+
+    expect(screen.getByText("5 / 2000")).toBeInTheDocument();
+  });
+
   it("saving sends a PATCH with the typed notes and leaves edit mode on success", async () => {
     // Notes itself stays a controlled prop from the parent's target query (which this isolated
     // render doesn't have) - what belongs to this component is that it sends the right PATCH and
