@@ -71,4 +71,31 @@ describe("FindingsFilterBar", () => {
 
     expect(onChange).toHaveBeenCalledWith({ severities: ["LOW"], categories: ["EXPOSURE"] });
   });
+
+  it("defaults to showing Open as active when status is omitted", () => {
+    render(<FindingsFilterBar value={EMPTY} onChange={vi.fn()} resultCount={0} />);
+
+    expect(screen.getByRole("button", { name: "Open" })).toHaveClass("text-neon-cyan");
+    expect(screen.getByRole("button", { name: "Resolved" })).not.toHaveClass("text-neon-cyan");
+  });
+
+  it("clicking Resolved switches status without disturbing severity/category selections", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<FindingsFilterBar value={{ severities: ["HIGH"], categories: ["DNS"] }} onChange={onChange} resultCount={0} />);
+
+    await user.click(screen.getByRole("button", { name: "Resolved" }));
+
+    expect(onChange).toHaveBeenCalledWith({ severities: ["HIGH"], categories: ["DNS"], status: "RESOLVED" });
+  });
+
+  it("clicking Open while already Resolved switches back to OPEN", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<FindingsFilterBar value={{ severities: [], categories: [], status: "RESOLVED" }} onChange={onChange} resultCount={0} />);
+
+    await user.click(screen.getByRole("button", { name: "Open" }));
+
+    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [], status: "OPEN" });
+  });
 });

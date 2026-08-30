@@ -27,6 +27,8 @@ const INACTIVE_TOGGLE = "border-slate-700 text-slate-400 hover:border-slate-500 
 export interface FindingsFilterState {
   severities: Severity[];
   categories: FindingCategory[];
+  /** Omitted/undefined means OPEN, matching the server's own default - see FindingRepository#findByTargetDetailed. */
+  status?: "OPEN" | "RESOLVED";
 }
 
 function toggle<T>(list: T[], value: T): T[] {
@@ -50,9 +52,24 @@ export function FindingsFilterBar({
   resultCount: number | undefined;
 }) {
   const hasFilters = value.severities.length > 0 || value.categories.length > 0;
+  const status = value.status ?? "OPEN";
 
   return (
     <div className="mb-4 flex flex-col gap-2 rounded-lg border border-neon-cyan/10 bg-panel/40 p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Status</span>
+        {(["OPEN", "RESOLVED"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => onChange({ ...value, status: s })}
+            className={`rounded border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest transition ${
+              status === s ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_TOGGLE
+            }`}
+          >
+            {s === "OPEN" ? "Open" : "Resolved"}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Severity</span>
         {SEVERITIES.map((severity) => {

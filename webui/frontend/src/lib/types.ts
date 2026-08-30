@@ -314,6 +314,7 @@ export interface OrgFinding {
   evidence: Record<string, unknown>;
   affectedAsset: string;
   status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK";
+  resolvedAt: string | null;
   createdAt: string;
   firstSeenAt: string | null;
   lastSeenAt: string;

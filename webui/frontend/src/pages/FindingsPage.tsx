@@ -21,6 +21,7 @@ async function fetchOrgFindings(filters: FindingsFilterState, limit: number): Pr
   const params = new URLSearchParams({ limit: String(limit), offset: "0" });
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
+  if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
   const res = await apiFetch(`/api/v1/findings?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load findings.");
   const items: OrgFinding[] = await res.json();
@@ -56,6 +57,7 @@ export function FindingsPage() {
   const filters: FindingsFilterState = {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
+    status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
   };
   const setFilters = (next: FindingsFilterState) => {
     setSearchParams(
@@ -63,6 +65,7 @@ export function FindingsPage() {
         const params = new URLSearchParams(prev);
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
+        next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
         return params;
       },
       { replace: true },
@@ -99,8 +102,10 @@ export function FindingsPage() {
         {query.data?.totalCount === 0 && (
           <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-neon-cyan">
             {filters.severities.length > 0 || filters.categories.length > 0
-              ? "No open findings match the selected filters."
-              : "Clean sweep — no open findings across your organization."}
+              ? `No ${filters.status === "RESOLVED" ? "resolved" : "open"} findings match the selected filters.`
+              : filters.status === "RESOLVED"
+                ? "Nothing resolved yet."
+                : "Clean sweep — no open findings across your organization."}
           </p>
         )}
 
@@ -116,7 +121,14 @@ export function FindingsPage() {
                   <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[f.severity]}`}>
                     {f.severity} · {f.category}
                   </span>
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{f.targetHostname}</span>
+                  <div className="flex items-center gap-2">
+                    {f.status === "RESOLVED" && (
+                      <span className="rounded border border-neon-cyan/40 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-cyan">
+                        Resolved
+                      </span>
+                    )}
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{f.targetHostname}</span>
+                  </div>
                 </div>
                 <p className="font-mono text-sm text-slate-200">{f.title}</p>
                 <div className="mt-1 flex items-center justify-between gap-2">

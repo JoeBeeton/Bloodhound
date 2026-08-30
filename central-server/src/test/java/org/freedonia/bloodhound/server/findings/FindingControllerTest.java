@@ -187,15 +187,15 @@ class FindingControllerTest {
     void forOrganization_scoreImpactContextFetchedOncePerTarget() {
         Finding f1 = finding(UUID.randomUUID());
         Finding f2 = finding(UUID.randomUUID());
-        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), eq(20), eq(0)))
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), any(), eq(20), eq(0)))
                 .thenReturn(List.of(
                         new OrgFinding(f1, "host.example.com", Instant.now(), null),
                         new OrgFinding(f2, "host.example.com", Instant.now(), null)));
         when(ruleWeightRepository.findAllWeights()).thenReturn(Map.of());
         when(findingRepository.findOpenForScoring(targetId)).thenReturn(List.of(f1, f2));
-        when(findingRepository.countOpenByOrganizationFiltered(eq(orgId), any(), any())).thenReturn(2);
+        when(findingRepository.countOpenByOrganizationFiltered(eq(orgId), any(), any(), any())).thenReturn(2);
 
-        ResponseEntity<List<OrgFindingSummary>> response = controller.forOrganization(null, null, 20, 0, principal);
+        ResponseEntity<List<OrgFindingSummary>> response = controller.forOrganization(null, null, null, 20, 0, principal);
 
         assertThat(response.getBody()).hasSize(2);
         assertThat(response.getHeaders().getFirst("X-Total-Count")).isEqualTo("2");
@@ -205,39 +205,52 @@ class FindingControllerTest {
     @Test
     void forOrganization_severityAndCategoryFilters_splitOnComma() {
         when(findingRepository.findOpenByOrganization(
-                        eq(orgId), eq(List.of("CRITICAL", "HIGH")), eq(List.of("EXPOSURE")), eq(20), eq(0)))
+                        eq(orgId), eq(List.of("CRITICAL", "HIGH")), eq(List.of("EXPOSURE")), any(), eq(20), eq(0)))
                 .thenReturn(List.of());
 
-        controller.forOrganization("CRITICAL,HIGH", "EXPOSURE", 20, 0, principal);
+        controller.forOrganization("CRITICAL,HIGH", "EXPOSURE", null, 20, 0, principal);
 
-        verify(findingRepository).findOpenByOrganization(orgId, List.of("CRITICAL", "HIGH"), List.of("EXPOSURE"), 20, 0);
+        verify(findingRepository).findOpenByOrganization(orgId, List.of("CRITICAL", "HIGH"), List.of("EXPOSURE"), null, 20, 0);
     }
 
     @Test
     void forOrganization_blankFilters_meansNoFilter() {
-        when(findingRepository.findOpenByOrganization(eq(orgId), eq(List.of()), eq(List.of()), eq(20), eq(0)))
+        when(findingRepository.findOpenByOrganization(eq(orgId), eq(List.of()), eq(List.of()), any(), eq(20), eq(0)))
                 .thenReturn(List.of());
 
-        controller.forOrganization("", "", 20, 0, principal);
+        controller.forOrganization("", "", null, 20, 0, principal);
 
-        verify(findingRepository).findOpenByOrganization(orgId, List.of(), List.of(), 20, 0);
+        verify(findingRepository).findOpenByOrganization(orgId, List.of(), List.of(), null, 20, 0);
+    }
+
+    @Test
+    void forOrganization_statusFilter_passedThroughToRepository() {
+        // The only way anywhere in the app to see resolved findings across the whole org - a
+        // product review found no page (or even query param) let a caller ask for anything but
+        // OPEN, despite the target-scoped endpoint already supporting it.
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), eq("RESOLVED"), eq(20), eq(0)))
+                .thenReturn(List.of());
+
+        controller.forOrganization(null, null, "RESOLVED", 20, 0, principal);
+
+        verify(findingRepository).findOpenByOrganization(orgId, List.of(), List.of(), "RESOLVED", 20, 0);
     }
 
     @Test
     void forOrganization_limitClampedToMax500_evenIfCallerAsksForMore() {
-        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), eq(500), eq(0))).thenReturn(List.of());
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), any(), eq(500), eq(0))).thenReturn(List.of());
 
-        controller.forOrganization(null, null, 999999, 0, principal);
+        controller.forOrganization(null, null, null, 999999, 0, principal);
 
-        verify(findingRepository).findOpenByOrganization(eq(orgId), any(), any(), eq(500), eq(0));
+        verify(findingRepository).findOpenByOrganization(eq(orgId), any(), any(), any(), eq(500), eq(0));
     }
 
     @Test
     void forOrganization_negativeOffset_clampedToZero() {
-        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), eq(20), eq(0))).thenReturn(List.of());
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), any(), eq(20), eq(0))).thenReturn(List.of());
 
-        controller.forOrganization(null, null, 20, -5, principal);
+        controller.forOrganization(null, null, null, 20, -5, principal);
 
-        verify(findingRepository).findOpenByOrganization(eq(orgId), any(), any(), eq(20), eq(0));
+        verify(findingRepository).findOpenByOrganization(eq(orgId), any(), any(), any(), eq(20), eq(0));
     }
 }

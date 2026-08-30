@@ -266,19 +266,22 @@ public class FindingRepository {
 
     /** Org-wide findings for the dashboard's "top open findings" widget - joined with hostname since these span multiple targets. */
     public List<OrgFinding> findOpenByOrganization(UUID organizationId, List<String> severities, int limit) {
-        return findOpenByOrganization(organizationId, severities, List.of(), limit, 0);
+        return findOpenByOrganization(organizationId, severities, List.of(), "OPEN", limit, 0);
     }
 
     /**
-     * Same as the 3-arg overload, plus category filtering and offset pagination - backs the
-     * org-wide Findings page (a full, filterable, paginated browse of every open finding across
+     * Same as the 3-arg overload, plus category/status filtering and offset pagination - backs
+     * the org-wide Findings page (a full, filterable, paginated browse of every finding across
      * every target - previously only viewable one target at a time, or capped to the dashboard's
-     * top 10). Kept as a separate overload rather than changing the original's signature, so the
-     * dashboard/MCP call sites (which only ever want an unpaginated top-N slice) don't need to
-     * pass params they don't use.
+     * top 10, and with no way to see resolved findings at all anywhere in the app). Kept as a
+     * separate overload rather than changing the original's signature, so the dashboard/MCP call
+     * sites (which only ever want an unpaginated OPEN-only top-N slice) don't need to pass params
+     * they don't use. status defaults to OPEN when null/blank, same convention as {@link
+     * #findByTargetDetailed} already uses for the identical "what does the caller mean by
+     * omitting this" question.
      */
     public List<OrgFinding> findOpenByOrganization(
-            UUID organizationId, List<String> severities, List<String> categories, int limit, int offset) {
+            UUID organizationId, List<String> severities, List<String> categories, String status, int limit, int offset) {
         StringBuilder sql = new StringBuilder(
                 "SELECT f.*, t.hostname AS target_hostname, "
                         + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
@@ -287,9 +290,10 @@ public class FindingRepository {
                         + "JOIN targets t ON t.id = f.target_id "
                         + "LEFT JOIN scan_runs sr ON sr.id = f.first_detected_scan_run_id "
                         + "LEFT JOIN rules_catalog rc ON rc.rule_id = f.rule_id "
-                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN'");
+                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
         List<Object> args = new ArrayList<>();
         args.add(organizationId);
+        args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
         sql.append(" ORDER BY CASE f.severity "
@@ -301,12 +305,14 @@ public class FindingRepository {
     }
 
     /** Unpaginated total matching {@link #findOpenByOrganization}'s filters - lets a caller show "showing N of TOTAL". */
-    public int countOpenByOrganizationFiltered(UUID organizationId, List<String> severities, List<String> categories) {
+    public int countOpenByOrganizationFiltered(
+            UUID organizationId, List<String> severities, List<String> categories, String status) {
         StringBuilder sql = new StringBuilder(
                 "SELECT COUNT(*) FROM findings f JOIN targets t ON t.id = f.target_id "
-                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN'");
+                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
         List<Object> args = new ArrayList<>();
         args.add(organizationId);
+        args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
         Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
