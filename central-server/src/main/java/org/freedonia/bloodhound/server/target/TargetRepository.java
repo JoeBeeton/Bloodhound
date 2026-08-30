@@ -94,6 +94,22 @@ public class TargetRepository {
         jdbc.update("UPDATE targets SET notes = ? WHERE id = ?", notes == null || notes.isBlank() ? null : notes, id);
     }
 
+    /**
+     * A product review found targetType (OWN/COMPETITOR/WATCHLIST) was set once at creation and
+     * never editable again - a target mis-picked as WATCHLIST when it was actually OWN (which
+     * gates the "Deep scan" button and /compare's default OWN-vs-competitors framing) had no fix
+     * short of the ADMIN-only, cascading hard delete (see TargetController#delete) and recreating
+     * the target from scratch, losing its entire finding/subdomain/scan history. Purely a
+     * categorization label - completely independent of {@code authorization_status}, the actual
+     * security boundary Tier 2 active scanning checks (see
+     * TargetAuthorizationController/TargetController#deepScanNow) - so relabeling a target OWN
+     * here never grants deep-scan authorization by itself; that still requires its own separate
+     * verification.
+     */
+    public void updateTargetType(UUID id, String targetType) {
+        jdbc.update("UPDATE targets SET target_type = ? WHERE id = ?", targetType, id);
+    }
+
     public void delete(UUID id) {
         jdbc.update("DELETE FROM targets WHERE id = ?", id);
     }

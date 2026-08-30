@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.target.dto;
 
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -12,5 +13,13 @@ import jakarta.validation.constraints.Size;
  * client-side feedback either. 2000 characters is generous for its actual purpose (a few
  * sentences of "which environment, who owns it, why it's tracked"), not a real limit on anything
  * a legitimate note would need.
+ *
+ * <p>targetType reuses CreateTargetRequest's own OWN|COMPETITOR|WATCHLIST pattern - see
+ * TargetRepository#updateTargetType for why a mis-picked type at creation previously had no fix
+ * short of a destructive delete-and-recreate.
  */
-public record UpdateTargetRequest(Integer scanCadenceSeconds, Boolean isActive, @Size(max = 2000) String notes) {}
+public record UpdateTargetRequest(
+        Integer scanCadenceSeconds,
+        Boolean isActive,
+        @Size(max = 2000) String notes,
+        @Pattern(regexp = "OWN|COMPETITOR|WATCHLIST") String targetType) {}

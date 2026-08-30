@@ -16,7 +16,7 @@ import { ScoreTrendChart } from "../components/ScoreTrendChart";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
-import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target } from "../lib/types";
+import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target, TargetType } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
 
@@ -33,6 +33,24 @@ async function updateSchedule(targetId: string, scanCadenceSeconds: number): Pro
     body: JSON.stringify({ scanCadenceSeconds }),
   });
   if (!res.ok) throw new Error("Failed to update schedule.");
+  return res.json();
+}
+
+/**
+ * A product review found targetType was set once at creation and never editable again - a
+ * target mis-picked as WATCHLIST when it's actually OWN (which gates the "Deep scan" button and
+ * /compare's default OWN-vs-competitors framing) had no fix short of the ADMIN-only, cascading
+ * hard delete and recreating the target from scratch. See TargetRepository#updateTargetType for
+ * why this is safe: purely a categorization label, completely independent of the target's
+ * authorization_status (the actual Tier 2 security boundary).
+ */
+async function updateTargetType(targetId: string, targetType: TargetType): Promise<Target> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetType }),
+  });
+  if (!res.ok) throw new Error("Failed to update target type.");
   return res.json();
 }
 
@@ -347,6 +365,11 @@ export function TargetDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["target", targetId] }),
   });
 
+  const updateTargetTypeMutation = useMutation({
+    mutationFn: (targetType: TargetType) => updateTargetType(targetId, targetType),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["target", targetId] }),
+  });
+
   const exportCsvMutation = useMutation({
     mutationFn: () => downloadFindingsCsv(targetId, filters),
   });
@@ -388,9 +411,25 @@ export function TargetDetailPage() {
             <h1 className="font-display text-2xl font-bold text-neon-cyan">{target?.hostname ?? "…"}</h1>
             {target && (
               <div className="mt-1 flex items-center gap-3">
-                <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
-                  {target.targetType} · {target.isActive ? "active" : "paused"}
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor="target-type" className="sr-only">
+                    Target type
+                  </label>
+                  <select
+                    id="target-type"
+                    value={target.targetType}
+                    disabled={updateTargetTypeMutation.isPending}
+                    onChange={(e) => updateTargetTypeMutation.mutate(e.target.value as TargetType)}
+                    className="select-cyber rounded border border-transparent bg-transparent px-0 font-mono text-xs uppercase tracking-widest text-slate-400 outline-none hover:border-slate-700 focus:border-neon-cyan disabled:opacity-40"
+                  >
+                    <option value="OWN">OWN</option>
+                    <option value="COMPETITOR">COMPETITOR</option>
+                    <option value="WATCHLIST">WATCHLIST</option>
+                  </select>
+                  <span className="font-mono text-xs uppercase tracking-widest text-slate-400">
+                    · {target.isActive ? "active" : "paused"}
+                  </span>
+                </div>
                 <GradeBadge grade={target.grade} score={target.overallScore} />
                 {target.tier1OverallScore !== null && (
                   <span className="flex items-center gap-1 opacity-70" title="Tier 1 only — excludes findings from authorized deep scans, which only run on this domain and not on competitors. This is the score used for fair /compare comparisons.">
@@ -405,6 +444,9 @@ export function TargetDetailPage() {
             ← Targets
           </Link>
         </div>
+        {updateTargetTypeMutation.isError && (
+          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to update target type. Try again.</p>
+        )}
 
         {target && <TargetNotes targetId={targetId} notes={target.notes} />}
 

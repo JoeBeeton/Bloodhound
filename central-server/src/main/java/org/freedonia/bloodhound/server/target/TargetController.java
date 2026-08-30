@@ -155,6 +155,9 @@ public class TargetController {
         if (request.notes() != null) {
             targetRepository.updateNotes(id, request.notes());
         }
+        if (request.targetType() != null) {
+            targetRepository.updateTargetType(id, request.targetType());
+        }
         // An audit/reliability review found this endpoint - the only way "Remove"/"Restore" on
         // the Targets page pauses or resumes an entire target's scanning - recorded nothing,
         // despite every other comparably sensitive state change in the app being audited
