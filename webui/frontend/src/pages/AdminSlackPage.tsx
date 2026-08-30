@@ -7,6 +7,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
+import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
 
 /**
  * The server never sends the real webhook URL back (see SlackWebhookValidator#mask's javadoc -
@@ -128,6 +129,22 @@ export function AdminSlackPage() {
       setIsEditingWebhook(true);
     }
   }, [query.data]);
+
+  // A freshly-typed webhook URL is the one thing here that's genuinely painful to lose - unlike
+  // the checkboxes below, it isn't retrievable by just reopening this page (the server never
+  // round-trips it, see SlackIntegration's own comment), and Slack itself has no "show me the
+  // webhook I already made" screen - regenerating one means creating a brand new Incoming
+  // Webhook from scratch, the exact same cost the Remove-integration confirmation modal below
+  // already warns about. Compares against the last-loaded config for the other fields, same
+  // convention AdminSsoPage's own warning uses - naturally re-syncs to false once a save succeeds
+  // and query.data updates.
+  const hasUnsavedChanges =
+    (isEditingWebhook && webhookUrl.trim() !== "") ||
+    (query.data != null &&
+      (enabled !== query.data.enabled ||
+        ownTargetsOnly !== query.data.ownTargetsOnly ||
+        JSON.stringify([...types].sort()) !== JSON.stringify([...query.data.notificationTypes].sort())));
+  useUnsavedChangesWarning(hasUnsavedChanges);
 
   const saveMutation = useMutation({
     // Blank webhookUrl (not currently editing it) tells the server "leave the stored webhook
@@ -323,6 +340,11 @@ export function AdminSlackPage() {
               </p>
             )}
           </div>
+          {/* In-app echo of the same beforeunload warning above - a visible reminder while still
+              on the page, not just a surprise prompt at the moment of navigating away. */}
+          {hasUnsavedChanges && !saveMutation.isPending && (
+            <p className="mt-2 font-mono text-xs text-neon-amber">Unsaved changes.</p>
+          )}
           {saveMutation.isError && (
             <p className="mt-2 font-mono text-xs text-severity-critical">
               {(saveMutation.error as Error)?.message ?? "Failed to save."}
