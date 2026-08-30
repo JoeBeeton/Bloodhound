@@ -43,7 +43,12 @@ class TargetControllerUpdateTest {
     private final JwtPrincipal admin = new JwtPrincipal(UUID.randomUUID(), orgId, "ADMIN", "admin@example.com");
 
     private Target target(String notes) {
-        return new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), notes);
+        return target(notes, true);
+    }
+
+    private Target target(String notes, boolean isActive) {
+        return new Target(
+                targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), isActive, Instant.now(), notes);
     }
 
     @Test
@@ -86,5 +91,68 @@ class TargetControllerUpdateTest {
         controller.update(targetId, new UpdateTargetRequest(7200, true, null), admin);
 
         verify(targetRepository).updateCadenceAndActive(targetId, 7200, true);
+    }
+
+    @Test
+    void update_activeFlippedToFalse_recordsTargetRemoved() {
+        // A reliability review found this the only sensitive state change in TargetController not
+        // audited - "Remove" pauses monitoring org-wide with no trail of who did it or when.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, false)));
+
+        controller.update(targetId, new UpdateTargetRequest(null, false, null), admin);
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "TARGET_REMOVED", "TARGET", targetId.toString(), "hostname=example.com");
+    }
+
+    @Test
+    void update_activeFlippedToTrue_recordsTargetRestored() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, false)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
+
+        controller.update(targetId, new UpdateTargetRequest(null, true, null), admin);
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "TARGET_RESTORED", "TARGET", targetId.toString(), "hostname=example.com");
+    }
+
+    @Test
+    void update_activeUnchanged_doesNotRecordAudit() {
+        // Re-sending the same isActive value (e.g. a cadence-only edit that happens to also
+        // include the current isActive) isn't a real state transition - nothing for an admin to
+        // investigate, so nothing should land in the audit log.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
+
+        controller.update(targetId, new UpdateTargetRequest(null, true, null), admin);
+
+        verify(auditLogRepository, never())
+                .record(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_activeOmitted_cadenceOrNotesOnlyEdit_doesNotRecordAudit() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
+
+        controller.update(targetId, new UpdateTargetRequest(7200, null, "a note"), admin);
+
+        verify(auditLogRepository, never())
+                .record(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
     }
 }

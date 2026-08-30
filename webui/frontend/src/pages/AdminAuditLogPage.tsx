@@ -71,6 +71,8 @@ const ACTION_LABELS: Record<string, string> = {
   USER_ROLE_OR_STATUS_CHANGED: "Role/status changed",
   USER_PASSWORD_RESET: "Password reset",
   TARGET_DELETED: "Target deleted",
+  TARGET_REMOVED: "Target removed",
+  TARGET_RESTORED: "Target restored",
   RULE_ENABLED: "Rule enabled",
   RULE_DISABLED: "Rule disabled",
 };

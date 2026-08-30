@@ -145,7 +145,7 @@ public class TargetController {
             @RequestBody UpdateTargetRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
-        requireOwnedTarget(id, principal);
+        Target before = requireOwnedTarget(id, principal);
         targetRepository.updateCadenceAndActive(id, request.scanCadenceSeconds(), request.isActive());
         // Omitted (null) means "this request isn't touching notes" (e.g. the Remove/Restore
         // toggle only ever sends isActive) - a caller that does mean to update notes always sends
@@ -154,6 +154,25 @@ public class TargetController {
         // the plain "null = unchanged" convention scanCadenceSeconds/isActive use.
         if (request.notes() != null) {
             targetRepository.updateNotes(id, request.notes());
+        }
+        // An audit/reliability review found this endpoint - the only way "Remove"/"Restore" on
+        // the Targets page pauses or resumes an entire target's scanning - recorded nothing,
+        // despite every other comparably sensitive state change in the app being audited
+        // (OrgUserController's role/status changes, RulesCatalogController's enable/disable,
+        // this same controller's own delete() below). An admin investigating "why did scanning
+        // silently stop for this target" had no audit trail to check. Only the isActive flip is
+        // logged, not every cadence/notes edit - that's the one field that actually gates
+        // whether monitoring happens at all, the same reasoning that scopes DESTRUCTIVE_ACTIONS
+        // on the audit log page to state changes with real operational consequence.
+        if (request.isActive() != null && request.isActive() != before.isActive()) {
+            auditLogRepository.record(
+                    principal.organizationId(),
+                    principal.userId(),
+                    principal.email(),
+                    request.isActive() ? "TARGET_RESTORED" : "TARGET_REMOVED",
+                    "TARGET",
+                    id.toString(),
+                    "hostname=" + before.hostname());
         }
         return TargetSummary.from(targetRepository.findById(id).orElseThrow());
     }
