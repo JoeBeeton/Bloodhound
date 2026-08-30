@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
@@ -119,5 +119,41 @@ describe("TargetNotes", () => {
 
     expect(await screen.findByText("Failed to save notes.")).toBeInTheDocument();
     expect(screen.getByLabelText("Notes")).toBeInTheDocument();
+  });
+
+  function dispatchBeforeUnload(): BeforeUnloadEvent {
+    const event = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(event);
+    return event;
+  }
+
+  it("warns before an accidental navigation while a note edit is in progress", async () => {
+    const user = userEvent.setup();
+    renderNotes(null);
+
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false); // not editing yet
+
+    await user.click(screen.getByRole("button", { name: "Add notes" }));
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false); // editing, but untouched (matches saved "")
+
+    await user.type(screen.getByLabelText("Notes"), "a thought I don't want to lose");
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+  });
+
+  it("does not warn once the edit is cancelled or saved", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse({ id: "t1", notes: "saved note" }));
+
+    renderNotes(null);
+    await user.click(screen.getByRole("button", { name: "Add notes" }));
+    await user.type(screen.getByLabelText("Notes"), "saved note");
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Back to the read view (the notes prop itself stays stale here, same as the isolated-render
+    // caveat noted on the other save-related tests above - what matters for this test is that
+    // leaving edit mode on success clears the warning).
+    await waitFor(() => expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument());
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
   });
 });

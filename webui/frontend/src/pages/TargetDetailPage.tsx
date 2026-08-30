@@ -18,6 +18,7 @@ import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
 import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
+import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
 
 /** Server-capped page of results plus the true match count (see X-Total-Count / totalCountFromResponse) - the count can exceed items.length when the server truncated a large result set. */
 interface FindingsPage {
@@ -199,6 +200,12 @@ export function TargetNotes({ targetId, notes }: { targetId: string; notes: stri
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(notes ?? "");
+  // A note lives only in whoever's typing it's head - unlike a re-copyable webhook URL or a
+  // certificate that still exists in some IdP's admin console, an in-progress note has no source
+  // to go back to if it's lost to a stray tab close or refresh mid-edit. Only warns while the
+  // draft actually differs from the last-saved value, same derivation AdminSsoPage's own warning
+  // uses - Cancel or a successful save both naturally clear it.
+  useUnsavedChangesWarning(editing && draft !== (notes ?? ""));
 
   const saveMutation = useMutation({
     mutationFn: (text: string) => updateNotes(targetId, text),
