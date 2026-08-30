@@ -89,6 +89,31 @@ class ScanRunServiceTest {
     }
 
     @Test
+    void deepScan_alsoDispatchesEveryTier1Job_notJustTier2() {
+        // A product review found "Deep scan" was previously Tier-2-only, silently skipping the
+        // regular Tier 1 checks (DNS posture, headers, TLS, WHOIS, breach correlation, etc.)
+        // entirely - "deep" should mean "everything a regular scan does, plus more," never less.
+        stub(List.of("api.acme.com"));
+
+        service.createDeepScan(targetId, triggeredByUserId);
+
+        for (String moduleType : List.of(
+                "DNS_POSTURE",
+                "HTTP_HEADERS",
+                "TLS_ANALYSIS",
+                "SUBDOMAIN_ENUM",
+                "EXPOSURE_CHECKS",
+                "PORT_SCAN_LIGHT",
+                "WHOIS",
+                "TECH_FINGERPRINT",
+                "TYPOSQUAT_MONITOR",
+                "BREACH_CORRELATION",
+                "DOCUMENT_METADATA")) {
+            verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
+        }
+    }
+
+    @Test
     void bucketBruteForce_dispatchesExactlyOnce_regardlessOfSubdomainCount() {
         stub(List.of("api.acme.com", "www.acme.com", "shop.acme.com"));
 
