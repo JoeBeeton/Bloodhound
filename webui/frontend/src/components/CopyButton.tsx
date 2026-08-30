@@ -26,7 +26,13 @@ export function CopyButton({ value, className }: { value: string; className?: st
       onClick={handleClick}
       className={className ?? "shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"}
     >
-      {copied ? <span className="text-neon-cyan">Copied ✓</span> : "Copy"}
+      {/* aria-live on a span that's always present (not conditionally mounted) - a screen reader
+       * only announces a live region's content changing if the region itself already existed
+       * before the mutation, so swapping the whole element in/out on `copied` wouldn't announce
+       * anything. Sighted users got the visible confirmation this same review found CopyButton
+       * added for in the first place; a screen reader user clicking "Copy" had no way to know it
+       * worked short of trusting the clipboard silently. */}
+      <span aria-live="polite">{copied ? <span className="text-neon-cyan">Copied ✓</span> : "Copy"}</span>
     </button>
   );
 }
