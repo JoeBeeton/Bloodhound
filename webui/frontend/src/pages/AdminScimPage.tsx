@@ -107,14 +107,18 @@ export function AdminScimPage() {
               e.preventDefault();
               createMutation.mutate();
             }}
-            className="flex gap-3"
+            // flex-wrap: the input's placeholder-driven intrinsic width plus the button
+            // together overflowed a narrow viewport (a flex-1 child doesn't shrink below its
+            // own content width unless it wraps or gets min-w-0) - confirmed live, +44px on a
+            // real 375px check. Wrapping drops the button to its own line instead.
+            className="flex flex-wrap gap-3"
           >
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="e.g. Okta production"
               required
-              className="flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
+              className="min-w-0 flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
             />
             <button
               type="submit"

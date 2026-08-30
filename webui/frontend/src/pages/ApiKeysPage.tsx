@@ -180,7 +180,11 @@ export function ApiKeysPage() {
             <p className="font-mono text-sm text-slate-500">No API keys yet — generate one above to get started.</p>
           )}
           {keysQuery.data && keysQuery.data.length > 0 && (
-            <table className="w-full text-left font-mono text-xs">
+            // Five columns (Label/Key/Expires/Last used/Status) genuinely don't fit a narrow
+            // viewport - confirmed live, a real 375px check overflowed the whole page by 105px.
+            // Scope the scroll to this table alone rather than dragging the page sideways with it.
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left font-mono text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-slate-500">
                   <th className="pb-2">Label</th>
@@ -218,6 +222,7 @@ export function ApiKeysPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>
