@@ -342,6 +342,15 @@ export function TargetsPage() {
           </p>
         )}
 
+        {/* Only when the Remove modal isn't open - it shows this same setActive error inline
+            itself, so this is specifically for a failed Restore, which has no modal of its own
+            to surface a failure in (previously nothing did, anywhere). */}
+        {!pendingRemoval && setActive.isError && (
+          <p className="mb-3 font-mono text-xs text-severity-critical" role="status">
+            Failed to update target. Try again.
+          </p>
+        )}
+
         <div className="flex flex-col gap-3">
           {(() => {
             const byRemoved = showRemoved
@@ -444,6 +453,9 @@ export function TargetsPage() {
             pauses future scans but keeps all of its existing findings and scan history — you can restore it any
             time from the "Show removed" view.
           </p>
+          {setActive.isError && (
+            <p className="mb-4 font-mono text-xs text-severity-critical">Failed to remove target. Try again.</p>
+          )}
           <div className="flex justify-end gap-3">
             <button
               onClick={() => setPendingRemoval(null)}

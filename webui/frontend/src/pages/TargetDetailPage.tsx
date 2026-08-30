@@ -489,6 +489,9 @@ export function TargetDetailPage() {
             <span className="font-mono text-xs text-slate-500">
               Next scheduled scan: {new Date(target.nextScanAt).toLocaleString()}
             </span>
+            {updateScheduleMutation.isError && (
+              <p className="w-full font-mono text-xs text-severity-critical">Failed to update scan schedule. Try again.</p>
+            )}
           </div>
         )}
 

@@ -320,6 +320,9 @@ export function AdminSlackPage() {
               {(saveMutation.error as Error)?.message ?? "Failed to save."}
             </p>
           )}
+          {deleteMutation.isError && (
+            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to remove the integration. Try again.</p>
+          )}
         </form>
       </div>
     </Shell>

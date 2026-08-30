@@ -347,3 +347,45 @@ describe("TargetsPage - bulk remove", () => {
     expect(summary.textContent).toMatch(/1 failed/i);
   });
 });
+
+describe("TargetsPage - single remove/restore failure surfacing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows an error inside the confirmation modal when a single Remove fails", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target()])) // list
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // PATCH fails
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+
+    expect(
+      await screen.findByText("Failed to remove target. Try again.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a page-level error when Restore fails (no modal of its own to show it in)", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target({ isActive: false })])) // list (removed view)
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // PATCH fails
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    const summary = await screen.findByRole("status", {}, { timeout: 5000 });
+    expect(summary.textContent).toMatch(/failed to update target/i);
+  });
+});

@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { statusDisplay } from "./AdminScimPage";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "../lib/apiClient";
+import { AdminScimPage, statusDisplay } from "./AdminScimPage";
 
 interface ScimTokenSummary {
   id: string;
@@ -56,5 +60,62 @@ describe("AdminScimPage statusDisplay", () => {
       label: "Expired",
       className: "text-neon-amber",
     });
+  });
+});
+
+vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
+vi.mock("../components/Shell", () => ({ Shell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+vi.mock("../components/AdminSubNav", () => ({ AdminSubNav: () => <div /> }));
+vi.mock("../lib/useAuth", () => ({ useAuth: () => ({ user: { organizationId: "org-1", role: "ADMIN" } }) }));
+
+const mockedApiFetch = vi.mocked(apiFetch);
+
+function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {}) {
+  return { ok: init.ok ?? true, status: init.status ?? 200, json: async () => body } as Response;
+}
+
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <AdminScimPage />
+    </QueryClientProvider>,
+  );
+}
+
+describe("AdminScimPage - revoke failure surfacing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows no error before revoking", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] }),
+    );
+
+    renderPage();
+
+    await screen.findByText("Okta", {}, { timeout: 5000 });
+    expect(screen.queryByText(/failed to revoke/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an error message when revoking fails", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] })) // list
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // DELETE
+
+    renderPage();
+    await screen.findByText("Okta", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+
+    expect(
+      await screen.findByText("Failed to revoke token. Try again.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
   });
 });
