@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.notification;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -26,14 +27,17 @@ public class SlackIntegrationController {
 
     private final SlackIntegrationRepository slackIntegrationRepository;
     private final SlackNotifier slackNotifier;
+    private final AuditLogRepository auditLogRepository;
     private final String appBaseUrl;
 
     public SlackIntegrationController(
             SlackIntegrationRepository slackIntegrationRepository,
             SlackNotifier slackNotifier,
+            AuditLogRepository auditLogRepository,
             @Value("${bloodhound.notifications.app-base-url}") String appBaseUrl) {
         this.slackIntegrationRepository = slackIntegrationRepository;
         this.slackNotifier = slackNotifier;
+        this.auditLogRepository = auditLogRepository;
         this.appBaseUrl = appBaseUrl;
     }
 
@@ -108,6 +112,19 @@ public class SlackIntegrationController {
         }
         SlackIntegration saved =
                 slackIntegrationRepository.upsert(orgId, webhookUrl, request.enabled(), types, request.ownTargetsOnly());
+        // An audit review found this - configuring where scan/finding alerts get delivered
+        // outside the app, and (via the webhookUrl validation above) an SSRF-relevant surface -
+        // had no audit trail. Never logs the webhook URL itself, only that one was set and the
+        // resulting enabled state, same restraint SlackIntegrationResponse's own masking already
+        // applies to every other read of this data.
+        auditLogRepository.record(
+                orgId,
+                principal.userId(),
+                principal.email(),
+                "SLACK_INTEGRATION_SAVED",
+                "ORGANIZATION",
+                orgId.toString(),
+                "enabled=" + saved.enabled());
         return SlackIntegrationResponse.from(saved);
     }
 
@@ -145,6 +162,8 @@ public class SlackIntegrationController {
     public ResponseEntity<Void> delete(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
         slackIntegrationRepository.delete(orgId);
+        auditLogRepository.record(
+                orgId, principal.userId(), principal.email(), "SLACK_INTEGRATION_REMOVED", "ORGANIZATION", orgId.toString(), null);
         return ResponseEntity.noContent().build();
     }
 

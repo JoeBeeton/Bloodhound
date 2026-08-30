@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.orgs.OrganizationSettingsController.OrgSettingsResponse;
 import org.freedonia.bloodhound.server.orgs.OrganizationSettingsController.UpdateOrgSettingsRequest;
@@ -18,7 +19,9 @@ import org.springframework.web.server.ResponseStatusException;
 class OrganizationSettingsControllerTest {
 
     private final OrganizationRepository organizationRepository = mock(OrganizationRepository.class);
-    private final OrganizationSettingsController controller = new OrganizationSettingsController(organizationRepository);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final OrganizationSettingsController controller =
+            new OrganizationSettingsController(organizationRepository, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();
@@ -56,5 +59,44 @@ class OrganizationSettingsControllerTest {
 
         verify(organizationRepository).setMcpEnabled(orgId, false);
         assertThat(result.mcpEnabled()).isFalse();
+    }
+
+    @Test
+    void update_flippedToDisabled_recordsAuditEntry() {
+        // An audit review found this org-wide AI-agent-access kill switch had no audit trail at
+        // all, unlike the identically-shaped RulesCatalogController enable/disable toggle.
+        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org(true))).thenReturn(Optional.of(org(false)));
+
+        controller.update(orgId, admin, new UpdateOrgSettingsRequest(false));
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "MCP_DISABLED", "ORGANIZATION", orgId.toString(), null);
+    }
+
+    @Test
+    void update_flippedToEnabled_recordsAuditEntry() {
+        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org(false))).thenReturn(Optional.of(org(true)));
+
+        controller.update(orgId, admin, new UpdateOrgSettingsRequest(true));
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "MCP_ENABLED", "ORGANIZATION", orgId.toString(), null);
+    }
+
+    @Test
+    void update_redundantSameValue_doesNotRecordAudit() {
+        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org(true))).thenReturn(Optional.of(org(true)));
+
+        controller.update(orgId, admin, new UpdateOrgSettingsRequest(true));
+
+        verify(auditLogRepository, org.mockito.Mockito.never())
+                .record(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
     }
 }

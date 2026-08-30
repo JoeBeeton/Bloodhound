@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.orgs;
 
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,9 +25,12 @@ import org.springframework.web.server.ResponseStatusException;
 public class OrganizationSettingsController {
 
     private final OrganizationRepository organizationRepository;
+    private final AuditLogRepository auditLogRepository;
 
-    public OrganizationSettingsController(OrganizationRepository organizationRepository) {
+    public OrganizationSettingsController(
+            OrganizationRepository organizationRepository, AuditLogRepository auditLogRepository) {
         this.organizationRepository = organizationRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     public record OrgSettingsResponse(boolean mcpEnabled) {
@@ -49,8 +53,22 @@ public class OrganizationSettingsController {
             @AuthenticationPrincipal JwtPrincipal principal,
             @RequestBody UpdateOrgSettingsRequest request) {
         requireSameOrg(orgId, principal);
-        requireOrg(orgId);
+        Organization before = requireOrg(orgId);
         organizationRepository.setMcpEnabled(orgId, request.mcpEnabled());
+        // An audit review found this - the org-wide kill switch for AI-agent access to this
+        // org's ASM data (see mcp.McpEnabledGuardFilter) - had no audit trail at all, unlike the
+        // exact same shape of toggle on RulesCatalogController (RULE_ENABLED/RULE_DISABLED).
+        // Only logged on an actual flip, not a redundant re-send of the current value.
+        if (request.mcpEnabled() != before.mcpEnabled()) {
+            auditLogRepository.record(
+                    orgId,
+                    principal.userId(),
+                    principal.email(),
+                    request.mcpEnabled() ? "MCP_ENABLED" : "MCP_DISABLED",
+                    "ORGANIZATION",
+                    orgId.toString(),
+                    null);
+        }
         return OrgSettingsResponse.from(requireOrg(orgId));
     }
 

@@ -75,11 +75,24 @@ const ACTION_LABELS: Record<string, string> = {
   TARGET_RESTORED: "Target restored",
   RULE_ENABLED: "Rule enabled",
   RULE_DISABLED: "Rule disabled",
+  SLACK_INTEGRATION_SAVED: "Slack integration saved",
+  SLACK_INTEGRATION_REMOVED: "Slack integration removed",
+  MCP_ENABLED: "MCP access enabled",
+  MCP_DISABLED: "MCP access disabled",
+  SCIM_TOKEN_CREATED: "SCIM token created",
+  SCIM_TOKEN_REVOKED: "SCIM token revoked",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
 
-const DESTRUCTIVE_ACTIONS = new Set(["TARGET_DELETED", "USER_PASSWORD_RESET", "RULE_DISABLED"]);
+const DESTRUCTIVE_ACTIONS = new Set([
+  "TARGET_DELETED",
+  "USER_PASSWORD_RESET",
+  "RULE_DISABLED",
+  "SLACK_INTEGRATION_REMOVED",
+  "MCP_DISABLED",
+  "SCIM_TOKEN_REVOKED",
+]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
