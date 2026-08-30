@@ -21,7 +21,7 @@ async function fetchUsers(orgId: string): Promise<AdminUser[]> {
 async function updateUser(
   orgId: string,
   userId: string,
-  patch: { role?: string; status?: string },
+  patch: { role?: string; status?: string; mcpEnabled?: boolean },
 ): Promise<AdminUser> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/users/${userId}`, {
     method: "PATCH",
@@ -58,7 +58,7 @@ export function AdminUsersPage() {
   const usersQuery = useQuery({ queryKey: ["admin-users", orgId], queryFn: () => fetchUsers(orgId), enabled: !!orgId });
 
   const mutate = useMutation({
-    mutationFn: (input: { userId: string; patch: { role?: string; status?: string } }) =>
+    mutationFn: (input: { userId: string; patch: { role?: string; status?: string; mcpEnabled?: boolean } }) =>
       updateUser(orgId, input.userId, input.patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] }),
   });
@@ -85,16 +85,17 @@ export function AdminUsersPage() {
 
         {usersQuery.data && (
           <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
-            <div className="grid grid-cols-[1fr_1fr_140px_140px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
+            <div className="grid grid-cols-[1fr_1fr_140px_140px_70px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
               <span>Email</span>
               <span>Display name</span>
               <span>Role</span>
               <span>Status</span>
+              <span>MCP</span>
             </div>
             {usersQuery.data.map((u, i) => (
               <div
                 key={u.id}
-                className={`grid grid-cols-[1fr_1fr_140px_140px] items-center gap-2 px-4 py-2.5 ${
+                className={`grid grid-cols-[1fr_1fr_140px_140px_70px] items-center gap-2 px-4 py-2.5 ${
                   i > 0 ? "border-t border-neon-cyan/10" : ""
                 }`}
               >
@@ -128,6 +129,14 @@ export function AdminUsersPage() {
                     </option>
                   ))}
                 </select>
+                <input
+                  type="checkbox"
+                  className="checkbox-cyber justify-self-start"
+                  checked={u.mcpEnabled}
+                  disabled={mutate.isPending}
+                  onChange={(e) => mutate.mutate({ userId: u.id, patch: { mcpEnabled: e.target.checked } })}
+                  title={`${u.mcpEnabled ? "Disable" : "Enable"} MCP access for this user`}
+                />
               </div>
             ))}
           </div>

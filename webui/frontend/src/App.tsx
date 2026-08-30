@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { RequireAuth } from "./components/RequireAuth";
+import { AdminMcpPage } from "./pages/AdminMcpPage";
 import { AdminRulesCatalogPage } from "./pages/AdminRulesCatalogPage";
 import { AdminScimPage } from "./pages/AdminScimPage";
 import { AdminSlackPage } from "./pages/AdminSlackPage";
@@ -142,6 +143,14 @@ export default function App() {
           element={
             <RequireAdmin>
               <AdminSlackPage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/mcp"
+          element={
+            <RequireAdmin>
+              <AdminMcpPage />
             </RequireAdmin>
           }
         />

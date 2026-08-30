@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.orgs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -88,7 +89,7 @@ class OrgUserControllerTest {
 
     @Test
     void update_orgIdMismatch_forbidden() {
-        assertThatThrownBy(() -> controller.update(otherOrgId, UUID.randomUUID(), new UpdateUserRequest("ADMIN", null), admin))
+        assertThatThrownBy(() -> controller.update(otherOrgId, UUID.randomUUID(), new UpdateUserRequest("ADMIN", null, null), admin))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
@@ -97,7 +98,7 @@ class OrgUserControllerTest {
         UUID targetUserId = UUID.randomUUID();
         when(userRepository.findById(targetUserId)).thenReturn(Optional.of(user(targetUserId, otherOrgId, "VIEWER", "ACTIVE")));
 
-        assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("ADMIN", null), admin))
+        assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("ADMIN", null, null), admin))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
@@ -105,7 +106,7 @@ class OrgUserControllerTest {
     void update_adminChangingOwnRole_forbidden_cannotLockSelfOut() {
         when(userRepository.findById(adminUserId)).thenReturn(Optional.of(user(adminUserId, orgId, "ADMIN", "ACTIVE")));
 
-        assertThatThrownBy(() -> controller.update(orgId, adminUserId, new UpdateUserRequest("VIEWER", null), admin))
+        assertThatThrownBy(() -> controller.update(orgId, adminUserId, new UpdateUserRequest("VIEWER", null, null), admin))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
         verify(userRepository, never()).updateRoleAndStatus(any(), any(), any());
@@ -115,7 +116,7 @@ class OrgUserControllerTest {
     void update_adminChangingOwnStatus_forbidden() {
         when(userRepository.findById(adminUserId)).thenReturn(Optional.of(user(adminUserId, orgId, "ADMIN", "ACTIVE")));
 
-        assertThatThrownBy(() -> controller.update(orgId, adminUserId, new UpdateUserRequest(null, "SUSPENDED"), admin))
+        assertThatThrownBy(() -> controller.update(orgId, adminUserId, new UpdateUserRequest(null, "SUSPENDED", null), admin))
                 .isInstanceOf(ResponseStatusException.class);
         verify(userRepository, never()).updateRoleAndStatus(any(), any(), any());
     }
@@ -129,7 +130,7 @@ class OrgUserControllerTest {
                 .thenReturn(Optional.of(user(targetUserId, orgId, "ANALYST", "ACTIVE")));
         when(userRepository.updateRoleAndStatus(targetUserId, "ANALYST", "ACTIVE")).thenReturn(true);
 
-        UserSummary result = controller.update(orgId, targetUserId, new UpdateUserRequest("ANALYST", null), admin);
+        UserSummary result = controller.update(orgId, targetUserId, new UpdateUserRequest("ANALYST", null, null), admin);
 
         assertThat(result.role()).isEqualTo("ANALYST");
         verify(userRepository).updateRoleAndStatus(targetUserId, "ANALYST", "ACTIVE");
@@ -142,7 +143,7 @@ class OrgUserControllerTest {
         when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
         when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "SUSPENDED")).thenReturn(true);
 
-        controller.update(orgId, targetUserId, new UpdateUserRequest(null, "SUSPENDED"), admin);
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, "SUSPENDED", null), admin);
 
         // role omitted (null) in the request - existing "VIEWER" must be preserved, not nulled out.
         verify(userRepository).updateRoleAndStatus(targetUserId, "VIEWER", "SUSPENDED");
@@ -158,8 +159,47 @@ class OrgUserControllerTest {
         when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
         when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(false);
 
-        assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("VIEWER", null), admin))
+        assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("VIEWER", null, null), admin))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(409));
+    }
+
+    @Test
+    void update_mcpEnabledFalse_callsSetMcpEnabled() {
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
+        when(userRepository.findById(targetUserId))
+                .thenReturn(Optional.of(existing))
+                .thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, null, false), admin);
+
+        verify(userRepository).setMcpEnabled(targetUserId, false);
+    }
+
+    @Test
+    void update_mcpEnabledOmitted_neverCallsSetMcpEnabled() {
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, null, null), admin);
+
+        verify(userRepository, never()).setMcpEnabled(any(), anyBoolean());
+    }
+
+    @Test
+    void update_mcpEnabledOnSelf_allowed_unlikeRoleAndStatus() {
+        // Unlike role/status (which would risk a self-lockout), toggling one's own MCP access is
+        // an ordinary permission change - no self-protection guard applies here.
+        User existing = user(adminUserId, orgId, "ADMIN", "ACTIVE");
+        when(userRepository.findById(adminUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(adminUserId, "ADMIN", "ACTIVE")).thenReturn(true);
+
+        controller.update(orgId, adminUserId, new UpdateUserRequest(null, null, false), admin);
+
+        verify(userRepository).setMcpEnabled(adminUserId, false);
     }
 }

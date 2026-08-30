@@ -102,6 +102,12 @@ public class OrgUserController {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "cannot demote or deactivate the organization's last remaining admin");
         }
+        // No last-admin-style invariant and no lockout risk here (unlike role/status above) - an
+        // admin toggling their own MCP access, or another user's, is an ordinary permission change,
+        // so self-modification is allowed.
+        if (request.mcpEnabled() != null) {
+            userRepository.setMcpEnabled(id, request.mcpEnabled());
+        }
         return UserSummary.from(userRepository.findById(id).orElseThrow());
     }
 

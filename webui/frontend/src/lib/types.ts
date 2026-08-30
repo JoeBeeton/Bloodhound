@@ -357,6 +357,7 @@ export interface AdminUser {
   role: string;
   status: string;
   organizationId: string;
+  mcpEnabled: boolean;
 }
 
 export type UserRole = "ADMIN" | "ANALYST" | "VIEWER";
