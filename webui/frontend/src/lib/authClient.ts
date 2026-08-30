@@ -1,7 +1,22 @@
 import type { AuthState } from "./types";
 
+function formatRetryAfter(res: Response): string {
+  const seconds = Number(res.headers.get("Retry-After"));
+  if (!Number.isFinite(seconds) || seconds <= 0) return "a few minutes";
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
 async function parseJsonOrThrow(res: Response): Promise<AuthState> {
   if (!res.ok) {
+    // 429 handled explicitly, not folded into the generic "Something went wrong" case below - a
+    // product review found a rate-limited login previously showed that same generic message,
+    // which is actively counterproductive (it reads as transient and invites immediately retrying
+    // the exact thing being throttled) instead of telling the user they're locked out and for
+    // roughly how long.
+    if (res.status === 429) {
+      throw new Error(`Too many failed attempts. Try again in ${formatRetryAfter(res)}.`);
+    }
     throw new Error(res.status === 401 ? "Invalid email or password." : "Something went wrong. Try again.");
   }
   return res.json();

@@ -64,7 +64,20 @@ public class AuthProxyController {
             // rate limiter against the live system, not assumed. Passing the
             // real status straight through is correct for every 4xx central-
             // server sends from this endpoint, not just 401.
-            return ResponseEntity.status(e.getStatusCode()).build();
+            //
+            // Retry-After specifically forwarded (not just the status): a product review found
+            // the frontend had no way to tell the user how long a 429 lockout actually lasts
+            // without it - dropping every upstream header here (the previous .build() with no
+            // .headers(...) did exactly that) silently discarded it even after central-server
+            // started sending one.
+            ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.status(e.getStatusCode());
+            String retryAfter = e.getResponseHeaders() != null
+                    ? e.getResponseHeaders().getFirst(HttpHeaders.RETRY_AFTER)
+                    : null;
+            if (retryAfter != null) {
+                responseBuilder = responseBuilder.header(HttpHeaders.RETRY_AFTER, retryAfter);
+            }
+            return responseBuilder.build();
         }
     }
 
