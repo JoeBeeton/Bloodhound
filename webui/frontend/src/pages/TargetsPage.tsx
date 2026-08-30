@@ -169,8 +169,11 @@ export function TargetsPage() {
           className="mb-8 flex flex-col gap-3 rounded-lg border border-neon-cyan/20 bg-panel/80 p-4 sm:flex-row sm:items-end"
         >
           <div className="flex-1">
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Hostname</label>
+            <label htmlFor="addtarget-hostname" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+              Hostname
+            </label>
             <input
+              id="addtarget-hostname"
               required
               placeholder="example.com"
               value={hostname}
@@ -179,8 +182,11 @@ export function TargetsPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Type</label>
+            <label htmlFor="addtarget-type" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+              Type
+            </label>
             <select
+              id="addtarget-type"
               value={targetType}
               onChange={(e) => setTargetType(e.target.value as TargetType)}
               className="select-cyber w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan sm:w-auto"
@@ -280,10 +286,11 @@ export function TargetsPage() {
             <span className="font-bold text-severity-critical">This cannot be undone.</span> Unlike "Remove," there
             is no restoring this target afterward.
           </p>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+          <label htmlFor="delete-confirm-text" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
             Type <span className="text-neon-amber">{pendingDeletion.hostname}</span> to confirm
           </label>
           <input
+            id="delete-confirm-text"
             value={deleteConfirmText}
             onChange={(e) => setDeleteConfirmText(e.target.value)}
             className="mb-4 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-severity-critical"

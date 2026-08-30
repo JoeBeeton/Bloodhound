@@ -91,8 +91,11 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
     <Modal title="Change password" onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Current password</label>
+          <label htmlFor="changepw-current" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Current password
+          </label>
           <input
+            id="changepw-current"
             required
             type="password"
             autoComplete="current-password"
@@ -102,8 +105,11 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
           />
         </div>
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">New password</label>
+          <label htmlFor="changepw-new" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            New password
+          </label>
           <input
+            id="changepw-new"
             required
             type="password"
             autoComplete="new-password"
@@ -113,8 +119,11 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
           />
         </div>
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Confirm new password</label>
+          <label htmlFor="changepw-confirm" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Confirm new password
+          </label>
           <input
+            id="changepw-confirm"
             required
             type="password"
             autoComplete="new-password"

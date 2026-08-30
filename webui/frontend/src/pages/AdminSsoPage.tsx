@@ -131,26 +131,33 @@ export function AdminSsoPage() {
                 2. Configure your identity provider here
               </h2>
 
-              <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">IdP Entity ID</label>
+              <label htmlFor="sso-idp-entity-id" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+                IdP Entity ID
+              </label>
               <input
+                id="sso-idp-entity-id"
                 value={idpEntityId}
                 onChange={(e) => setIdpEntityId(e.target.value)}
                 required
                 className="mb-3 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
               />
 
-              <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">IdP SSO URL</label>
+              <label htmlFor="sso-idp-sso-url" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+                IdP SSO URL
+              </label>
               <input
+                id="sso-idp-sso-url"
                 value={idpSsoUrl}
                 onChange={(e) => setIdpSsoUrl(e.target.value)}
                 required
                 className="mb-3 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
               />
 
-              <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+              <label htmlFor="sso-idp-cert" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
                 IdP signing certificate (X.509, PEM or base64)
               </label>
               <textarea
+                id="sso-idp-cert"
                 value={idpX509Cert}
                 onChange={(e) => setIdpX509Cert(e.target.value)}
                 required
@@ -160,8 +167,11 @@ export function AdminSsoPage() {
 
               <div className="mb-3 grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Email attribute</label>
+                  <label htmlFor="sso-email-attr" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+                    Email attribute
+                  </label>
                   <input
+                    id="sso-email-attr"
                     value={emailAttributeName}
                     onChange={(e) => setEmailAttributeName(e.target.value)}
                     required
@@ -169,10 +179,11 @@ export function AdminSsoPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+                  <label htmlFor="sso-display-name-attr" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
                     Display name attribute (optional)
                   </label>
                   <input
+                    id="sso-display-name-attr"
                     value={displayNameAttributeName}
                     onChange={(e) => setDisplayNameAttributeName(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
