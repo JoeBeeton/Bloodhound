@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -42,6 +43,28 @@ const MAX_VIEWBOX_WIDTH = WIDTH * 2.5;
  * good enough since the legend's own size only changes if someone edits it. */
 const LEGEND_RESERVED_LEFT = 170;
 const LEGEND_RESERVED_BOTTOM = 140;
+
+/**
+ * A product/AppSec review found every node was mouse-only - a plain SVG onClick with no
+ * tabIndex, role, or keyboard handler anywhere, so a keyboard-only user had no way to reach any
+ * target/subdomain from this page at all (WCAG 2.1.1/4.1.2), despite the map being a real
+ * navigation surface (clicking a node routes to its target/subdomain detail page). Only nodes
+ * {@link hrefForNode} actually gives a destination to (target/subdomain/"more") are made
+ * focusable - the platform nodes (hub/database/webui/worker) aren't links, so giving them
+ * role="button" would be a focusable dead end, itself an accessibility anti-pattern.
+ */
+function ariaLabelForNode(node: GraphNode): string {
+  if (node.kind === "target") {
+    return `${node.label}, ${node.targetType}${node.grade ? `, grade ${node.grade} (${node.score?.toFixed(0)})` : ", not yet scanned"}`;
+  }
+  if (node.kind === "subdomain") {
+    return `${node.label}, ${node.isActive ? "active" : "inactive"} subdomain`;
+  }
+  if (node.kind === "more") {
+    return `View all subdomains for this target${node.hiddenCount ? ` (${node.hiddenCount} more not shown)` : ""}`;
+  }
+  return node.label;
+}
 
 /**
  * Renders an already-shaped GraphData as a force-directed SVG map: central-server at the hub,
@@ -168,12 +191,27 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
     setIsPanning(false);
   }
 
+  function handleNodeKeyDown(e: ReactKeyboardEvent<SVGGElement>, href: string) {
+    // Enter/Space, the same activation keys a real <button> or <a> respond to - Space is
+    // preventDefault'd so it doesn't also scroll the page, same as a native button.
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      navigate(href);
+    }
+  }
+
   return (
     <div className="relative w-full overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/50">
       {/* Marching-ants flow for "currently scanning" links - CSS keyframes scoped here rather
           than a Tailwind utility, since animating stroke-dashoffset on an SVG line has no
-          built-in Tailwind equivalent. */}
-      <style>{"@keyframes asm-flow { to { stroke-dashoffset: -16; } }"}</style>
+          built-in Tailwind equivalent. focus-visible outline is here for the same reason: a
+          node is an SVG <g>, not an HTML element, so Tailwind's focus utilities don't apply to
+          it - :focus-visible (not :focus) so this only shows for keyboard focus, not a lingering
+          ring left over from a mouse click same as every other focus style in this app. */}
+      <style>
+        {"@keyframes asm-flow { to { stroke-dashoffset: -16; } } " +
+          ".asm-node-focusable:focus-visible { outline: 2px solid #00f0ff; outline-offset: 4px; border-radius: 50%; }"}
+      </style>
       <svg
         ref={svgRef}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
@@ -276,11 +314,25 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                 key={node.id}
                 transform={`translate(${node.x}, ${node.y})`}
                 opacity={dimmed ? 0.18 : 1}
-                className={`transition-opacity duration-200 ${isBusyWorker ? "animate-pulse" : ""}`}
+                className={`transition-opacity duration-200 ${isBusyWorker ? "animate-pulse" : ""} ${href ? "asm-node-focusable" : ""}`}
                 style={{ cursor: href ? "pointer" : "default" }}
                 onMouseEnter={() => setHoveredId(node.id)}
                 onMouseLeave={() => setHoveredId((cur) => (cur === node.id ? null : cur))}
                 onClick={() => href && navigate(href)}
+                // Keyboard focus reuses the exact same hoveredId-driven highlight (glow,
+                // connected-link emphasis, and the info tooltip) hovering already gives - a
+                // keyboard user gets the identical visual feedback a mouse user does, for free,
+                // rather than a second bespoke "focused" visual state to keep in sync with it.
+                {...(href
+                  ? {
+                      tabIndex: 0,
+                      role: "button",
+                      "aria-label": ariaLabelForNode(node),
+                      onFocus: () => setHoveredId(node.id),
+                      onBlur: () => setHoveredId((cur) => (cur === node.id ? null : cur)),
+                      onKeyDown: (e: ReactKeyboardEvent<SVGGElement>) => handleNodeKeyDown(e, href),
+                    }
+                  : {})}
               >
                 <circle
                   r={node.radius}
@@ -416,6 +468,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         <LegendRow color="#ffb800" label="Worker busy" />
         <p className="mt-1 text-muted">scroll to zoom · drag to pan</p>
         <p className="text-muted">zoom in to reveal subdomain names</p>
+        <p className="text-muted">tab to a node · enter to open it</p>
       </div>
     </div>
   );
