@@ -8,6 +8,16 @@ export default {
         // later screen (dashboard, targets, compare, findings) reuses.
         void: "#0a0a12",
         panel: "#12071f",
+        // A product/AppSec review found text-slate-600 (Tailwind's default #475569, 2.6:1 on
+        // void) used in 21 places across the app for deliberately de-emphasized tertiary text
+        // (e.g. a finding's raw display id, nested inside already-muted slate-400 text) - the
+        // same WCAG AA failure severity.info below was already fixed for once, just never
+        // caught here. Not simply overriding Tailwind's own slate-600: that scale backs
+        // border-slate-600/bg-slate-600 too, and changing it globally would touch borders and
+        // backgrounds this review never assessed. Reuses severity.low's exact tone (already a
+        // proven "muted but legible" value in this palette) under a semantic name instead of
+        // inventing another one-off gray.
+        muted: "#7a8aa0",
         neon: {
           magenta: "#ff2e97",
           cyan: "#00f0ff",

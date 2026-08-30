@@ -62,7 +62,7 @@ export function ScreenshotThumbnail({
   }, [src]);
 
   if (failed) {
-    return <span className="font-mono text-[10px] text-slate-600">—</span>;
+    return <span className="font-mono text-[10px] text-muted">—</span>;
   }
   if (!objectUrl) {
     return <span className={`block animate-pulse rounded bg-slate-800 ${sizeClass}`} />;

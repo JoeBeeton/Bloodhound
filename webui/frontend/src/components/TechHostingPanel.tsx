@@ -33,7 +33,7 @@ function TechBadge({ name, category, version }: { name: string; category: string
 }
 
 export function HostingBadge({ fingerprint }: { fingerprint: FingerprintEntry | undefined }) {
-  if (!fingerprint || !fingerprint.hostingProvider) return <span className="text-slate-600">—</span>;
+  if (!fingerprint || !fingerprint.hostingProvider) return <span className="text-muted">—</span>;
   return (
     <span
       title={fingerprint.hostingAsn ? `${fingerprint.hostingAsn} · ${fingerprint.hostingAsnOrg}` : undefined}

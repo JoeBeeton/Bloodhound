@@ -254,7 +254,7 @@ export function ScansPage() {
           {query.data && query.data.length === 0 && (
             <div className="rounded-lg border border-neon-cyan/10 bg-panel/60 px-6 py-10 text-center">
               <p className="font-mono text-sm text-slate-400">Nothing is currently scanning.</p>
-              <p className="mt-1 font-mono text-xs text-slate-600">
+              <p className="mt-1 font-mono text-xs text-muted">
                 Scans you trigger, or that run on schedule, will show up here while in progress.
               </p>
             </div>

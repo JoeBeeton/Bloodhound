@@ -180,7 +180,7 @@ export function AdminUsersPage() {
                   </button>
                 ) : (
                   <span
-                    className="font-mono text-[11px] text-slate-600"
+                    className="font-mono text-[11px] text-muted"
                     title={`This user is provisioned via ${u.identitySource} and has no local password to reset`}
                   >
                     {u.identitySource === "SAML" ? "SSO" : u.identitySource}
@@ -280,7 +280,7 @@ const LAST_LOGIN_DATE_FORMAT: Intl.DateTimeFormatOptions = {
 function LastLoginLabel({ lastLoginAt }: { lastLoginAt: string | null }) {
   if (!lastLoginAt) {
     return (
-      <span className="font-mono text-xs text-slate-600" title="This account has never signed in">
+      <span className="font-mono text-xs text-muted" title="This account has never signed in">
         Never
       </span>
     );
