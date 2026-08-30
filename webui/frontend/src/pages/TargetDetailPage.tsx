@@ -46,6 +46,7 @@ function findingsFilterParams(filters: FindingsFilterState): URLSearchParams {
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
   if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  if (filters.search) params.set("search", filters.search);
   return params;
 }
 
@@ -182,6 +183,7 @@ export function TargetDetailPage() {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
     status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
+    search: searchParams.get("search") ?? undefined,
   };
   const setFilters = (next: FindingsFilterState) => {
     setSearchParams(
@@ -190,6 +192,7 @@ export function TargetDetailPage() {
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
         next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
+        next.search ? params.set("search", next.search) : params.delete("search");
         return params;
       },
       { replace: true },
@@ -445,7 +448,7 @@ export function TargetDetailPage() {
         )}
         {findingsQuery.data?.totalCount === 0 && (
           <p className="font-mono text-sm text-slate-400">
-            {filters.severities.length > 0 || filters.categories.length > 0
+            {filters.severities.length > 0 || filters.categories.length > 0 || filters.search
               ? "No findings match the selected filters."
               : filters.status === "RESOLVED"
                 ? "Nothing resolved yet."

@@ -118,7 +118,7 @@ public class McpReadTools {
         int boundedLimit = Math.clamp(limit != null ? limit : 200, 1, 500);
         int boundedOffset = offset != null ? Math.max(offset, 0) : 0;
         return findingRepository
-                .findByTargetDetailed(targetId, severity, category, status, affectedAsset, boundedLimit, boundedOffset)
+                .findByTargetDetailed(targetId, severity, category, status, affectedAsset, null, boundedLimit, boundedOffset)
                 .stream()
                 .map(d -> FindingSummary.from(d, parseEvidence(d.finding().evidenceJson()), null))
                 .toList();

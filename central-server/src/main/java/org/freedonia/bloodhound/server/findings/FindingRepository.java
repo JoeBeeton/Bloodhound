@@ -203,7 +203,14 @@ public class FindingRepository {
      * the rows actually shipped to the browser are limited here.
      */
     public List<FindingDetail> findByTargetDetailed(
-            UUID targetId, String severity, String category, String status, String affectedAsset, int limit, int offset) {
+            UUID targetId,
+            String severity,
+            String category,
+            String status,
+            String affectedAsset,
+            String search,
+            int limit,
+            int offset) {
         StringBuilder sql = new StringBuilder(
                 "SELECT f.*, COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
                         + "rc.remediation_advice AS remediation_advice "
@@ -213,7 +220,7 @@ public class FindingRepository {
                         + "WHERE f.target_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(targetId);
-        appendFilters(sql, args, severity, category, status, affectedAsset);
+        appendFilters(sql, args, severity, category, status, affectedAsset, search);
         sql.append(" ORDER BY CASE f.severity "
                 + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
                 + "f.created_at DESC LIMIT ? OFFSET ?");
@@ -223,25 +230,53 @@ public class FindingRepository {
     }
 
     /** Same filters as {@link #findByTargetDetailed}, unpaginated count - lets a caller show "showing N of TOTAL". */
-    public int countByTargetFiltered(UUID targetId, String severity, String category, String status, String affectedAsset) {
+    public int countByTargetFiltered(
+            UUID targetId, String severity, String category, String status, String affectedAsset, String search) {
         StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM findings f WHERE f.target_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(targetId);
-        appendFilters(sql, args, severity, category, status, affectedAsset);
+        appendFilters(sql, args, severity, category, status, affectedAsset, search);
         Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
         return count != null ? count : 0;
     }
 
     private static void appendFilters(
-            StringBuilder sql, List<Object> args, String severity, String category, String status, String affectedAsset) {
+            StringBuilder sql,
+            List<Object> args,
+            String severity,
+            String category,
+            String status,
+            String affectedAsset,
+            String search) {
         appendInClause(sql, args, "f.severity", severity);
         appendInClause(sql, args, "f.category", category);
         if (affectedAsset != null) {
             sql.append(" AND f.affected_asset = ?");
             args.add(affectedAsset);
         }
+        appendSearchClause(sql, args, search);
         sql.append(" AND f.status = ?");
         args.add(status != null ? status : "OPEN");
+    }
+
+    /**
+     * A product review found the only way to narrow findings was severity/category/status chips
+     * and (target-scoped) an exact affected-asset match - there was no way to answer "which
+     * findings mention X" (a CVE id, a header name, a hostname fragment) without paging through
+     * everything by eye. Case-insensitive substring match against title OR description, same
+     * ILIKE pattern already used for the audit log's actor-email filter - title is normally short
+     * and specific (e.g. "Missing Content-Security-Policy header"), description often carries the
+     * detail (e.g. a CVE id or affected package name) that title doesn't, so searching only one
+     * would miss real matches a person typing a keyword would expect to find.
+     */
+    private static void appendSearchClause(StringBuilder sql, List<Object> args, String search) {
+        if (search == null || search.isBlank()) {
+            return;
+        }
+        sql.append(" AND (f.title ILIKE ? OR f.description ILIKE ?)");
+        String needle = "%" + search + "%";
+        args.add(needle);
+        args.add(needle);
     }
 
     /** Appends " AND column IN (?,?,...)" for a comma-separated value list; a no-op if csv is null/blank. */
@@ -266,7 +301,7 @@ public class FindingRepository {
 
     /** Org-wide findings for the dashboard's "top open findings" widget - joined with hostname since these span multiple targets. */
     public List<OrgFinding> findOpenByOrganization(UUID organizationId, List<String> severities, int limit) {
-        return findOpenByOrganization(organizationId, severities, List.of(), "OPEN", limit, 0);
+        return findOpenByOrganization(organizationId, severities, List.of(), "OPEN", null, limit, 0);
     }
 
     /**
@@ -281,7 +316,13 @@ public class FindingRepository {
      * omitting this" question.
      */
     public List<OrgFinding> findOpenByOrganization(
-            UUID organizationId, List<String> severities, List<String> categories, String status, int limit, int offset) {
+            UUID organizationId,
+            List<String> severities,
+            List<String> categories,
+            String status,
+            String search,
+            int limit,
+            int offset) {
         StringBuilder sql = new StringBuilder(
                 "SELECT f.*, t.hostname AS target_hostname, "
                         + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
@@ -296,6 +337,7 @@ public class FindingRepository {
         args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        appendSearchClause(sql, args, search);
         sql.append(" ORDER BY CASE f.severity "
                 + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
                 + "f.created_at DESC LIMIT ? OFFSET ?");
@@ -306,7 +348,7 @@ public class FindingRepository {
 
     /** Unpaginated total matching {@link #findOpenByOrganization}'s filters - lets a caller show "showing N of TOTAL". */
     public int countOpenByOrganizationFiltered(
-            UUID organizationId, List<String> severities, List<String> categories, String status) {
+            UUID organizationId, List<String> severities, List<String> categories, String status, String search) {
         StringBuilder sql = new StringBuilder(
                 "SELECT COUNT(*) FROM findings f JOIN targets t ON t.id = f.target_id "
                         + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
@@ -315,6 +357,7 @@ public class FindingRepository {
         args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        appendSearchClause(sql, args, search);
         Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
         return count != null ? count : 0;
     }

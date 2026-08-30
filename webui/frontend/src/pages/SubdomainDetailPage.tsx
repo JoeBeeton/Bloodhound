@@ -47,6 +47,7 @@ async function fetchFindingsForHost(
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
   if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  if (filters.search) params.set("search", filters.search);
   const res = await apiFetch(`/api/v1/targets/${targetId}/findings?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load findings.");
   return res.json();
@@ -140,7 +141,7 @@ export function SubdomainDetailPage() {
             )}
             {findingsQuery.data?.length === 0 && (
               <p className="font-mono text-sm text-slate-400">
-                {filters.severities.length > 0 || filters.categories.length > 0
+                {filters.severities.length > 0 || filters.categories.length > 0 || filters.search
                   ? "No findings match the selected filters."
                   : filters.status === "RESOLVED"
                     ? "Nothing resolved yet."
