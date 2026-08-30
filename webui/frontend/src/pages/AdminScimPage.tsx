@@ -91,6 +91,13 @@ export function AdminScimPage() {
   // get an unannounced expiry forced on it just because a numeric input needs *some* value.
   const [expiresInDays, setExpiresInDays] = useState("");
   const [created, setCreated] = useState<CreatedToken | null>(null);
+  // Revoking cuts off the IdP's ability to push provisioning events immediately - a stray click
+  // on this table's only per-row control could otherwise silently break an org's live user
+  // provisioning. Mirrors ApiKeysPage's own pendingRevoke confirmation modal, the established
+  // pattern for this exact "destructive-but-self-service, one click away" shape in this app -
+  // a security/AppSec review found this page was the one credential-revoke flow that never
+  // adopted it and still fired straight from onClick.
+  const [pendingRevoke, setPendingRevoke] = useState<ScimTokenSummary | null>(null);
 
   const tokensQuery = useQuery({ queryKey: ["admin-scim-tokens", orgId], queryFn: () => fetchTokens(orgId), enabled: !!orgId });
 
@@ -106,7 +113,10 @@ export function AdminScimPage() {
 
   const revokeMutation = useMutation({
     mutationFn: (tokenId: string) => revokeToken(orgId, tokenId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-scim-tokens", orgId] }),
+    onSuccess: () => {
+      setPendingRevoke(null);
+      queryClient.invalidateQueries({ queryKey: ["admin-scim-tokens", orgId] });
+    },
   });
 
   return (
@@ -178,9 +188,6 @@ export function AdminScimPage() {
 
         <div className="rounded-lg border border-slate-700 bg-panel/60 p-5">
           <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-300">Tokens</h2>
-          {revokeMutation.isError && (
-            <p className="mb-3 font-mono text-xs text-severity-critical">Failed to revoke token. Try again.</p>
-          )}
           {tokensQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
           {tokensQuery.isError && <ErrorState message="Failed to load SCIM tokens." onRetry={() => tokensQuery.refetch()} />}
           {tokensQuery.data && tokensQuery.data.tokens.length === 0 && (
@@ -211,7 +218,7 @@ export function AdminScimPage() {
                       <td className="py-2 text-right">
                         {!t.revokedAt && (
                           <button
-                            onClick={() => revokeMutation.mutate(t.id)}
+                            onClick={() => setPendingRevoke(t)}
                             className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
                           >
                             Revoke
@@ -226,6 +233,34 @@ export function AdminScimPage() {
           )}
         </div>
       </div>
+
+      {pendingRevoke && (
+        <Modal title="Revoke SCIM token" onClose={() => setPendingRevoke(null)}>
+          <p className="mb-4 text-sm text-slate-300">
+            Revoke <span className="font-mono text-neon-cyan">{pendingRevoke.label}</span>? Your identity provider
+            will immediately lose the ability to push user provisioning events with this token. This cannot be
+            undone.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setPendingRevoke(null)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => revokeMutation.mutate(pendingRevoke.id)}
+              disabled={revokeMutation.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {revokeMutation.isPending ? "Revoking…" : "Revoke token"}
+            </button>
+          </div>
+          {revokeMutation.isError && (
+            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to revoke token. Try again.</p>
+          )}
+        </Modal>
+      )}
 
       {created && (
         <Modal title="SCIM token generated" onClose={() => setCreated(null)}>
