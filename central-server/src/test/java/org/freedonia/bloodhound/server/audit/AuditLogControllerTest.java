@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -106,5 +107,36 @@ class AuditLogControllerTest {
 
         verify(auditLogRepository).findByOrganization(orgId, "alice", "TARGET_DELETED", 50, 0);
         verify(auditLogRepository).countByOrganization(orgId, "alice", "TARGET_DELETED");
+    }
+
+    @Test
+    void export_orgIdMismatch_forbidden() {
+        assertThatThrownBy(() -> controller.export(otherOrgId, null, null, admin))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void export_matchingOrg_returnsCsvWithAttachmentHeaders() {
+        when(auditLogRepository.findByOrganization(eq(orgId), any(), any(), anyInt(), eq(0)))
+                .thenReturn(List.of(entry()));
+
+        ResponseEntity<byte[]> response = controller.export(orgId, null, null, admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getContentType().toString()).contains("text/csv");
+        assertThat(response.getHeaders().getFirst("Content-Disposition")).contains("attachment").contains(".csv");
+        String csv = new String(response.getBody(), StandardCharsets.UTF_8);
+        assertThat(csv).startsWith("When,Actor,Action,Target Type,Target ID,Detail\r\n");
+        assertThat(csv).contains("TARGET_DELETED");
+    }
+
+    @Test
+    void export_passesFiltersThroughAndUsesOffsetZero() {
+        when(auditLogRepository.findByOrganization(eq(orgId), eq("alice"), eq("TARGET_DELETED"), anyInt(), eq(0)))
+                .thenReturn(List.of(entry()));
+
+        controller.export(orgId, "alice", "TARGET_DELETED", admin);
+
+        verify(auditLogRepository).findByOrganization(eq(orgId), eq("alice"), eq("TARGET_DELETED"), anyInt(), eq(0));
     }
 }

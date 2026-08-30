@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
@@ -25,14 +25,45 @@ interface AuditLogPage {
 
 const PAGE_SIZE = 50;
 
-async function fetchAuditLog(orgId: string, actorEmail: string, action: string | null, limit: number): Promise<AuditLogPage> {
-  const params = new URLSearchParams({ limit: String(limit), offset: "0" });
+function auditLogFilterParams(actorEmail: string, action: string | null): URLSearchParams {
+  const params = new URLSearchParams();
   if (actorEmail) params.set("actorEmail", actorEmail);
   if (action) params.set("action", action);
+  return params;
+}
+
+async function fetchAuditLog(orgId: string, actorEmail: string, action: string | null, limit: number): Promise<AuditLogPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: "0" });
+  const filterParams = auditLogFilterParams(actorEmail, action);
+  filterParams.forEach((value, key) => params.set(key, value));
   const res = await apiFetch(`/api/v1/orgs/${orgId}/audit-log?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load the audit log.");
   const items: AuditLogEntry[] = await res.json();
   return { items, totalCount: totalCountFromResponse(res, items.length) };
+}
+
+/**
+ * Same blob-and-synthetic-object-URL pattern as FindingsPage's downloadOrgFindingsCsv - a plain
+ * `<a href>` can't carry the bearer token the export endpoint requires. Respects whatever
+ * actorEmail/action filter is currently applied, same convention as the findings exports.
+ */
+async function downloadAuditLogCsv(orgId: string, actorEmail: string, action: string | null): Promise<void> {
+  const params = auditLogFilterParams(actorEmail, action);
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/audit-log/export?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to export the audit log.");
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : "audit-log.csv";
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -91,14 +122,30 @@ export function AdminAuditLogPage() {
     enabled: !!orgId,
   });
 
+  const exportCsvMutation = useMutation({
+    mutationFn: () => downloadAuditLogCsv(orgId, debouncedActorSearch, action),
+  });
+
   const hasFilters = actorSearch.length > 0 || action !== null;
 
   return (
     <Shell>
       <div className="w-full max-w-4xl text-left">
-        <div className="mb-2">
-          <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
-          <h1 className="font-display text-2xl font-bold text-neon-cyan">Audit log</h1>
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <div>
+            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Administration</p>
+            <h1 className="font-display text-2xl font-bold text-neon-cyan">Audit log</h1>
+          </div>
+          {query.data && query.data.totalCount > 0 && (
+            <button
+              onClick={() => exportCsvMutation.mutate()}
+              disabled={exportCsvMutation.isPending}
+              className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan disabled:opacity-50"
+              title="Export the currently filtered audit log as CSV"
+            >
+              {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
+            </button>
+          )}
         </div>
         <AdminSubNav />
 
@@ -106,6 +153,9 @@ export function AdminAuditLogPage() {
           User role/status changes, password resets, target deletions, and detection-rule toggles for this
           organization.
         </p>
+        {exportCsvMutation.isError && (
+          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export the audit log. Try again.</p>
+        )}
 
         <div className="mb-4 flex flex-col gap-2 rounded-lg border border-neon-cyan/10 bg-panel/40 p-3">
           <div className="flex items-center gap-2">

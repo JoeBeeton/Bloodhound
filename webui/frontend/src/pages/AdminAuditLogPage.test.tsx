@@ -151,4 +151,68 @@ describe("AdminAuditLogPage", () => {
       await screen.findByText("No audited actions match the selected filters.", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
   });
+
+  it("hides the Export CSV button when there is no history yet", async () => {
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([], { totalCount: 0 }));
+
+    renderPage();
+    await screen.findByText("No audited actions yet.", {}, { timeout: 5000 });
+
+    expect(screen.queryByRole("button", { name: /export csv/i })).not.toBeInTheDocument();
+  });
+
+  it("exporting fetches the export endpoint with the current filters and triggers a download", async () => {
+    const user = userEvent.setup();
+    const clickSpy = vi.fn();
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag);
+      if (tag === "a") el.click = clickSpy;
+      return el;
+    });
+    URL.createObjectURL = vi.fn(() => "blob:audit-log");
+    URL.revokeObjectURL = vi.fn();
+
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // initial load
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // filtered by action
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ "Content-Disposition": 'attachment; filename="bloodhound-audit-log-2026-01-01.csv"' }),
+        blob: async () => new Blob(["When,Actor,Action,Target Type,Target ID,Detail\r\n"], { type: "text/csv" }),
+      } as unknown as Response); // export
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Target deleted" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Target deleted" })).toHaveAttribute("aria-pressed", "true"));
+
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenLastCalledWith(
+        "/api/v1/orgs/org-1/audit-log/export?action=TARGET_DELETED",
+      ),
+    );
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:audit-log");
+  });
+
+  it("shows an error message when the export request fails, without breaking the page", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // initial load
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // export failure
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    expect(
+      await screen.findByText("Failed to export the audit log. Try again.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  });
 });
