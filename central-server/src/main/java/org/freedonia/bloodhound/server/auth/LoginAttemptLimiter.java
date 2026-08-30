@@ -49,6 +49,22 @@ public class LoginAttemptLimiter {
     }
 
     /**
+     * How much longer this email is locked out, for the login endpoint's Retry-After header - a
+     * product review found a rate-limited login previously showed the same generic "something
+     * went wrong, try again" message as any other failure, which is actively counterproductive
+     * (it invites immediately retrying the exact thing that's being throttled) instead of telling
+     * the user they're locked out and for how long. 0 if not currently locked out.
+     */
+    public long remainingLockoutSeconds(String email) {
+        Attempts attempts = byEmail.get(key(email));
+        if (attempts == null || !attempts.isLockedOut()) {
+            return 0;
+        }
+        Duration remaining = Duration.between(Instant.now(), attempts.windowStart.plus(WINDOW));
+        return Math.max(0, remaining.toSeconds());
+    }
+
+    /**
      * A security review found that {@code byEmail} only ever shrinks on success - a failed
      * attempt against a made-up email adds an entry that nothing ever removes otherwise.
      * /api/v1/auth/login is unauthenticated, so an attacker submitting failed logins against many

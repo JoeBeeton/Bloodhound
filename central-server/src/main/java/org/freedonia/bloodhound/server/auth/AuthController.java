@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.auth.dto.AuthResponse;
 import org.freedonia.bloodhound.server.auth.dto.LoginRequest;
 import org.freedonia.bloodhound.server.auth.dto.RefreshRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,20 +26,29 @@ import org.springframework.web.server.ResponseStatusException;
 public class AuthController {
 
     private final AuthenticationService authenticationService;
+    private final LoginAttemptLimiter loginAttemptLimiter;
 
-    public AuthController(AuthenticationService authenticationService) {
+    public AuthController(AuthenticationService authenticationService, LoginAttemptLimiter loginAttemptLimiter) {
         this.authenticationService = authenticationService;
+        this.loginAttemptLimiter = loginAttemptLimiter;
     }
 
     @PostMapping("/login")
-    public AuthResponse login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         try {
-            return AuthResponse.from(authenticationService.login(request.email(), request.password()));
+            return ResponseEntity.ok(AuthResponse.from(authenticationService.login(request.email(), request.password())));
         } catch (InvalidCredentialsException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid email or password");
         } catch (LoginRateLimitedException e) {
-            throw new ResponseStatusException(
-                    HttpStatus.TOO_MANY_REQUESTS, "too many failed login attempts - try again later");
+            // A standard Retry-After header (RFC 9110 10.2.3), not just a status code - a product
+            // review found the frontend had no reliable way to tell "you're rate-limited" apart
+            // from any other failure without this, so it showed the same generic error message
+            // for both. ResponseStatusException doesn't support adding response headers, hence
+            // building the ResponseEntity directly here instead of throwing like the other cases.
+            long retryAfterSeconds = loginAttemptLimiter.remainingLockoutSeconds(request.email());
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                    .build();
         }
     }
 
