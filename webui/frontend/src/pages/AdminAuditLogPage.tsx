@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
@@ -25,8 +25,11 @@ interface AuditLogPage {
 
 const PAGE_SIZE = 50;
 
-async function fetchAuditLog(orgId: string, limit: number): Promise<AuditLogPage> {
-  const res = await apiFetch(`/api/v1/orgs/${orgId}/audit-log?limit=${limit}&offset=0`);
+async function fetchAuditLog(orgId: string, actorEmail: string, action: string | null, limit: number): Promise<AuditLogPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: "0" });
+  if (actorEmail) params.set("actorEmail", actorEmail);
+  if (action) params.set("action", action);
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/audit-log?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load the audit log.");
   const items: AuditLogEntry[] = await res.json();
   return { items, totalCount: totalCountFromResponse(res, items.length) };
@@ -41,12 +44,16 @@ const ACTION_LABELS: Record<string, string> = {
   RULE_DISABLED: "Rule disabled",
 };
 
+const ACTION_VALUES = Object.keys(ACTION_LABELS);
+
 const DESTRUCTIVE_ACTIONS = new Set(["TARGET_DELETED", "USER_PASSWORD_RESET", "RULE_DISABLED"]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
+
+const INACTIVE_TOGGLE = "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200";
 
 /**
  * Read-only history of the sensitive, org-scoped actions an admin can take - who changed a
@@ -55,18 +62,36 @@ const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
  * happened invisibly, with no way to answer "who did this and when" after the fact. Deliberately
  * covers the highest-value sensitive actions (identity/access changes, irreversible deletes,
  * detection-suppressing toggles) rather than every write in the system - see V43__audit_log.sql.
+ *
+ * Filtering by actor and action was added after the page had been live a while - once an org
+ * accumulates more than a screenful of history, "what did this admin do" or "show me every
+ * password reset" was only answerable by paging through everything chronologically. Both filters
+ * are server-side (see AuditLogRepository#findByOrganization) so they narrow the full history,
+ * not just whatever page happens to be loaded.
  */
 export function AdminAuditLogPage() {
   usePageTitle("Audit Log");
   const { user } = useAuth();
   const orgId = user?.organizationId ?? "";
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [actorSearch, setActorSearch] = useState("");
+  const [action, setAction] = useState<string | null>(null);
+
+  // Debounced so typing an email/name doesn't fire a request per keystroke - same pattern as
+  // SubdomainsPage's hostname filter, since this is a real server round trip each time it changes.
+  const [debouncedActorSearch, setDebouncedActorSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedActorSearch(actorSearch), 300);
+    return () => clearTimeout(timer);
+  }, [actorSearch]);
 
   const query = useQuery({
-    queryKey: ["admin-audit-log", orgId, visibleCount],
-    queryFn: () => fetchAuditLog(orgId, visibleCount),
+    queryKey: ["admin-audit-log", orgId, debouncedActorSearch, action, visibleCount],
+    queryFn: () => fetchAuditLog(orgId, debouncedActorSearch, action, visibleCount),
     enabled: !!orgId,
   });
+
+  const hasFilters = actorSearch.length > 0 || action !== null;
 
   return (
     <Shell>
@@ -82,11 +107,69 @@ export function AdminAuditLogPage() {
           organization.
         </p>
 
+        <div className="mb-4 flex flex-col gap-2 rounded-lg border border-neon-cyan/10 bg-panel/40 p-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="audit-actor-search" className="sr-only">
+              Filter by actor email
+            </label>
+            <input
+              id="audit-actor-search"
+              value={actorSearch}
+              onChange={(e) => {
+                setActorSearch(e.target.value);
+                setVisibleCount(PAGE_SIZE);
+              }}
+              placeholder="Filter by actor email…"
+              className="w-full max-w-xs rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-muted focus:border-neon-cyan"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Action</span>
+            {ACTION_VALUES.map((value) => {
+              const active = action === value;
+              return (
+                <button
+                  key={value}
+                  aria-pressed={active}
+                  onClick={() => {
+                    setAction(active ? null : value);
+                    setVisibleCount(PAGE_SIZE);
+                  }}
+                  className={`rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest transition ${
+                    active ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_TOGGLE
+                  }`}
+                >
+                  {ACTION_LABELS[value]}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-neon-cyan/10 pt-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              {query.data === undefined ? "…" : `${query.data.totalCount} result${query.data.totalCount === 1 ? "" : "s"}`}
+            </span>
+            {hasFilters && (
+              <button
+                onClick={() => {
+                  setActorSearch("");
+                  setAction(null);
+                  setVisibleCount(PAGE_SIZE);
+                }}
+                className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta transition hover:text-neon-magenta/70"
+              >
+                Clear filters ✕
+              </button>
+            )}
+          </div>
+        </div>
+
         {query.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
         {query.isError && <ErrorState message="Failed to load the audit log." onRetry={() => query.refetch()} />}
 
         {query.data && query.data.items.length === 0 && (
-          <p className="font-mono text-sm text-slate-400">No audited actions yet.</p>
+          <p className="font-mono text-sm text-slate-400">
+            {hasFilters ? "No audited actions match the selected filters." : "No audited actions yet."}
+          </p>
         )}
 
         {query.data && query.data.items.length > 0 && (

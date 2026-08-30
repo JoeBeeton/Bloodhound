@@ -31,6 +31,8 @@ public class AuditLogController {
     @GetMapping
     public ResponseEntity<List<AuditLogEntry>> list(
             @PathVariable UUID orgId,
+            @RequestParam(required = false) String actorEmail,
+            @RequestParam(required = false) String action,
             @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -40,8 +42,9 @@ public class AuditLogController {
         }
         int boundedLimit = Math.clamp(limit, 1, MAX_LIMIT);
         int boundedOffset = Math.max(offset, 0);
-        List<AuditLogEntry> page = auditLogRepository.findByOrganization(orgId, boundedLimit, boundedOffset);
-        int totalCount = auditLogRepository.countByOrganization(orgId);
+        List<AuditLogEntry> page =
+                auditLogRepository.findByOrganization(orgId, actorEmail, action, boundedLimit, boundedOffset);
+        int totalCount = auditLogRepository.countByOrganization(orgId, actorEmail, action);
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 }

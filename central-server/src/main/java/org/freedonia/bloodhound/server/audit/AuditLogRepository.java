@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.audit;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -48,18 +49,47 @@ public class AuditLogRepository {
                 detail);
     }
 
-    public List<AuditLogEntry> findByOrganization(UUID organizationId, int limit, int offset) {
-        return jdbc.query(
-                "SELECT * FROM audit_log WHERE organization_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                ROW_MAPPER,
-                organizationId,
-                limit,
-                offset);
+    /**
+     * actorEmail is a case-insensitive substring match ("who did this" is usually answered by
+     * typing part of a name/email, not knowing the exact address); action is an exact match
+     * against one of the fixed action strings AuditLogController's record() calls use - a
+     * product review found the audit log had no way to filter at all, only chronological
+     * paging, making "what did this admin do" or "show me every password reset" impractical
+     * once there's more than a screenful of history.
+     */
+    public List<AuditLogEntry> findByOrganization(
+            UUID organizationId, String actorEmail, String action, int limit, int offset) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM audit_log WHERE organization_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(organizationId);
+        if (actorEmail != null && !actorEmail.isBlank()) {
+            sql.append(" AND actor_email ILIKE ?");
+            args.add("%" + actorEmail + "%");
+        }
+        if (action != null && !action.isBlank()) {
+            sql.append(" AND action = ?");
+            args.add(action);
+        }
+        sql.append(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), ROW_MAPPER, args.toArray());
     }
 
-    public int countByOrganization(UUID organizationId) {
-        Integer count =
-                jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE organization_id = ?", Integer.class, organizationId);
+    /** Same filters as {@link #findByOrganization}, unpaginated count - lets a caller show "showing N of TOTAL". */
+    public int countByOrganization(UUID organizationId, String actorEmail, String action) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM audit_log WHERE organization_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(organizationId);
+        if (actorEmail != null && !actorEmail.isBlank()) {
+            sql.append(" AND actor_email ILIKE ?");
+            args.add("%" + actorEmail + "%");
+        }
+        if (action != null && !action.isBlank()) {
+            sql.append(" AND action = ?");
+            args.add(action);
+        }
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
         return count != null ? count : 0;
     }
 }
