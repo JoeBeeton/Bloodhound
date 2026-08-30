@@ -48,6 +48,14 @@ export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect:
           {finding.severity}
         </span>
         <div className="flex items-center gap-2">
+          {finding.status === "RESOLVED" && (
+            <span
+              className="rounded border border-neon-cyan/40 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-cyan"
+              title={finding.resolvedAt ? `Resolved ${new Date(finding.resolvedAt).toLocaleString()}` : "Resolved"}
+            >
+              Resolved
+            </span>
+          )}
           {isTier2Finding(finding.moduleType) && (
             <span className="rounded border border-neon-amber/50 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-amber">
               Tier 2

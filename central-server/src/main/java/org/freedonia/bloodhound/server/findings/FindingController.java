@@ -85,6 +85,7 @@ public class FindingController {
     public ResponseEntity<List<OrgFindingSummary>> forOrganization(
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -93,7 +94,7 @@ public class FindingController {
         int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
         int boundedOffset = Math.max(offset, 0);
         List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
-                principal.organizationId(), severities, categories, boundedLimit, boundedOffset);
+                principal.organizationId(), severities, categories, status, boundedLimit, boundedOffset);
 
         var ruleWeights = ruleWeightRepository.findAllWeights();
         Map<UUID, Set<UUID>> displayedIdsByTarget = orgFindings.stream()
@@ -113,8 +114,8 @@ public class FindingController {
                     return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);
                 })
                 .toList();
-        int totalCount =
-                findingRepository.countOpenByOrganizationFiltered(principal.organizationId(), severities, categories);
+        int totalCount = findingRepository.countOpenByOrganizationFiltered(
+                principal.organizationId(), severities, categories, status);
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 

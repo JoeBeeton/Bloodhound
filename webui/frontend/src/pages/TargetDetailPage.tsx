@@ -45,6 +45,7 @@ function findingsFilterParams(filters: FindingsFilterState): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
+  if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
   return params;
 }
 
@@ -180,6 +181,7 @@ export function TargetDetailPage() {
   const filters: FindingsFilterState = {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
+    status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
   };
   const setFilters = (next: FindingsFilterState) => {
     setSearchParams(
@@ -187,6 +189,7 @@ export function TargetDetailPage() {
         const params = new URLSearchParams(prev);
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
+        next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
         return params;
       },
       { replace: true },
@@ -403,7 +406,8 @@ export function TargetDetailPage() {
 
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 id="findings" className="scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
-            Open findings {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
+            {filters.status === "RESOLVED" ? "Resolved findings" : "Open findings"}{" "}
+            {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
           </h2>
           <div className="flex items-center gap-3">
             {findingsQuery.data && findingsQuery.data.totalCount > 0 && (
@@ -416,7 +420,7 @@ export function TargetDetailPage() {
                 {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
               </button>
             )}
-            {findingsQuery.data && findingsQuery.data.items.length > 1 && (
+            {findingsQuery.data && findingsQuery.data.items.length > 1 && filters.status !== "RESOLVED" && (
               <button
                 onClick={() => setSortByScoreImpact((v) => !v)}
                 className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
@@ -440,7 +444,9 @@ export function TargetDetailPage() {
           <p className="font-mono text-sm text-slate-400">
             {filters.severities.length > 0 || filters.categories.length > 0
               ? "No findings match the selected filters."
-              : "No open findings — run a scan to check this target."}
+              : filters.status === "RESOLVED"
+                ? "Nothing resolved yet."
+                : "No open findings — run a scan to check this target."}
           </p>
         )}
 
