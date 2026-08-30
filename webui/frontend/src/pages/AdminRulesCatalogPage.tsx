@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
@@ -10,6 +10,16 @@ import { usePageTitle } from "../lib/usePageTitle";
 async function fetchRulesCatalog(): Promise<RulesCatalogEntry[]> {
   const res = await apiFetch("/api/v1/rules-catalog");
   if (!res.ok) throw new Error("Failed to load the rules catalog.");
+  return res.json();
+}
+
+async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<RulesCatalogEntry> {
+  const res = await apiFetch(`/api/v1/rules-catalog/${ruleId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error("Failed to update the rule.");
   return res.json();
 }
 
@@ -37,6 +47,12 @@ export function AdminRulesCatalogPage() {
   usePageTitle("Rules Catalog");
   const rulesQuery = useQuery({ queryKey: ["rules-catalog"], queryFn: fetchRulesCatalog });
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
+  const queryClient = useQueryClient();
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) => setRuleEnabled(ruleId, enabled),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["rules-catalog"] }),
+  });
 
   const categories = useMemo(() => {
     if (!rulesQuery.data) return [];
@@ -59,6 +75,11 @@ export function AdminRulesCatalogPage() {
 
         {rulesQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading rules…</p>}
         {rulesQuery.isError && <ErrorState message="Failed to load the rules catalog." onRetry={() => rulesQuery.refetch()} />}
+        {toggleMutation.isError && (
+          <p className="mb-4 font-mono text-xs text-severity-critical">
+            {(toggleMutation.error as Error)?.message ?? "Failed to update the rule."}
+          </p>
+        )}
 
         {rulesQuery.data && (
           <>
@@ -75,13 +96,30 @@ export function AdminRulesCatalogPage() {
               {filtered.map((rule) => (
                 <div
                   key={rule.ruleId}
-                  className={`rounded-lg border border-l-4 border-neon-cyan/10 bg-panel/60 p-4 ${SEVERITY_ACCENT[rule.defaultSeverity]}`}
+                  className={`rounded-lg border border-l-4 border-neon-cyan/10 bg-panel/60 p-4 ${SEVERITY_ACCENT[rule.defaultSeverity]} ${
+                    rule.enabled ? "" : "opacity-50"
+                  }`}
                 >
                   <div className="mb-1 flex items-center justify-between gap-3">
                     <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[rule.defaultSeverity]}`}>
                       {rule.defaultSeverity} · {rule.category}
                     </span>
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{rule.ruleId}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{rule.ruleId}</span>
+                      <label
+                        className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400"
+                        title={rule.enabled ? "Disable this rule — its findings stop being reported and any already open are resolved" : "Enable this rule"}
+                      >
+                        <input
+                          type="checkbox"
+                          className="checkbox-cyber"
+                          checked={rule.enabled}
+                          disabled={toggleMutation.isPending}
+                          onChange={(e) => toggleMutation.mutate({ ruleId: rule.ruleId, enabled: e.target.checked })}
+                        />
+                        {rule.enabled ? "Enabled" : "Disabled"}
+                      </label>
+                    </div>
                   </div>
                   <p className="mb-1 font-mono text-sm font-bold text-slate-100">{rule.title}</p>
                   <p className="mb-2 font-mono text-xs text-slate-400">{rule.description}</p>

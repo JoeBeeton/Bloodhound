@@ -36,4 +36,17 @@ public class RuleWeightRepository {
         return Set.copyOf(jdbc.queryForList(
                 "SELECT rule_id FROM rules_catalog WHERE emitted_by_tier1 = FALSE", String.class));
     }
+
+    /**
+     * A product/AppSec review found rules_catalog.enabled existed in the schema and was faithfully
+     * returned by GET /api/v1/rules-catalog and rendered on the admin page, but nothing anywhere
+     * in the codebase ever actually read it to make a decision - a completely inert field an admin
+     * could reasonably assume was a working kill switch. Used by ResultIngestionService to filter
+     * a module's reported findings before reconciliation, so a disabled rule's findings are never
+     * persisted (and its already-open findings from before it was disabled get resolved on the
+     * next scan, the same way any finding not reported by ResultIngestionService anymore does).
+     */
+    public Set<String> findDisabledRuleIds() {
+        return Set.copyOf(jdbc.queryForList("SELECT rule_id FROM rules_catalog WHERE enabled = FALSE", String.class));
+    }
 }
