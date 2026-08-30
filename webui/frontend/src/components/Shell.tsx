@@ -5,6 +5,7 @@ import { BloodhoundMascot } from "./BloodhoundMascot";
 import { ChangePasswordModal } from "./ChangePasswordModal";
 import { GridHorizon } from "./GridHorizon";
 import { NotificationCenter } from "./NotificationCenter";
+import { SecurityStatusBanner } from "./SecurityStatusBanner";
 
 const NAV_LINK_CLASS =
   "font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan aria-[current=page]:text-neon-cyan";
@@ -67,6 +68,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </nav>
           )}
         </header>
+        {status === "authenticated" && <SecurityStatusBanner />}
         {/* Top-aligned, not vertically centered: this chrome wraps every screen, most of
             which (targets list, findings, compare charts) are taller than the viewport.
             Screens that want a centered card (login, transient full-page states) opt in

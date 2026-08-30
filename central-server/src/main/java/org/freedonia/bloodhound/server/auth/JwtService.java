@@ -36,6 +36,7 @@ public class JwtService {
 
     private final SecretKey signingKey;
     private final Duration accessTokenTtl;
+    private final boolean signingKeyIsPlaceholder;
 
     public JwtService(
             @Value("${bloodhound.jwt.signing-key}") String signingKeySecret,
@@ -45,7 +46,8 @@ public class JwtService {
             throw new IllegalStateException(
                     "JWT_SIGNING_KEY must be set and at least 32 bytes long (HS256 requires a >=256-bit key)");
         }
-        if (KNOWN_PLACEHOLDER_KEYS.contains(signingKeySecret)) {
+        this.signingKeyIsPlaceholder = KNOWN_PLACEHOLDER_KEYS.contains(signingKeySecret);
+        if (signingKeyIsPlaceholder) {
             log.warn(
                     "SECURITY: JWT_SIGNING_KEY is still the example placeholder from .env.example. Anyone who has "
                             + "seen that file can forge valid login tokens for any user in this deployment. Rotate "
@@ -55,6 +57,15 @@ public class JwtService {
         }
         this.signingKey = Keys.hmacShaKeyFor(signingKeySecret.getBytes(StandardCharsets.UTF_8));
         this.accessTokenTtl = Duration.ofMinutes(accessTokenTtlMinutes);
+    }
+
+    /**
+     * A security review found this misconfiguration only ever surfaced as a startup log line -
+     * an admin using the UI had no way to discover it short of reading server logs. Exposed here
+     * so SecurityStatusController can surface it as a banner no admin can miss.
+     */
+    public boolean isSigningKeyPlaceholder() {
+        return signingKeyIsPlaceholder;
     }
 
     public String issueAccessToken(UUID userId, UUID organizationId, String role, String email) {

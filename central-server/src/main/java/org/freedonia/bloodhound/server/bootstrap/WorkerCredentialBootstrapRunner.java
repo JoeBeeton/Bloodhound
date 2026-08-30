@@ -37,13 +37,22 @@ public class WorkerCredentialBootstrapRunner implements ApplicationRunner {
     private static final Set<String> KNOWN_PLACEHOLDER_KEYS =
             Set.of("change-me-dev-only-not-a-real-secret", "<generate-with-openssl-rand-base64-32>");
 
+    /**
+     * A security review found this misconfiguration only ever surfaced as a startup log line -
+     * an admin using the UI had no way to discover it short of reading server logs. Exposed here
+     * so SecurityStatusController can surface it as a banner no admin can miss.
+     */
+    public boolean isApiKeyPlaceholder() {
+        return KNOWN_PLACEHOLDER_KEYS.contains(apiKey);
+    }
+
     @Override
     public void run(ApplicationArguments args) {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("bootstrap: WORKER_API_KEY is not set - no worker credential seeded, workers cannot authenticate");
             return;
         }
-        if (KNOWN_PLACEHOLDER_KEYS.contains(apiKey)) {
+        if (isApiKeyPlaceholder()) {
             log.warn(
                     "SECURITY: WORKER_API_KEY is still the example placeholder from .env.example. Anyone who has "
                             + "seen that file can authenticate as a worker and claim/report scan jobs. Rotate it to "
