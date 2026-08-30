@@ -64,26 +64,36 @@ public class FindingController {
     }
 
     /**
-     * Org-wide, cross-target findings - backs the dashboard's "top open findings" widget.
-     * Score impact must be computed from each target's FULL open-findings set (not this
-     * severity-filtered, limit-capped display list), since a category's "before" score
-     * depends on every open finding in it - so per distinct target_id among the results,
-     * fetch that target's complete open set once and reuse it for every displayed finding
-     * from that target. The expensive per-finding recomputation itself, though, only runs
-     * for the findings actually being displayed (see ScoreImpactCalculator#computeFor) -
-     * computeAll here was a real, measured problem against a target with a large
-     * open-finding count, same issue as DashboardController's identical query shape.
+     * Org-wide, cross-target findings - documented as backing the dashboard's "top open
+     * findings" widget, but DashboardController actually calls FindingRepository directly for
+     * that (its own score-impact-caching needs span two differently-sorted lists at once, see
+     * its own javadoc) - this endpoint is the org-wide Findings page (every open finding across
+     * every target, filterable and paginated - previously the only ways to see findings were one
+     * target at a time, or the dashboard's un-paginated top 10) plus the documented read-only
+     * external API. category/offset and the X-Total-Count header are new; severity/limit and the
+     * bare-array response body are unchanged so existing API-key integrations keep working.
+     *
+     * <p>Score impact must be computed from each target's FULL open-findings set (not this
+     * filtered, limit-capped display list), since a category's "before" score depends on every
+     * open finding in it - so per distinct target_id among the results, fetch that target's
+     * complete open set once and reuse it for every displayed finding from that target. The
+     * expensive per-finding recomputation itself, though, only runs for the findings actually
+     * being displayed (see ScoreImpactCalculator#computeFor) - computeAll here was a real,
+     * measured problem against a target with a large open-finding count.
      */
     @GetMapping("/api/v1/findings")
-    public List<OrgFindingSummary> forOrganization(
+    public ResponseEntity<List<OrgFindingSummary>> forOrganization(
             @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String category,
             @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
-        List<String> severities = severity == null || severity.isBlank()
-                ? List.of()
-                : List.of(severity.split(","));
-        List<OrgFinding> orgFindings =
-                findingRepository.findOpenByOrganization(principal.organizationId(), severities, limit);
+        List<String> severities = severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
+        List<String> categories = category == null || category.isBlank() ? List.of() : List.of(category.split(","));
+        int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
+        int boundedOffset = Math.max(offset, 0);
+        List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
+                principal.organizationId(), severities, categories, boundedLimit, boundedOffset);
 
         var ruleWeights = ruleWeightRepository.findAllWeights();
         Map<UUID, Set<UUID>> displayedIdsByTarget = orgFindings.stream()
@@ -92,7 +102,7 @@ public class FindingController {
                         Collectors.mapping(of -> of.finding().id(), Collectors.toSet())));
         Map<UUID, Map<UUID, ScoreImpact>> impactsByTarget = new HashMap<>();
 
-        return orgFindings.stream()
+        List<OrgFindingSummary> page = orgFindings.stream()
                 .map(orgFinding -> {
                     UUID targetId = orgFinding.finding().targetId();
                     Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
@@ -103,6 +113,9 @@ public class FindingController {
                     return OrgFindingSummary.from(orgFinding, parseEvidence(orgFinding.finding().evidenceJson()), impact);
                 })
                 .toList();
+        int totalCount =
+                findingRepository.countOpenByOrganizationFiltered(principal.organizationId(), severities, categories);
+        return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 
     /** Generous enough that the overwhelming majority of targets see everything in one request, without risking the multi-minute/multi-MB response an unbounded query against a large target produces - confirmed live, 36,466 open findings for one target in this deployment. */

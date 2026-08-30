@@ -11,6 +11,7 @@ import { ApiKeysPage } from "./pages/ApiKeysPage";
 import { AttackSurfaceMapPage } from "./pages/AttackSurfaceMapPage";
 import { ComparePage } from "./pages/ComparePage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { FindingsPage } from "./pages/FindingsPage";
 import { AdminSsoPage } from "./pages/AdminSsoPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScanDetailPage } from "./pages/ScanDetailPage";
@@ -40,6 +41,14 @@ export default function App() {
           element={
             <RequireAuth>
               <TargetsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/findings"
+          element={
+            <RequireAuth>
+              <FindingsPage />
             </RequireAuth>
           }
         />
