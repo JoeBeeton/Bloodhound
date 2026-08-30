@@ -384,3 +384,9 @@ export interface RulesCatalogEntry {
   weight: number;
   enabled: boolean;
 }
+
+/** GET /api/v1/admin/security-status (ADMIN only) - deployment-wide misconfigurations that would otherwise only ever show up in server logs. */
+export interface SecurityStatus {
+  jwtSigningKeyIsPlaceholder: boolean;
+  workerApiKeyIsPlaceholder: boolean;
+}
