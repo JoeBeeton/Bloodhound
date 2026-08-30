@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { RequireAuth } from "./components/RequireAuth";
+import { AdminAuditLogPage } from "./pages/AdminAuditLogPage";
 import { AdminMcpPage } from "./pages/AdminMcpPage";
 import { AdminRulesCatalogPage } from "./pages/AdminRulesCatalogPage";
 import { AdminScimPage } from "./pages/AdminScimPage";
@@ -151,6 +152,14 @@ export default function App() {
           element={
             <RequireAdmin>
               <AdminMcpPage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/audit-log"
+          element={
+            <RequireAdmin>
+              <AdminAuditLogPage />
             </RequireAdmin>
           }
         />
