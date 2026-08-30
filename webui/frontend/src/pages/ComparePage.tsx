@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { CompareScoreMode } from "../components/CompareTrendChart";
 import { CompareTrendChart } from "../components/CompareTrendChart";
@@ -31,20 +31,27 @@ async function fetchCompare(targetIds: string[]): Promise<CompareSeries[]> {
 export function ComparePage() {
   usePageTitle("Compare");
   const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: fetchTargets });
-  const [selected, setSelected] = useState<Set<string> | null>(null);
+  // A product review found a comparison you'd actually built - a specific set of competitor
+  // domains, in "full picture" mode - vanished the moment the tab was reloaded or the URL was
+  // shared with a colleague, silently reverting to the OWN-targets default. Persisted in the URL
+  // (same convention FindingsPage/TargetDetailPage already use for their own filter state)
+  // instead of component state, so both reload and sharing a link now reproduce the exact view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTargetIds = searchParams.get("targetIds");
   // Defaults to the fair-comparison score: Tier 2 (deep port scan, ZAP) only ever runs against
   // authorized targets - in practice, your own - so plotting the full score by default would
   // make your own domain look artificially worse than a competitor purely because it was
   // scanned more thoroughly, not because it's less secure.
-  const [scoreMode, setScoreMode] = useState<CompareScoreMode>("tier1");
+  const scoreMode: CompareScoreMode = searchParams.get("mode") === "full" ? "full" : "tier1";
 
-  // First render after targets load: default-select OWN targets. `selected`
-  // stays null until then so we don't flash an empty chart before defaulting.
+  // Absent from the URL entirely: default-select OWN targets. An explicit (even empty)
+  // targetIds param always wins, so a deliberately-cleared selection stays cleared on reload
+  // rather than snapping back to the default.
   const effectiveSelected = useMemo(() => {
-    if (selected !== null) return selected;
+    if (urlTargetIds !== null) return new Set(urlTargetIds.split(",").filter(Boolean));
     const ownIds = (targetsQuery.data ?? []).filter((t) => t.targetType === "OWN").map((t) => t.id);
     return new Set(ownIds);
-  }, [selected, targetsQuery.data]);
+  }, [urlTargetIds, targetsQuery.data]);
 
   const targetIds = [...effectiveSelected];
   const compareQuery = useQuery({
@@ -57,7 +64,25 @@ export function ComparePage() {
     const next = new Set(effectiveSelected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    setSelected(next);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set("targetIds", [...next].join(","));
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
+  function setScoreMode(mode: CompareScoreMode) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        mode === "tier1" ? params.delete("mode") : params.set("mode", "full");
+        return params;
+      },
+      { replace: true },
+    );
   }
 
   return (
