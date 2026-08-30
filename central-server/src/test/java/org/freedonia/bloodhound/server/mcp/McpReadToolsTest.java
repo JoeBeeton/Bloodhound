@@ -72,7 +72,7 @@ class McpReadToolsTest {
     }
 
     private Target target() {
-        return new Target(targetId, orgId, "example.com", "OWN", "AUTHORIZED", 3600, Instant.now(), true, Instant.now());
+        return new Target(targetId, orgId, "example.com", "OWN", "AUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
     }
 
     @Test

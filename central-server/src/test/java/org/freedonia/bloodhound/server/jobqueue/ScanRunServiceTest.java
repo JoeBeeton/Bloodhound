@@ -69,7 +69,7 @@ class ScanRunServiceTest {
         ScanRun run = new ScanRun(runId, targetId, "MANUAL", triggeredByUserId, Instant.now(), null, "RUNNING");
         when(scanRunRepository.insert(targetId, "MANUAL", triggeredByUserId)).thenReturn(run);
         Target target = new Target(
-                targetId, UUID.randomUUID(), "acme.com", "OWN", "AUTHORIZED", 86400, Instant.now(), true, Instant.now());
+                targetId, UUID.randomUUID(), "acme.com", "OWN", "AUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(subdomainRepository.findHostnamesForFanout(eq(targetId), any(Integer.class))).thenReturn(subdomains);
         when(bucketBruteForceCheckRepository.findRecentlyCheckedKeys(eq(targetId), any(Instant.class)))

@@ -147,6 +147,14 @@ public class TargetController {
         requireWriteAccess(principal);
         requireOwnedTarget(id, principal);
         targetRepository.updateCadenceAndActive(id, request.scanCadenceSeconds(), request.isActive());
+        // Omitted (null) means "this request isn't touching notes" (e.g. the Remove/Restore
+        // toggle only ever sends isActive) - a caller that does mean to update notes always sends
+        // the field, blank string included, since that's how a save from an emptied textarea
+        // looks. See UpdateTargetRequest's own javadoc for why this field alone doesn't follow
+        // the plain "null = unchanged" convention scanCadenceSeconds/isActive use.
+        if (request.notes() != null) {
+            targetRepository.updateNotes(id, request.notes());
+        }
         return TargetSummary.from(targetRepository.findById(id).orElseThrow());
     }
 

@@ -53,6 +53,8 @@ export interface Target {
   lastScanAt: string | null;
   /** Null alongside lastScanAt when there's no scan yet; true for a Tier 2 deep scan, false for a regular Tier 1 scan. */
   lastScanWasDeep: boolean | null;
+  /** Free-text context an analyst leaves on a target (which environment, who owns it, why it's tracked) - absent for most existing targets. */
+  notes: string | null;
 }
 
 /** Mirrors ScoringEngine.CATEGORY_WEIGHTS on the backend exactly - WEB_APP (ZAP/Nuclei

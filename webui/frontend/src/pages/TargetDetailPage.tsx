@@ -35,6 +35,17 @@ async function updateSchedule(targetId: string, scanCadenceSeconds: number): Pro
   return res.json();
 }
 
+/** notes always sent explicitly, blank included - see UpdateTargetRequest's own javadoc for why omitting the field (rather than sending "") would mean something different server-side (leave unchanged, not clear). */
+async function updateNotes(targetId: string, notes: string): Promise<Target> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) throw new Error("Failed to save notes.");
+  return res.json();
+}
+
 async function fetchTarget(id: string): Promise<Target> {
   const res = await apiFetch(`/api/v1/targets/${id}`);
   if (!res.ok) throw new Error("Failed to load target.");
@@ -173,6 +184,86 @@ function ShowMoreToggle({
   );
 }
 
+/**
+ * A product review found no way to leave context on a target beyond the bare hostname and
+ * OWN/COMPETITOR/WATCHLIST type - which environment it is, who owns it, why it's being tracked,
+ * all lived in someone's head or a separate doc. Click-to-edit rather than always-editable: most
+ * views of this page are someone checking on a target, not annotating one, so a read view that
+ * doesn't invite accidental edits (and doesn't need its own explicit "not editing" state) is the
+ * better default.
+ */
+export function TargetNotes({ targetId, notes }: { targetId: string; notes: string | null }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(notes ?? "");
+
+  const saveMutation = useMutation({
+    mutationFn: (text: string) => updateNotes(targetId, text),
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["target", targetId] });
+    },
+  });
+
+  if (editing) {
+    return (
+      <div className="mb-6 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
+        <label htmlFor="target-notes" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+          Notes
+        </label>
+        <textarea
+          id="target-notes"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          autoFocus
+          rows={3}
+          placeholder="Which environment is this? Who owns it? Why is it being tracked?"
+          className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+        />
+        {saveMutation.isError && <p className="mt-1 font-mono text-xs text-severity-critical">Failed to save notes.</p>}
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={() => saveMutation.mutate(draft)}
+            disabled={saveMutation.isPending}
+            className="rounded bg-neon-cyan/90 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-cyan disabled:opacity-50"
+          >
+            {saveMutation.isPending ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={() => {
+              setDraft(notes ?? "");
+              setEditing(false);
+            }}
+            disabled={saveMutation.isPending}
+            className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6 rounded-lg border border-neon-cyan/10 bg-panel/40 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="whitespace-pre-wrap font-mono text-sm text-slate-300">
+          {notes || <span className="text-slate-500">No notes yet.</span>}
+        </p>
+        <button
+          onClick={() => {
+            setDraft(notes ?? "");
+            setEditing(true);
+          }}
+          className="shrink-0 font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline"
+        >
+          {notes ? "Edit" : "Add notes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function TargetDetailPage() {
   const { id } = useParams<{ id: string }>();
   const targetId = id!;
@@ -293,6 +384,8 @@ export function TargetDetailPage() {
             ← Targets
           </Link>
         </div>
+
+        {target && <TargetNotes targetId={targetId} notes={target.notes} />}
 
         {target && (
           <nav className="sticky top-0 z-10 mb-8 flex flex-wrap gap-x-5 gap-y-1 border-b border-neon-cyan/10 bg-void/90 py-2 backdrop-blur-sm">

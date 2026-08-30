@@ -100,7 +100,7 @@ class JobLifecycleServiceTest {
     @Test
     void result_whoisModule_looksUpTargetHostname_routedThroughWhoisIngestion() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("WHOIS")));
-        Target target = new Target(targetId, UUID.randomUUID(), "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now());
+        Target target = new Target(targetId, UUID.randomUUID(), "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(whoisIngestionService.ingestAndSynthesizeFindings(eq(targetId), eq("example.com"), any(), any()))
                 .thenReturn(List.of());

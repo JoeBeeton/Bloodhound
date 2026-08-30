@@ -30,7 +30,7 @@ class TargetAuthorizationControllerTest {
     private final JwtPrincipal viewer = new JwtPrincipal(UUID.randomUUID(), orgId, "VIEWER", "viewer@example.com");
 
     private Target target(String authStatus) {
-        return new Target(targetId, orgId, "example.com", "OWN", authStatus, 3600, Instant.now(), true, Instant.now());
+        return new Target(targetId, orgId, "example.com", "OWN", authStatus, 3600, Instant.now(), true, Instant.now(), null);
     }
 
     @Test

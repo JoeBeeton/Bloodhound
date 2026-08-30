@@ -50,7 +50,7 @@ class RunControllerTest {
     void get_ownedRun_assemblesJobsAndTheirAttemptHistory() {
         ScanRun run = new ScanRun(runId, targetId, "MANUAL", null, Instant.now(), null, "RUNNING");
         when(scanRunRepository.findById(runId)).thenReturn(Optional.of(run));
-        Target target = new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now());
+        Target target = new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target));
 
         UUID jobId = UUID.randomUUID();
@@ -79,7 +79,7 @@ class RunControllerTest {
     void get_jobPayloadWithoutHostKey_hostIsNull() {
         ScanRun run = new ScanRun(runId, targetId, "MANUAL", null, Instant.now(), null, "RUNNING");
         when(scanRunRepository.findById(runId)).thenReturn(Optional.of(run));
-        Target target = new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now());
+        Target target = new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target));
 
         UUID jobId = UUID.randomUUID();

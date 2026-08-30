@@ -21,7 +21,8 @@ public class TargetRepository {
             rs.getInt("scan_cadence_seconds"),
             rs.getTimestamp("next_scan_at").toInstant(),
             rs.getBoolean("is_active"),
-            rs.getTimestamp("created_at").toInstant());
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getString("notes"));
 
     private final JdbcTemplate jdbc;
 
@@ -86,6 +87,11 @@ public class TargetRepository {
         int cadence = scanCadenceSeconds != null ? scanCadenceSeconds : current.scanCadenceSeconds();
         boolean active = isActive != null ? isActive : current.isActive();
         jdbc.update("UPDATE targets SET scan_cadence_seconds = ?, is_active = ? WHERE id = ?", cadence, active, id);
+    }
+
+    /** A blank string clears the notes (stored as NULL, not empty-string) - "" and "no notes" should mean the same thing, not two distinct states a caller has to reason about. */
+    public void updateNotes(UUID id, String notes) {
+        jdbc.update("UPDATE targets SET notes = ? WHERE id = ?", notes == null || notes.isBlank() ? null : notes, id);
     }
 
     public void delete(UUID id) {
