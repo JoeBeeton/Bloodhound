@@ -56,7 +56,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target("existing note")));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target("existing note")));
 
-        controller.update(targetId, new UpdateTargetRequest(null, false, null), admin);
+        controller.update(targetId, new UpdateTargetRequest(null, false, null, null), admin);
 
         verify(targetRepository, never()).updateNotes(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
@@ -66,7 +66,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target("existing note")));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null)));
 
-        controller.update(targetId, new UpdateTargetRequest(null, null, ""), admin);
+        controller.update(targetId, new UpdateTargetRequest(null, null, "", null), admin);
 
         verify(targetRepository).updateNotes(targetId, "");
     }
@@ -77,7 +77,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target("staging environment, owned by platform team")));
 
         TargetSummary result =
-                controller.update(targetId, new UpdateTargetRequest(null, null, "staging environment, owned by platform team"), admin);
+                controller.update(targetId, new UpdateTargetRequest(null, null, "staging environment, owned by platform team", null), admin);
 
         verify(targetRepository).updateNotes(targetId, "staging environment, owned by platform team");
         assertThat(result.notes()).isEqualTo("staging environment, owned by platform team");
@@ -88,7 +88,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null)));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null)));
 
-        controller.update(targetId, new UpdateTargetRequest(7200, true, null), admin);
+        controller.update(targetId, new UpdateTargetRequest(7200, true, null, null), admin);
 
         verify(targetRepository).updateCadenceAndActive(targetId, 7200, true);
     }
@@ -100,7 +100,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, false)));
 
-        controller.update(targetId, new UpdateTargetRequest(null, false, null), admin);
+        controller.update(targetId, new UpdateTargetRequest(null, false, null, null), admin);
 
         verify(auditLogRepository)
                 .record(orgId, admin.userId(), admin.email(), "TARGET_REMOVED", "TARGET", targetId.toString(), "hostname=example.com");
@@ -111,7 +111,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, false)));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
 
-        controller.update(targetId, new UpdateTargetRequest(null, true, null), admin);
+        controller.update(targetId, new UpdateTargetRequest(null, true, null, null), admin);
 
         verify(auditLogRepository)
                 .record(orgId, admin.userId(), admin.email(), "TARGET_RESTORED", "TARGET", targetId.toString(), "hostname=example.com");
@@ -125,7 +125,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
 
-        controller.update(targetId, new UpdateTargetRequest(null, true, null), admin);
+        controller.update(targetId, new UpdateTargetRequest(null, true, null, null), admin);
 
         verify(auditLogRepository, never())
                 .record(
@@ -143,7 +143,7 @@ class TargetControllerUpdateTest {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null, true)));
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null, true)));
 
-        controller.update(targetId, new UpdateTargetRequest(7200, null, "a note"), admin);
+        controller.update(targetId, new UpdateTargetRequest(7200, null, "a note", null), admin);
 
         verify(auditLogRepository, never())
                 .record(
@@ -154,5 +154,29 @@ class TargetControllerUpdateTest {
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_targetTypeOmitted_leavesTargetTypeUntouched() {
+        // A product review found a mis-picked targetType at creation (e.g. WATCHLIST when the
+        // domain is actually OWN, which gates the "Deep scan" button) had no fix short of the
+        // ADMIN-only cascading hard delete - this closes that gap.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null)));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, null), admin);
+
+        verify(targetRepository, never())
+                .updateTargetType(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_targetTypeProvided_updatesIt() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target(null)));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target(null)));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, "OWN"), admin);
+
+        verify(targetRepository).updateTargetType(targetId, "OWN");
     }
 }
