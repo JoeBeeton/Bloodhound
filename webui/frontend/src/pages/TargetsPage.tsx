@@ -53,6 +53,31 @@ async function triggerScan(targetId: string): Promise<{ id: string }> {
   return res.json();
 }
 
+interface BulkScanOutcome {
+  targetId: string;
+  runId?: string;
+  error?: string;
+}
+
+/**
+ * A product review found every action on this page - scan, remove, restore - was strictly
+ * one-target-at-a-time, no matter how many targets an org tracks. "Kick off this week's scans"
+ * on an org with dozens of targets meant clicking "Scan now" that many separate times. Reuses
+ * the same POST .../scan endpoint each row's own button already calls - no new backend endpoint,
+ * just N requests fired in parallel via Promise.allSettled so one failure (e.g. a target that
+ * somehow got removed between page load and the click) doesn't block the rest from starting.
+ * Deliberately Tier 1 ("Scan now") only, not deep scan - deep scan requires per-target
+ * authorization and only applies to OWN targets, so a bulk version of it would need to silently
+ * skip most selections anyway; keeping bulk actions to the one trigger every active target
+ * supports uniformly avoids that surprise.
+ */
+async function triggerBulkScan(targetIds: string[]): Promise<BulkScanOutcome[]> {
+  const results = await Promise.allSettled(targetIds.map((id) => triggerScan(id)));
+  return results.map((r, i) =>
+    r.status === "fulfilled" ? { targetId: targetIds[i], runId: r.value.id } : { targetId: targetIds[i], error: "failed" },
+  );
+}
+
 async function triggerDeepScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan/deep`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to start deep scan.");
@@ -82,6 +107,8 @@ export function TargetsPage() {
   const [pendingRemoval, setPendingRemoval] = useState<Target | null>(null);
   const [pendingDeletion, setPendingDeletion] = useState<Target | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkScanSummary, setBulkScanSummary] = useState<{ started: number; failed: number } | null>(null);
 
   const [hostname, setHostname] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("OWN");
@@ -123,6 +150,32 @@ export function TargetsPage() {
     setActiveRuns((prev) => ({ ...prev, [targetId]: runId }));
   }
 
+  const bulkScan = useMutation({
+    mutationFn: triggerBulkScan,
+    onSuccess: (outcomes) => {
+      let started = 0;
+      let failed = 0;
+      for (const outcome of outcomes) {
+        if (outcome.runId) {
+          handleScanStarted(outcome.targetId, outcome.runId);
+          started += 1;
+        } else {
+          failed += 1;
+        }
+      }
+      setBulkScanSummary({ started, failed });
+      setSelectedIds(new Set());
+    },
+  });
+
+  function toggleSelected(targetId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(targetId) ? next.delete(targetId) : next.add(targetId);
+      return next;
+    });
+  }
+
   return (
     <Shell>
       <div className="w-full max-w-3xl text-left">
@@ -133,7 +186,10 @@ export function TargetsPage() {
           </div>
           <div className="flex items-center gap-4">
             <button
-              onClick={() => setShowRemoved((v) => !v)}
+              onClick={() => {
+                setShowRemoved((v) => !v);
+                setSelectedIds(new Set());
+              }}
               className={`font-mono text-xs uppercase tracking-widest transition ${
                 showRemoved ? "text-neon-amber" : "text-slate-400 hover:text-neon-cyan"
               }`}
@@ -213,6 +269,24 @@ export function TargetsPage() {
           <ErrorState message="Failed to load targets." onRetry={() => targetsQuery.refetch()} />
         )}
 
+        {bulkScanSummary && (
+          <p className="mb-3 flex items-center justify-between gap-3 rounded border border-neon-cyan/20 bg-panel/40 px-3 py-2 font-mono text-xs text-neon-cyan" role="status">
+            <span>
+              Started {bulkScanSummary.started} scan{bulkScanSummary.started === 1 ? "" : "s"}
+              {bulkScanSummary.failed > 0 && (
+                <span className="text-severity-critical">
+                  {" "}
+                  · {bulkScanSummary.failed} failed to start
+                </span>
+              )}
+              .
+            </span>
+            <button onClick={() => setBulkScanSummary(null)} className="text-slate-500 hover:text-slate-300">
+              ✕
+            </button>
+          </p>
+        )}
+
         <div className="flex flex-col gap-3">
           {(() => {
             const byRemoved = showRemoved
@@ -231,18 +305,65 @@ export function TargetsPage() {
                 </p>
               );
             }
-            return visible.map((target) => (
-              <TargetRow
-                key={target.id}
-                target={target}
-                activeRunId={activeRuns[target.id]}
-                onScanStarted={(runId) => handleScanStarted(target.id, runId)}
-                onRemove={() => setPendingRemoval(target)}
-                onRestore={() => setActive.mutate({ targetId: target.id, isActive: true })}
-                restorePending={setActive.isPending}
-                onDeleteForever={isAdmin ? () => setPendingDeletion(target) : undefined}
-              />
-            ));
+            // Bulk selection only makes sense for active targets - a removed target's "Scan now"
+            // button is hidden too (see TargetRow), so selecting one for a bulk scan would be a
+            // dead end.
+            const selectableIds = visible.filter((t) => t.isActive).map((t) => t.id);
+            const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+            const selectedCount = selectableIds.filter((id) => selectedIds.has(id)).length;
+
+            return (
+              <>
+                {!showRemoved && selectableIds.length > 1 && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/10 bg-panel/40 px-4 py-2">
+                    <label className="flex items-center gap-2 font-mono text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        className="checkbox-cyber"
+                        checked={allSelected}
+                        onChange={() =>
+                          setSelectedIds(allSelected ? new Set() : new Set(selectableIds))
+                        }
+                        aria-label="Select all visible targets"
+                      />
+                      {selectedCount > 0 ? `${selectedCount} selected` : "Select all"}
+                    </label>
+                    {selectedCount > 0 && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setSelectedIds(new Set())}
+                          className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-slate-200"
+                        >
+                          Clear
+                        </button>
+                        <button
+                          onClick={() => bulkScan.mutate([...selectedIds])}
+                          disabled={bulkScan.isPending}
+                          className="rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10 disabled:opacity-40"
+                        >
+                          {bulkScan.isPending ? "Starting…" : `Scan ${selectedCount} selected`}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {visible.map((target) => (
+                  <TargetRow
+                    key={target.id}
+                    target={target}
+                    activeRunId={activeRuns[target.id]}
+                    onScanStarted={(runId) => handleScanStarted(target.id, runId)}
+                    onRemove={() => setPendingRemoval(target)}
+                    onRestore={() => setActive.mutate({ targetId: target.id, isActive: true })}
+                    restorePending={setActive.isPending}
+                    onDeleteForever={isAdmin ? () => setPendingDeletion(target) : undefined}
+                    selectable={!showRemoved}
+                    selected={selectedIds.has(target.id)}
+                    onToggleSelected={() => toggleSelected(target.id)}
+                  />
+                ))}
+              </>
+            );
           })()}
         </div>
       </div>
@@ -331,6 +452,9 @@ function TargetRow({
   onRestore,
   restorePending,
   onDeleteForever,
+  selectable,
+  selected,
+  onToggleSelected,
 }: {
   target: Target;
   activeRunId?: string;
@@ -340,6 +464,10 @@ function TargetRow({
   restorePending: boolean;
   /** Only passed for ADMIN users - see TargetController#delete's ADMIN-only guard rail. */
   onDeleteForever?: () => void;
+  /** False in the "Show removed" view - a removed target has no "Scan now" of its own either, so selecting one for a bulk scan would be a dead end. */
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
 }) {
   const runQuery = useQuery({
     queryKey: ["run", activeRunId],
@@ -370,24 +498,35 @@ function TargetRow({
         target.isActive ? "border-neon-cyan/10" : "border-slate-700/60 opacity-70"
       }`}
     >
-      <div>
-        <Link
-          to={`/targets/${target.id}`}
-          className="flex items-center gap-2 font-mono text-sm text-slate-200 hover:text-neon-cyan hover:underline"
-        >
-          <span
-            className="inline-block h-2 w-2 shrink-0 rounded-full"
-            style={{
-              backgroundColor: colorForTargetType(target.targetType),
-              boxShadow: `0 0 6px ${colorForTargetType(target.targetType)}`,
-            }}
-            aria-hidden="true"
+      <div className="flex items-center gap-3">
+        {selectable && (
+          <input
+            type="checkbox"
+            className="checkbox-cyber shrink-0"
+            checked={selected}
+            onChange={onToggleSelected}
+            aria-label={`Select ${target.hostname}`}
           />
-          {target.hostname}
-        </Link>
-        <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
-          {target.targetType} · {target.isActive ? "active" : "removed"} · <LastScanLabel target={target} />
-        </p>
+        )}
+        <div>
+          <Link
+            to={`/targets/${target.id}`}
+            className="flex items-center gap-2 font-mono text-sm text-slate-200 hover:text-neon-cyan hover:underline"
+          >
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full"
+              style={{
+                backgroundColor: colorForTargetType(target.targetType),
+                boxShadow: `0 0 6px ${colorForTargetType(target.targetType)}`,
+              }}
+              aria-hidden="true"
+            />
+            {target.hostname}
+          </Link>
+          <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
+            {target.targetType} · {target.isActive ? "active" : "removed"} · <LastScanLabel target={target} />
+          </p>
+        </div>
       </div>
       <div className="flex items-center gap-4">
         {!status && <GradeBadge grade={target.grade} score={target.overallScore} />}
