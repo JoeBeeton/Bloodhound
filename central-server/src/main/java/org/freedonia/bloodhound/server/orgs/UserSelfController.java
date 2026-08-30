@@ -4,11 +4,15 @@ import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
+import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
+import org.freedonia.bloodhound.server.security.HashUtil;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -55,6 +59,34 @@ public class UserSelfController {
         // need to log in again) - the same "signed out everywhere" behavior a password change
         // triggers on most major platforms, not an oversight.
         refreshTokenRepository.revokeAllForUser(user.id());
+        return ResponseEntity.noContent().build();
+    }
+
+    public record ActiveSessionsCount(int count) {}
+
+    /**
+     * "You have N active sessions" (including the one asking) - shown before offering the
+     * logout-others action below, so it's an informed decision rather than a mystery button.
+     * Deliberately a plain GET with no token in the query string - see
+     * RefreshTokenRepository#countActiveForUser's javadoc for why this doesn't need one.
+     */
+    @GetMapping("/sessions/count")
+    public ActiveSessionsCount countActiveSessions(@AuthenticationPrincipal JwtPrincipal principal) {
+        return new ActiveSessionsCount(refreshTokenRepository.countActiveForUser(principal.userId()));
+    }
+
+    /**
+     * "Log out of all other devices" - a user-initiated version of the same session hygiene the
+     * password-change flow above forces automatically. Useful on its own (a shared/public
+     * computer, a lost device, "something feels off") without also having to change your password
+     * to get it - the caller's own current session (identified by its raw refresh token) is left
+     * untouched so this request's own caller isn't locked out by their own action.
+     */
+    @PostMapping("/sessions/logout-others")
+    public ResponseEntity<Void> logoutOtherSessions(
+            @Valid @RequestBody LogoutOtherSessionsRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
+        refreshTokenRepository.revokeAllForUserExceptHash(
+                principal.userId(), HashUtil.sha256Hex(request.currentRefreshToken()));
         return ResponseEntity.noContent().build();
     }
 }

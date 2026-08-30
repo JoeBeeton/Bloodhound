@@ -76,6 +76,33 @@ public class RefreshTokenRepository {
     }
 
     /**
+     * "Log out of all other devices" - revokes every other active refresh token for this user
+     * while leaving the caller's own current session (identified by its token hash) untouched, so
+     * the request that triggered this doesn't also lock its own caller out. See
+     * UserSelfController#logoutOtherSessions.
+     */
+    public void revokeAllForUserExceptHash(UUID userId, String exceptTokenHash) {
+        jdbc.update(
+                "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = ? AND token_hash != ? AND revoked_at IS NULL",
+                userId,
+                exceptTokenHash);
+    }
+
+    /**
+     * How many active sessions this user has right now (including whichever one is asking), for
+     * the "you have N active sessions" UI count - deliberately takes no token of its own to
+     * exclude (unlike {@link #revokeAllForUserExceptHash}), so this can be a plain GET with no
+     * sensitive value in a query string that would otherwise end up in access logs.
+     */
+    public int countActiveForUser(UUID userId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > now()",
+                Integer.class,
+                userId);
+        return count != null ? count : 0;
+    }
+
+    /**
      * Conditional revoke that reports whether THIS call was actually the one that flipped
      * {@code revoked_at} - used by the refresh-rotation path to close a race a security review
      * found: AuthenticationService#refresh previously read the token, checked {@code revokedAt()
