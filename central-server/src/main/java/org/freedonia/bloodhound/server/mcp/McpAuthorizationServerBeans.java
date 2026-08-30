@@ -48,9 +48,27 @@ public class McpAuthorizationServerBeans {
 
     private static final Logger log = LoggerFactory.getLogger(McpAuthorizationServerBeans.class);
 
+    /**
+     * Wrapped, not the plain {@link JdbcRegisteredClientRepository}, so every registered client -
+     * however it gets created (Dynamic Client Registration, or any future manual/admin
+     * registration path) - is forced to require user consent. Spring Authorization Server's own
+     * default for {@code ClientSettings.requireAuthorizationConsent} is {@code false} (confirmed
+     * live via {@code ClientSettings.builder().build().isRequireAuthorizationConsent()}), and nothing
+     * else in this app was overriding it - a security review found that a real authorization_code
+     * request against a client left on that default redirects straight back to its redirect_uri
+     * with a valid code, with zero consent screen ever shown, for ANY already-logged-in user.
+     * Concretely: an attacker registers a client with a redirect_uri they control, sends a
+     * Bloodhound user a single link to /oauth2/authorize?client_id=<theirs>&..., and receives a
+     * working access token bearing that user's org/role claims - no XSS, no password, one click.
+     * PKCE does not stop this: the attacker holds their own code_verifier, since they ARE the
+     * client. Enforcing consent here, at the single save() choke point every registration path
+     * goes through, closes it regardless of how a client comes to exist - a real consent UI
+     * (currently Spring's plain default page) can still be improved later, but skipping it
+     * entirely must never be possible.
+     */
     @Bean
     public RegisteredClientRepository registeredClientRepository(JdbcTemplate jdbc) {
-        return new JdbcRegisteredClientRepository(jdbc);
+        return new ConsentRequiringRegisteredClientRepository(new JdbcRegisteredClientRepository(jdbc));
     }
 
     /**
@@ -74,6 +92,14 @@ public class McpAuthorizationServerBeans {
         // modules' deserialization allowlist rejects it by default - Spring's own documented fix
         // for a custom UserDetails type is a Mixin (see AuthenticatedUserPrincipalMixin below).
         oauth2ObjectMapper.addMixIn(AuthenticatedUserPrincipal.class, AuthenticatedUserPrincipalMixin.class);
+        // A security review found that, without this, the full User record - including its
+        // bcrypt passwordHash - gets serialized whole into this table's attributes column for
+        // every authorization (confirmed live via a direct DB dump: the real hash was sitting in
+        // plaintext JSON). Nothing on the MCP path ever reads passwordHash back out (only
+        // id/organizationId/role, see McpTokenCustomizer) - excluding it from serialization here
+        // stops it from being persisted at all, rather than accepting the wider blast radius of a
+        // secondary table holding live credential material it has no reason to hold.
+        oauth2ObjectMapper.addMixIn(User.class, UserAttributeMixin.class);
 
         JdbcOAuth2AuthorizationService service = new JdbcOAuth2AuthorizationService(jdbc, registeredClientRepository);
         JdbcOAuth2AuthorizationService.OAuth2AuthorizationRowMapper rowMapper =
@@ -184,4 +210,14 @@ public class McpAuthorizationServerBeans {
         @JsonCreator
         AuthenticatedUserPrincipalMixin(@JsonProperty("user") User user) {}
     }
+
+    /**
+     * Excludes passwordHash from serialization - see the comment on {@link
+     * #authorizationService}. Records deserialize missing properties as null for their
+     * constructor parameter (Jackson does not require every component to be present), and nothing
+     * on the MCP path ever reads passwordHash back out, so reconstructing a User with it null here
+     * is safe.
+     */
+    @JsonIgnoreProperties({"passwordHash"})
+    abstract static class UserAttributeMixin {}
 }

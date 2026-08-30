@@ -87,7 +87,14 @@ public class McpSecurityConfig {
             OrganizationRepository organizationRepository)
             throws Exception {
         http.securityMatcher("/mcp/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                // hasAuthority, not just authenticated(): a security review noted this chain never
+                // actually checked the token's scope - any validly signed, right-audience JWT from
+                // this AS would pass regardless of what it was granted for. Harmless today (mcp.read
+                // is the only scope that exists), but nothing would stop a future narrower scope
+                // (e.g. a write-capable one) from also working here by accident. Spring's default
+                // JwtGrantedAuthoritiesConverter maps the token's scope claim to SCOPE_<value>
+                // authorities - confirmed live that a token without SCOPE_mcp.read is rejected here.
+                .authorizeHttpRequests(auth -> auth.anyRequest().hasAuthority("SCOPE_mcp.read"))
                 .with(McpServerOAuth2Configurer.mcpServerOAuth2(), (mcpAuthorization) -> {
                     // authorizationServer(issuerUri) is required (non-null-checked internally) for the
                     // issuer/audience metadata, but jwtDecoder(...) - set after it - takes priority for
