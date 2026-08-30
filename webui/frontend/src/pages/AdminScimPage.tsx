@@ -178,6 +178,9 @@ export function AdminScimPage() {
 
         <div className="rounded-lg border border-slate-700 bg-panel/60 p-5">
           <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-300">Tokens</h2>
+          {revokeMutation.isError && (
+            <p className="mb-3 font-mono text-xs text-severity-critical">Failed to revoke token. Try again.</p>
+          )}
           {tokensQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
           {tokensQuery.isError && <ErrorState message="Failed to load SCIM tokens." onRetry={() => tokensQuery.refetch()} />}
           {tokensQuery.data && tokensQuery.data.tokens.length === 0 && (

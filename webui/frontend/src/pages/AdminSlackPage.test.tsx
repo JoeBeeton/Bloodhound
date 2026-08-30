@@ -125,4 +125,20 @@ describe("AdminSlackPage - test-send", () => {
 
     await waitFor(() => expect(screen.queryByText(/test message sent/i)).not.toBeInTheDocument());
   });
+
+  it("shows an error message when removing the integration fails", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse(existingIntegration())) // initial load
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // DELETE fails
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+
+    await user.click(screen.getByRole("button", { name: "Remove integration" }));
+
+    expect(
+      await screen.findByText("Failed to remove the integration. Try again.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  });
 });
