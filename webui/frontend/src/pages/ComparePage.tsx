@@ -89,6 +89,7 @@ export function ComparePage() {
                 return (
                   <button
                     key={target.id}
+                    aria-pressed={isSelected}
                     onClick={() => toggle(target.id)}
                     className={`flex items-center gap-2 rounded border px-2.5 py-1.5 font-mono text-xs transition ${
                       isSelected
@@ -110,6 +111,7 @@ export function ComparePage() {
                 className="inline-flex rounded border border-neon-cyan/20 bg-panel/60 p-0.5 font-mono text-xs uppercase tracking-widest"
               >
                 <button
+                  aria-pressed={scoreMode === "tier1"}
                   onClick={() => setScoreMode("tier1")}
                   className={`rounded px-3 py-1.5 transition ${
                     scoreMode === "tier1" ? "bg-neon-cyan/15 text-neon-cyan" : "text-slate-400 hover:text-slate-200"
@@ -118,6 +120,7 @@ export function ComparePage() {
                   Fair comparison
                 </button>
                 <button
+                  aria-pressed={scoreMode === "full"}
                   onClick={() => setScoreMode("full")}
                   className={`rounded px-3 py-1.5 transition ${
                     scoreMode === "full" ? "bg-neon-magenta/15 text-neon-magenta" : "text-slate-400 hover:text-slate-200"
