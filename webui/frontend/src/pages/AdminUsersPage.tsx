@@ -49,6 +49,21 @@ async function createUser(
   return res.json();
 }
 
+/** A product/AppSec review found the role/status/MCP-access edits below never surfaced a
+ * failure at all - a rejected PATCH (a network hiccup, a permission edge case) just left the
+ * dropdown looking untouched with zero indication the click didn't actually take effect. Named
+ * by field + email so a failure is specific enough to act on, not just "something went wrong". */
+function describeUpdateTarget(
+  variables: { userId: string; patch: { role?: string; status?: string; mcpEnabled?: boolean } },
+  users: AdminUser[] | undefined,
+): string {
+  const email = users?.find((u) => u.id === variables.userId)?.email ?? "user";
+  if (variables.patch.role !== undefined) return `role for ${email}`;
+  if (variables.patch.status !== undefined) return `status for ${email}`;
+  if (variables.patch.mcpEnabled !== undefined) return `MCP access for ${email}`;
+  return email;
+}
+
 async function resetPassword(orgId: string, userId: string): Promise<CreateUserResponse> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/users/${userId}/reset-password`, { method: "POST" });
   if (!res.ok) {
@@ -104,6 +119,13 @@ export function AdminUsersPage() {
           </button>
         </div>
         <AdminSubNav />
+
+        {mutate.isError && (
+          <p role="status" className="mb-3 font-mono text-xs text-severity-critical">
+            Failed to update {mutate.variables ? describeUpdateTarget(mutate.variables, usersQuery.data) : "user"}. Try
+            again.
+          </p>
+        )}
 
         {usersQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading users…</p>}
         {usersQuery.isError && <ErrorState message="Failed to load users." onRetry={() => usersQuery.refetch()} />}
