@@ -86,14 +86,14 @@ export function BrandProtectionPanel({
                       alt={`Screenshot of ${c.candidateDomain}`}
                     />
                   ) : (
-                    <span className="font-mono text-[10px] text-slate-600">—</span>
+                    <span className="font-mono text-[10px] text-muted">—</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-severity-high">{c.candidateDomain}</td>
                 <td className="px-3 py-2 text-slate-300 normal-case">{humanizePermutationType(c.permutationType)}</td>
                 <td className="px-3 py-2">
                   {c.visualSimilarityPercent === null ? (
-                    <span className="text-slate-600">—</span>
+                    <span className="text-muted">—</span>
                   ) : (
                     <span className={c.visualSimilarityPercent >= 80 ? "font-bold text-severity-critical" : "text-slate-400"}>
                       {c.visualSimilarityPercent}%

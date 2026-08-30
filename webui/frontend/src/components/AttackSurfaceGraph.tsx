@@ -385,7 +385,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                 {hoveredNode.workerStatus === "BUSY" && hoveredNode.workerModule ? ` · ${hoveredNode.workerModule}` : ""}
               </p>
               {hoveredNode.subLabel && <p className="text-violet-300">{hoveredNode.subLabel}</p>}
-              {hoveredNode.fullWorkerId && <p className="text-slate-600">id: {hoveredNode.fullWorkerId}</p>}
+              {hoveredNode.fullWorkerId && <p className="text-muted">id: {hoveredNode.fullWorkerId}</p>}
             </>
           )}
           {hoveredNode.kind === "database" && (
@@ -414,8 +414,8 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         <div className="my-0.5 h-px bg-slate-700/60" />
         <LegendRow color="#a78bfa" label="Platform" />
         <LegendRow color="#ffb800" label="Worker busy" />
-        <p className="mt-1 text-slate-600">scroll to zoom · drag to pan</p>
-        <p className="text-slate-600">zoom in to reveal subdomain names</p>
+        <p className="mt-1 text-muted">scroll to zoom · drag to pan</p>
+        <p className="text-muted">zoom in to reveal subdomain names</p>
       </div>
     </div>
   );

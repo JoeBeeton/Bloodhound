@@ -89,7 +89,7 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
           {cveDetails.map((cve) => (
             <div key={cve.cveId} className="rounded border border-slate-800 bg-void/40 p-3">
               <p className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-400">
-                {cve.cveId} <span className="text-slate-600">via {cve.source}</span>
+                {cve.cveId} <span className="text-muted">via {cve.source}</span>
               </p>
               <p className="text-sm leading-relaxed text-slate-300">{cve.description}</p>
             </div>

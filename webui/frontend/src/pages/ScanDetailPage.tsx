@@ -65,7 +65,7 @@ function formatDuration(startedAt: string, endedAt: string | null): string {
 /** Every attempt this job ever made, oldest first - not just the final error scan_jobs.error_detail carries. */
 function AttemptHistory({ attempts }: { attempts: ScanJobAttempt[] }) {
   if (attempts.length === 0) {
-    return <p className="mt-1 font-mono text-[11px] text-slate-600">Not yet claimed by a worker.</p>;
+    return <p className="mt-1 font-mono text-[11px] text-muted">Not yet claimed by a worker.</p>;
   }
   return (
     <div className="mt-2 space-y-1.5 border-l-2 border-slate-800 pl-3">
@@ -74,7 +74,7 @@ function AttemptHistory({ attempts }: { attempts: ScanJobAttempt[] }) {
           <div className="flex items-center gap-2">
             <span className="text-slate-500">#{a.attemptNumber}</span>
             <span className="text-slate-400">{a.claimedBy}</span>
-            <span className="text-slate-600">{formatDuration(a.startedAt, a.endedAt)}</span>
+            <span className="text-muted">{formatDuration(a.startedAt, a.endedAt)}</span>
             <span className={a.outcome ? OUTCOME_STYLES[a.outcome] ?? "text-slate-400" : "text-neon-amber animate-pulse"}>
               {a.outcome ?? "IN PROGRESS"}
             </span>

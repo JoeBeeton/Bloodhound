@@ -132,7 +132,7 @@ export function FindingsPage() {
                 </div>
                 <p className="font-mono text-sm text-slate-200">{f.title}</p>
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="font-mono text-[10px] text-slate-600">{f.displayId}</span>
+                  <span className="font-mono text-[10px] text-muted">{f.displayId}</span>
                   <ScoreImpactBadge impact={f.scoreImpact} />
                 </div>
               </button>

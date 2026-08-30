@@ -162,7 +162,7 @@ export function NotificationCenter() {
                     {n.title}
                   </p>
                   <p className="mt-0.5 font-mono text-[11px] text-slate-400">{n.message}</p>
-                  <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted">
                     {new Date(n.createdAt).toLocaleString()}
                   </p>
                 </button>

@@ -188,7 +188,7 @@ export function SubdomainsPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Filter by hostname…"
-                className="w-full flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-neon-cyan"
+                className="w-full flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-muted focus:border-neon-cyan"
               />
               <button
                 onClick={() => setSortByFindings((v) => !v)}
@@ -238,7 +238,7 @@ export function SubdomainsPage() {
                         </td>
                         <td className="px-4 py-2">
                           {subFindings.length === 0 ? (
-                            <span className="text-slate-600">clean</span>
+                            <span className="text-muted">clean</span>
                           ) : (
                             <span className={`font-bold ${worst ? SEVERITY_TEXT[worst] : "text-slate-400"}`}>
                               {subFindings.length} ({worst})

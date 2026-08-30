@@ -77,7 +77,7 @@ export function WorkerPanel({ pollIntervalMs }: { pollIntervalMs: number }) {
           {query.data.map((w) => (
             <WorkerRow key={w.workerId} worker={w} />
           ))}
-          {query.data.length === 0 && <p className="font-mono text-xs text-slate-600">No workers seen yet.</p>}
+          {query.data.length === 0 && <p className="font-mono text-xs text-muted">No workers seen yet.</p>}
         </div>
       )}
     </div>
