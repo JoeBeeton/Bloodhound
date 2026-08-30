@@ -35,7 +35,7 @@ class UserSelfControllerTest {
     private User user(String identitySource, String passwordHash) {
         return new User(
                 userId, UUID.randomUUID(), "u@example.com", "Name", passwordHash, identitySource, "VIEWER", "ACTIVE",
-                Instant.now(), true);
+                Instant.now(), true, null);
     }
 
     @Test

@@ -37,7 +37,7 @@ class McpEnabledGuardFilterTest {
     }
 
     private User user(boolean mcpEnabled) {
-        return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", "ACTIVE", Instant.now(), mcpEnabled);
+        return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", "ACTIVE", Instant.now(), mcpEnabled, null);
     }
 
     private Organization org(boolean mcpEnabled) {

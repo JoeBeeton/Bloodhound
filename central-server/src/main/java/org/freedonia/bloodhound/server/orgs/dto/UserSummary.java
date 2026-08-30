@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.orgs.dto;
 
+import java.time.Instant;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.orgs.User;
 
@@ -11,7 +12,9 @@ public record UserSummary(
         String status,
         UUID organizationId,
         boolean mcpEnabled,
-        String identitySource) {
+        String identitySource,
+        /** Null if this user has never successfully logged in - see User#lastLoginAt. */
+        Instant lastLoginAt) {
     public static UserSummary from(User user) {
         return new UserSummary(
                 user.id(),
@@ -21,6 +24,7 @@ public record UserSummary(
                 user.status(),
                 user.organizationId(),
                 user.mcpEnabled(),
-                user.identitySource());
+                user.identitySource(),
+                user.lastLoginAt());
     }
 }
