@@ -7,6 +7,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import jakarta.validation.Valid;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.scim.dto.CreateScimTokenRequest;
 import org.freedonia.bloodhound.server.scim.dto.CreateScimTokenResponse;
@@ -39,11 +40,15 @@ public class ScimTokenAdminController {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final ScimTokenRepository scimTokenRepository;
+    private final AuditLogRepository auditLogRepository;
     private final String spBaseUrl;
 
     public ScimTokenAdminController(
-            ScimTokenRepository scimTokenRepository, @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
+            ScimTokenRepository scimTokenRepository,
+            AuditLogRepository auditLogRepository,
+            @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
         this.scimTokenRepository = scimTokenRepository;
+        this.auditLogRepository = auditLogRepository;
         this.spBaseUrl = spBaseUrl;
     }
 
@@ -71,6 +76,18 @@ public class ScimTokenAdminController {
         SECURE_RANDOM.nextBytes(raw);
         String token = "scim_" + Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
         ScimToken created = scimTokenRepository.insert(orgId, request.label(), HashUtil.sha256Hex(token), expiresAt);
+        // An audit review found this controller mints/kills directory-sync bearer credentials -
+        // exactly the kind of sensitive credential lifecycle OrgUserController/ApiKeyController
+        // already log for their own tokens - with no audit trail at all. Never logs the raw token
+        // itself, only its label, same as CreateScimTokenResponse never echoing the hash.
+        auditLogRepository.record(
+                orgId,
+                principal.userId(),
+                principal.email(),
+                "SCIM_TOKEN_CREATED",
+                "SCIM_TOKEN",
+                created.id().toString(),
+                "label=" + created.label());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new CreateScimTokenResponse(created.id(), created.label(), token, created.createdAt(), created.expiresAt()));
     }
@@ -79,10 +96,17 @@ public class ScimTokenAdminController {
     public ResponseEntity<Void> revoke(
             @PathVariable UUID orgId, @PathVariable UUID tokenId, @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
+        String label = scimTokenRepository.findByOrganization(orgId).stream()
+                .filter(t -> t.id().equals(tokenId))
+                .findFirst()
+                .map(ScimToken::label)
+                .orElse(null);
         int updated = scimTokenRepository.revoke(tokenId, orgId);
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "SCIM token not found");
         }
+        auditLogRepository.record(
+                orgId, principal.userId(), principal.email(), "SCIM_TOKEN_REVOKED", "SCIM_TOKEN", tokenId.toString(), "label=" + label);
         return ResponseEntity.noContent().build();
     }
 

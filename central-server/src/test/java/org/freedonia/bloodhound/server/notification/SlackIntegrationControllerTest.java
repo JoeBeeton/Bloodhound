@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
@@ -22,8 +23,9 @@ class SlackIntegrationControllerTest {
 
     private final SlackIntegrationRepository repository = mock(SlackIntegrationRepository.class);
     private final SlackNotifier slackNotifier = mock(SlackNotifier.class);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final SlackIntegrationController controller =
-            new SlackIntegrationController(repository, slackNotifier, "https://app.example");
+            new SlackIntegrationController(repository, slackNotifier, auditLogRepository, "https://app.example");
 
     private final UUID orgId = UUID.randomUUID();
     private final JwtPrincipal admin = new JwtPrincipal(UUID.randomUUID(), orgId, "ADMIN", "admin@example.com");
@@ -135,5 +137,29 @@ class SlackIntegrationControllerTest {
 
         assertThatThrownBy(() -> controller.test(otherOrgId, admin)).isInstanceOf(ResponseStatusException.class);
         verify(slackNotifier, never()).attemptDelivery(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void save_recordsAuditEntry_withoutTheWebhookUrl() {
+        // An audit review found configuring where scan/finding alerts get delivered - and, via
+        // this endpoint's own validation, an SSRF-relevant surface - had no audit trail at all.
+        String newUrl = "https://hooks.slack.com/services/T111/B111/newtoken";
+        SlackIntegration saved = new SlackIntegration(
+                UUID.randomUUID(), orgId, newUrl, true, List.of("NEW_FINDINGS"), false, Instant.now(), Instant.now());
+        when(repository.upsert(orgId, newUrl, true, List.of("NEW_FINDINGS"), false)).thenReturn(saved);
+
+        controller.save(orgId, admin, new SlackIntegrationController.SlackConfigRequest(newUrl, true, List.of("NEW_FINDINGS"), false));
+
+        verify(auditLogRepository).record(
+                eq(orgId), eq(admin.userId()), eq(admin.email()), eq("SLACK_INTEGRATION_SAVED"), eq("ORGANIZATION"), eq(orgId.toString()),
+                org.mockito.ArgumentMatchers.argThat(detail -> !detail.contains("newtoken") && detail.contains("enabled=true")));
+    }
+
+    @Test
+    void delete_recordsAuditEntry() {
+        controller.delete(orgId, admin);
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "SLACK_INTEGRATION_REMOVED", "ORGANIZATION", orgId.toString(), null);
     }
 }
