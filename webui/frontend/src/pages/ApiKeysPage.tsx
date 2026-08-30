@@ -79,6 +79,13 @@ export function ApiKeysPage() {
   const [label, setLabel] = useState("");
   const [expiresInDays, setExpiresInDays] = useState(DEFAULT_EXPIRY_DAYS);
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
+  // Unlike a target's "Remove" (soft, reversible - see TargetsPage), revoking an API key is
+  // permanent: any integration still using it breaks immediately with no undo. It previously
+  // fired straight from the row's onClick with zero confirmation - a stray click on a densely
+  // packed table (this row's only interactive element) silently killed a live integration.
+  // Mirrors TargetsPage's own remove-target confirmation modal, the established pattern for a
+  // destructive-but-self-service action in this app.
+  const [pendingRevoke, setPendingRevoke] = useState<ApiKeySummary | null>(null);
 
   const keysQuery = useQuery({ queryKey: ["api-keys"], queryFn: fetchKeys });
 
@@ -93,7 +100,10 @@ export function ApiKeysPage() {
 
   const revokeMutation = useMutation({
     mutationFn: (id: string) => revokeKey(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["api-keys"] }),
+    onSuccess: () => {
+      setPendingRevoke(null);
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+    },
   });
 
   return (
@@ -195,7 +205,7 @@ export function ApiKeysPage() {
                     <td className="py-2 text-right">
                       {!k.revoked && !k.expired && (
                         <button
-                          onClick={() => revokeMutation.mutate(k.id)}
+                          onClick={() => setPendingRevoke(k)}
                           className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
                         >
                           Revoke
@@ -209,6 +219,33 @@ export function ApiKeysPage() {
           )}
         </div>
       </div>
+
+      {pendingRevoke && (
+        <Modal title="Revoke API key" onClose={() => setPendingRevoke(null)}>
+          <p className="mb-4 text-sm text-slate-300">
+            Revoke <span className="font-mono text-neon-cyan">{pendingRevoke.label}</span> ({pendingRevoke.keyPrefix}…)?
+            Any integration still using this key will stop working immediately. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setPendingRevoke(null)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => revokeMutation.mutate(pendingRevoke.id)}
+              disabled={revokeMutation.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {revokeMutation.isPending ? "Revoking…" : "Revoke key"}
+            </button>
+          </div>
+          {revokeMutation.isError && (
+            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to revoke key.</p>
+          )}
+        </Modal>
+      )}
 
       {created && (
         <Modal title="API key generated" onClose={() => setCreated(null)}>

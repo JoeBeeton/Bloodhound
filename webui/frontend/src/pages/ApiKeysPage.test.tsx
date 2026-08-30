@@ -149,9 +149,43 @@ describe("ApiKeysPage", () => {
     renderPage();
     await screen.findByText("CI integration", {}, { timeout: 5000 });
 
-    await user.click(screen.getByRole("button", { name: /revoke/i }));
+    // Revoking is permanent and breaks any integration still using the key immediately - the row
+    // button only opens a confirmation modal now, it doesn't fire the DELETE by itself.
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    await user.click(await screen.findByRole("button", { name: /revoke key/i }));
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/api-keys/k1", { method: "DELETE" }), { timeout: 5000 });
+  });
+
+  it("clicking Revoke opens a confirmation modal without firing the DELETE until confirmed", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        {
+          id: "k1",
+          label: "CI integration",
+          keyPrefix: "bhk_abc123",
+          createdAt: "2026-01-01T00:00:00Z",
+          expiresAt: "2026-04-01T00:00:00Z",
+          lastUsedAt: null,
+          revoked: false,
+          expired: false,
+        },
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("CI integration", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+    // Only the list-load GET has happened so far - no DELETE fired just from opening the modal.
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
   });
 });
 
