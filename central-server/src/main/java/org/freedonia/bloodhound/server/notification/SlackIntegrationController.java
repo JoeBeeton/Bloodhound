@@ -29,26 +29,63 @@ public class SlackIntegrationController {
     }
 
     public record SlackConfigRequest(
-            String webhookUrl, boolean enabled, List<String> notificationTypes, boolean ownTargetsOnly) {}
+            /** Null/blank means "keep the currently-stored webhook unchanged" - see #save. Required on first save. */
+            String webhookUrl,
+            boolean enabled,
+            List<String> notificationTypes,
+            boolean ownTargetsOnly) {}
+
+    /** Never carries the real webhookUrl - see {@link SlackWebhookValidator#mask}. */
+    public record SlackIntegrationResponse(
+            UUID id,
+            UUID organizationId,
+            String webhookUrlMasked,
+            boolean enabled,
+            List<String> notificationTypes,
+            boolean ownTargetsOnly) {
+        static SlackIntegrationResponse from(SlackIntegration i) {
+            return new SlackIntegrationResponse(
+                    i.id(),
+                    i.organizationId(),
+                    SlackWebhookValidator.mask(i.webhookUrl()),
+                    i.enabled(),
+                    i.notificationTypes(),
+                    i.ownTargetsOnly());
+        }
+    }
 
     @GetMapping
-    public ResponseEntity<SlackIntegration> get(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
+    public ResponseEntity<SlackIntegrationResponse> get(
+            @PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
         Optional<SlackIntegration> integration = slackIntegrationRepository.findByOrganization(orgId);
-        return integration.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.noContent().build());
+        return integration
+                .map(i -> ResponseEntity.ok(SlackIntegrationResponse.from(i)))
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PutMapping
-    public SlackIntegration save(
+    public SlackIntegrationResponse save(
             @PathVariable UUID orgId,
             @AuthenticationPrincipal JwtPrincipal principal,
             @RequestBody SlackConfigRequest request) {
         requireSameOrg(orgId, principal);
-        // Enforced here, once, before the URL is ever stored - not inside SlackNotifier
-        // (see its Javadoc for why that split matters for testability). Without this, an
-        // admin-configurable "webhook URL" is an open server-side-request-to-arbitrary-URL
-        // primitive.
-        if (!SlackWebhookValidator.isValid(request.webhookUrl())) {
+        String webhookUrl = request.webhookUrl();
+        if (webhookUrl == null || webhookUrl.isBlank()) {
+            // The frontend never has the real URL to re-submit once it's masked (see
+            // SlackWebhookValidator#mask's javadoc for why) - a blank field here means "the admin
+            // is only changing enabled/notificationTypes/ownTargetsOnly, leave the webhook as-is",
+            // not "clear the webhook". That requires an existing row; there's nothing to keep on
+            // a first-ever save.
+            webhookUrl = slackIntegrationRepository
+                    .findByOrganization(orgId)
+                    .map(SlackIntegration::webhookUrl)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "webhookUrl is required"));
+        } else if (!SlackWebhookValidator.isValid(webhookUrl)) {
+            // Enforced here, once, before the URL is ever stored - not inside SlackNotifier
+            // (see its Javadoc for why that split matters for testability). Without this, an
+            // admin-configurable "webhook URL" is an open server-side-request-to-arbitrary-URL
+            // primitive.
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "webhookUrl must be a genuine https://hooks.slack.com/services/... URL");
         }
@@ -60,8 +97,9 @@ public class SlackIntegrationController {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown notification type: " + type);
             }
         }
-        return slackIntegrationRepository.upsert(
-                orgId, request.webhookUrl(), request.enabled(), types, request.ownTargetsOnly());
+        SlackIntegration saved =
+                slackIntegrationRepository.upsert(orgId, webhookUrl, request.enabled(), types, request.ownTargetsOnly());
+        return SlackIntegrationResponse.from(saved);
     }
 
     @DeleteMapping

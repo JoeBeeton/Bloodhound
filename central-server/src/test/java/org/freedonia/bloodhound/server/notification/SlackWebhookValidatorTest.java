@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -64,5 +65,32 @@ class SlackWebhookValidatorTest {
     @Test
     void rejectsMalformedUri() {
         assertFalse(SlackWebhookValidator.isValid("not a url at all ::: %%"));
+    }
+
+    @Test
+    void mask_realShapedUrl_keepsTeamAndWebhookIdRedactsSecret() {
+        // Segments 1-2 (team + webhook id) are effectively identifiers, not secrets - the actual
+        // bearer credential is the final segment, which must never come back from the mask.
+        String masked = SlackWebhookValidator.mask("https://hooks.slack.com/services/T0123ABCD/B0456EFGH/xXxSecretTokenxXx");
+
+        assertThat(masked).isEqualTo("https://hooks.slack.com/services/T0123ABCD/B0456EFGH/••••••••");
+        assertThat(masked).doesNotContain("xXxSecretTokenxXx");
+    }
+
+    @Test
+    void mask_null_returnsNull() {
+        assertThat(SlackWebhookValidator.mask(null)).isNull();
+    }
+
+    @Test
+    void mask_unexpectedShape_fallsBackToFullyRedacted_neverThrows() {
+        assertThat(SlackWebhookValidator.mask("https://hooks.slack.com/services/not-a-real-token"))
+                .isEqualTo("https://hooks.slack.com/services/••••••••");
+    }
+
+    @Test
+    void mask_malformedUri_fallsBackToFullyRedacted_neverThrows() {
+        assertThat(SlackWebhookValidator.mask("not a url at all ::: %%"))
+                .isEqualTo("https://hooks.slack.com/services/••••••••");
     }
 }
