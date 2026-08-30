@@ -195,3 +195,73 @@ describe("AdminSlackPage - test-send", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
+
+describe("AdminSlackPage - unsaved changes warning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function dispatchBeforeUnload(): BeforeUnloadEvent {
+    const event = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(event);
+    return event;
+  }
+
+  it("does not warn on load, before anything is typed", async () => {
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration()));
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+  });
+
+  it("warns once a fresh webhook URL is typed - the one thing here that isn't retrievable if lost", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null, text: async () => "" } as Response);
+
+    renderPage();
+    const urlInput = await screen.findByPlaceholderText(/hooks\.slack\.com/i);
+
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false); // empty field - nothing to lose yet
+
+    await user.type(urlInput, "https://hooks.slack.com/services/T1/B1/x");
+
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+    expect(screen.getByText("Unsaved changes.")).toBeInTheDocument();
+  });
+
+  it("warns when a checkbox is toggled away from the loaded config", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration({ enabled: true })));
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+
+    await user.click(screen.getByLabelText("Enabled"));
+
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+  });
+
+  it("does not warn once the typed webhook is saved", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => null, text: async () => "" } as Response) // initial load
+      .mockResolvedValueOnce(jsonResponse(existingIntegration())) // save
+      .mockResolvedValueOnce(jsonResponse(existingIntegration())); // refetch after invalidation
+
+    renderPage();
+    const urlInput = await screen.findByPlaceholderText(/hooks\.slack\.com/i);
+    await user.type(urlInput, "https://hooks.slack.com/services/T1/B1/x");
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(dispatchBeforeUnload().defaultPrevented).toBe(false));
+  });
+});
