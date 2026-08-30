@@ -6,6 +6,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
+import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
 
 interface SsoConfig {
   registrationId: string;
@@ -72,6 +73,19 @@ export function AdminSsoPage() {
       setEnabled(configQuery.data.enabled);
     }
   }, [configQuery.data]);
+
+  // Compares against the last-loaded/last-saved config, not a separate "dirty" flag to keep in
+  // sync by hand - the moment a save succeeds, configQuery.data itself updates (see the
+  // mutation's own onSuccess) and this naturally re-syncs to false along with it.
+  const hasUnsavedChanges =
+    !!configQuery.data &&
+    (idpEntityId !== configQuery.data.idpEntityId ||
+      idpSsoUrl !== configQuery.data.idpSsoUrl ||
+      idpX509Cert !== configQuery.data.idpX509Cert ||
+      emailAttributeName !== (configQuery.data.emailAttributeName || "email") ||
+      displayNameAttributeName !== (configQuery.data.displayNameAttributeName ?? "") ||
+      enabled !== configQuery.data.enabled);
+  useUnsavedChangesWarning(hasUnsavedChanges);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -203,6 +217,11 @@ export function AdminSsoPage() {
               >
                 {mutation.isPending ? "Saving…" : saved ? "Saved ✓" : "Save"}
               </button>
+              {/* In-app echo of the same beforeunload warning below - a visible reminder while
+                  still on the page, not just a surprise prompt at the moment of navigating away. */}
+              {hasUnsavedChanges && !mutation.isPending && (
+                <p className="mt-2 font-mono text-xs text-neon-amber">Unsaved changes.</p>
+              )}
               {mutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to save.</p>}
             </form>
           </div>
