@@ -14,12 +14,71 @@ const NAV_LINK_CLASS =
 export function Shell({ children }: { children: ReactNode }) {
   const { status, logout, user } = useAuth();
   const [showChangePassword, setShowChangePassword] = useState(false);
+  // A product/AppSec review found the nav had no mobile handling at all: 9 links plus the
+  // notification bell in one non-wrapping row overflowed every viewport under ~1000px wide,
+  // pushing Dashboard, Change password, Log out, and the notification bell off-screen with no
+  // visible way to reach them short of an undiscovered horizontal scroll - confirmed live via a
+  // real 375px-viewport screenshot. Below lg, the link list collapses behind this toggle instead.
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
+
+  const navLinks = (
+    <>
+      <NavLink to="/dashboard" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Dashboard
+      </NavLink>
+      <NavLink to="/targets" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Targets
+      </NavLink>
+      <NavLink to="/findings" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Findings
+      </NavLink>
+      <NavLink to="/map" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Map
+      </NavLink>
+      <NavLink to="/scans" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Scans
+      </NavLink>
+      <NavLink to="/compare" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Compare
+      </NavLink>
+      <NavLink to="/settings/api-keys" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        API Keys
+      </NavLink>
+      {user?.role === "ADMIN" && (
+        <NavLink to="/admin/users" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+          Admin
+        </NavLink>
+      )}
+      <button
+        onClick={() => {
+          setShowChangePassword(true);
+          closeMobileMenu();
+        }}
+        className={`${NAV_LINK_CLASS} text-left`}
+      >
+        Change password
+      </button>
+      <button
+        onClick={() => {
+          logout();
+          closeMobileMenu();
+        }}
+        className={`${NAV_LINK_CLASS} text-left`}
+      >
+        Log out
+      </button>
+    </>
+  );
 
   return (
     <div className="relative min-h-screen bg-void">
       <GridHorizon />
       <div className="relative z-10 flex min-h-screen flex-col">
-        <header className="flex flex-col items-center gap-4 px-6 py-6 sm:flex-row sm:justify-between">
+        <header className="flex items-center justify-between gap-4 px-6 py-6">
           <span className="flex items-center gap-2.5">
             <BloodhoundMascot
               title="Bloodhound"
@@ -34,43 +93,25 @@ export function Shell({ children }: { children: ReactNode }) {
             </span>
           </span>
           {status === "authenticated" && (
-            <nav className="flex items-center gap-5">
-              <NavLink to="/dashboard" className={NAV_LINK_CLASS}>
-                Dashboard
-              </NavLink>
-              <NavLink to="/targets" className={NAV_LINK_CLASS}>
-                Targets
-              </NavLink>
-              <NavLink to="/findings" className={NAV_LINK_CLASS}>
-                Findings
-              </NavLink>
-              <NavLink to="/map" className={NAV_LINK_CLASS}>
-                Map
-              </NavLink>
-              <NavLink to="/scans" className={NAV_LINK_CLASS}>
-                Scans
-              </NavLink>
-              <NavLink to="/compare" className={NAV_LINK_CLASS}>
-                Compare
-              </NavLink>
-              <NavLink to="/settings/api-keys" className={NAV_LINK_CLASS}>
-                API Keys
-              </NavLink>
-              {user?.role === "ADMIN" && (
-                <NavLink to="/admin/users" className={NAV_LINK_CLASS}>
-                  Admin
-                </NavLink>
-              )}
-              <button onClick={() => setShowChangePassword(true)} className={NAV_LINK_CLASS}>
-                Change password
-              </button>
-              <button onClick={() => logout()} className={NAV_LINK_CLASS}>
-                Log out
-              </button>
+            <div className="flex items-center gap-4">
+              <nav className="hidden items-center gap-5 lg:flex">{navLinks}</nav>
               <NotificationCenter />
-            </nav>
+              <button
+                onClick={() => setMobileMenuOpen((v) => !v)}
+                aria-expanded={mobileMenuOpen}
+                aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-700 text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan lg:hidden"
+              >
+                <span aria-hidden="true">{mobileMenuOpen ? "✕" : "☰"}</span>
+              </button>
+            </div>
           )}
         </header>
+        {status === "authenticated" && mobileMenuOpen && (
+          <nav className="flex flex-col items-start gap-4 border-y border-neon-cyan/10 bg-panel/95 px-6 py-4 lg:hidden">
+            {navLinks}
+          </nav>
+        )}
         {status === "authenticated" && <SecurityStatusBanner />}
         {/* Top-aligned, not vertically centered: this chrome wraps every screen, most of
             which (targets list, findings, compare charts) are taller than the viewport.
