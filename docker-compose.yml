@@ -121,9 +121,11 @@ services:
       # hostname that doesn't resolve is simply never looked up, same as any other unresolvable
       # name.
       BLOODHOUND_SSRF_ALLOWLIST: juiceshop.local
-    # Scale ad hoc with: docker compose up --scale worker=3
-    # (deploy.replicas is a swarm-mode construct and is intentionally not
-    # used here so a plain `docker compose up` never errors on it.)
+    # 3 by default - modern `docker compose` (v2+) honors deploy.replicas on
+    # a plain `docker compose up` without swarm mode, so this doesn't need
+    # --scale. Override ad hoc with: docker compose up --scale worker=N
+    deploy:
+      replicas: 3
     networks:
       - app_net
       - scan_net
