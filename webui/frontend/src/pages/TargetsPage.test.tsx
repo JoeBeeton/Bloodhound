@@ -211,3 +211,43 @@ describe("TargetsPage - notes indicator and search", () => {
     expect(screen.queryByText("pad-0.example.com")).not.toBeInTheDocument();
   });
 });
+
+describe("TargetsPage - scan-now failure surfacing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows a specific message when a scan is already running (409), not a generic failure", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target()])) // list
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 409 })); // scan attempt
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Scan now" }));
+
+    expect(
+      await screen.findByText("A scan is already running for this target.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a generic message for a non-409 scan failure", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target()]))
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Scan now" }));
+
+    expect(await screen.findByText("Failed to start scan.", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+});
