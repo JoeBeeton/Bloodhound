@@ -14,4 +14,5 @@ import jakarta.validation.constraints.Pattern;
  */
 public record UpdateUserRequest(
         @Pattern(regexp = "ADMIN|ANALYST|VIEWER") String role,
-        @Pattern(regexp = "ACTIVE|DISABLED|PENDING_PROVISION") String status) {}
+        @Pattern(regexp = "ACTIVE|DISABLED|PENDING_PROVISION") String status,
+        Boolean mcpEnabled) {}

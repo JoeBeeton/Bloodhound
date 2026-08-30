@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 
 /**
- * Shared cross-links for the five admin screens (Users/Rules catalog/SSO/SCIM/Slack) - each
+ * Shared cross-links for the six admin screens (Users/Rules catalog/SSO/SCIM/Slack/MCP) - each
  * used to hand-roll its own subset of these links, in a different order, with two of them
  * carrying a copy-pasted indentation bug. That drift meant e.g. Slack's page couldn't link
  * straight to Users, and Rules catalog couldn't reach SCIM/Slack at all. One shared nav fixes
@@ -14,6 +14,7 @@ const ADMIN_LINKS: { to: string; label: string }[] = [
   { to: "/admin/sso", label: "SSO" },
   { to: "/admin/scim", label: "SCIM" },
   { to: "/admin/slack", label: "Slack" },
+  { to: "/admin/mcp", label: "MCP" },
 ];
 
 const LINK_CLASS =
