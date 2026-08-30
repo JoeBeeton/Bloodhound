@@ -9,6 +9,8 @@ import java.time.Instant;
 import java.util.List;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.security.HashUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -40,6 +42,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiKeyAuthFilter.class);
+
     private final ApiKeyRepository apiKeyRepository;
 
     public ApiKeyAuthFilter(ApiKeyRepository apiKeyRepository) {
@@ -61,7 +65,15 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 var authorities = List.of(new SimpleGrantedAuthority("ROLE_API_KEY"));
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-                apiKeyRepository.touchLastUsed(apiKey.id());
+                // A security review found this ran unguarded inline: a transient DB failure here
+                // (pure bookkeeping, not part of the auth decision itself) would propagate up and
+                // fail an otherwise-valid, already-authenticated request. Losing one "last used"
+                // timestamp update is harmless; failing a real API call over it isn't.
+                try {
+                    apiKeyRepository.touchLastUsed(apiKey.id());
+                } catch (RuntimeException e) {
+                    log.warn("failed to update last-used timestamp for API key {}", apiKey.id(), e);
+                }
             });
         }
         filterChain.doFilter(request, response);
