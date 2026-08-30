@@ -752,10 +752,20 @@ function LastScanLabel({ target }: { target: Target }) {
 }
 
 function ScanStatusBadge({ status }: { status: string }) {
+  // A product review found this badge - the "last scan" status shown on every row of the
+  // primary Targets list - had no defined style for FAILED or CANCELLED, both falling back to
+  // the same flat text-slate-400 as an unrecognized status. FAILED reads as neutral (rather than
+  // the same alarming red PARTIAL_FAILURE already gets) here, which is misleading for a scan
+  // that didn't produce any usable result at all. CANCELLED uses text-muted (a deliberately
+  // de-emphasized tertiary tone already used elsewhere in this palette - not text-slate-600,
+  // which tailwind.config.js documents as a WCAG AA contrast failure on this app's dark
+  // background) rather than the generic fallback, so it reads as a real, recognized state.
   const styles: Record<string, string> = {
     RUNNING: "text-neon-amber animate-pulse",
     COMPLETE: "text-neon-cyan",
     PARTIAL_FAILURE: "text-severity-critical",
+    FAILED: "text-severity-critical",
+    CANCELLED: "text-muted",
   };
   return (
     <span className={`font-mono text-xs uppercase tracking-widest ${styles[status] ?? "text-slate-400"}`}>

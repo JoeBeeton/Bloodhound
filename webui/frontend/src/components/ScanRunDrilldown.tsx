@@ -9,6 +9,11 @@ const STATUS_STYLES: Record<string, string> = {
   PENDING: "text-slate-500",
   CLAIMED: "text-neon-amber",
   RUNNING: "text-neon-amber",
+  // A product review found this component - embedded on the target detail page to show the
+  // latest scan's per-module breakdown - had no style for a cancelled job, falling back to the
+  // same flat text-slate-400 an unrecognized status gets. text-muted, not PENDING's own
+  // text-slate-500, so a cancelled module doesn't read as "still waiting to run".
+  CANCELLED: "text-muted",
 };
 
 /** The one error detail worth surfacing inline for a module group - the failure that hasn't

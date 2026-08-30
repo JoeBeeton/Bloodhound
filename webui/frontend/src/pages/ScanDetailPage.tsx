@@ -64,6 +64,13 @@ const JOB_STATUS_STYLES: Record<string, string> = {
   RUNNING: "text-neon-amber",
   COMPLETE: "text-neon-cyan",
   FAILED: "text-severity-critical",
+  // A product review found cancelling a run (see cancelRun above) left every one of its
+  // still-non-terminal jobs falling back to this map's default text-slate-400 - visually almost
+  // identical to PENDING's own text-slate-500, so a cancelled job's row read as "still waiting to
+  // start" rather than "stopped". text-muted (not text-slate-600 - see tailwind.config.js's own
+  // comment on why that shade fails WCAG AA on this app's dark background) keeps it in the same
+  // deliberately-de-emphasized family while staying visually distinct from PENDING.
+  CANCELLED: "text-muted",
 };
 
 const OUTCOME_STYLES: Record<string, string> = {
