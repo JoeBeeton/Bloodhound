@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.freedonia.bloodhound.server.findings.dto.FindingSummary;
+import org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary;
 import org.junit.jupiter.api.Test;
 
 class FindingCsvWriterTest {
@@ -21,6 +22,31 @@ class FindingCsvWriterTest {
                 "EXPOSURE",
                 title,
                 description,
+                Map.of(),
+                "asset.example.com",
+                java.util.UUID.randomUUID(),
+                "OPEN",
+                null,
+                Instant.now(),
+                Instant.now(),
+                Instant.now(),
+                Instant.now(),
+                "fix it",
+                null);
+    }
+
+    private static OrgFindingSummary orgSummary(String targetHostname, String title) {
+        return new OrgFindingSummary(
+                java.util.UUID.randomUUID(),
+                "bh-test-1",
+                java.util.UUID.randomUUID(),
+                targetHostname,
+                "HTTP",
+                "RULE_X",
+                "HIGH",
+                "EXPOSURE",
+                title,
+                "some description",
                 Map.of(),
                 "asset.example.com",
                 java.util.UUID.randomUUID(),
@@ -92,5 +118,24 @@ class FindingCsvWriterTest {
     @Test
     void escape_formulaCharacterMidString_notPrefixed() {
         assertThat(FindingCsvWriter.escape("total=5")).isEqualTo("total=5");
+    }
+
+    @Test
+    void writeOrgWide_headerRowFirst_leadingTargetColumn() {
+        String csv = FindingCsvWriter.writeOrgWide(List.of());
+
+        assertThat(csv).isEqualTo("Target,Display ID,Severity,Category,Rule ID,Title,Description,Affected Asset,"
+                + "Status,First Seen,Last Seen,Resolved At,Remediation Advice\r\n");
+    }
+
+    @Test
+    void writeOrgWide_multipleTargets_eachRowCarriesItsOwnHostname() {
+        // The whole point of the org-wide variant - a row with no target context is meaningless
+        // once findings span more than one target.
+        String csv = FindingCsvWriter.writeOrgWide(
+                List.of(orgSummary("a.example.com", "Finding on A"), orgSummary("b.example.com", "Finding on B")));
+
+        assertThat(csv).contains("a.example.com,bh-test-1,HIGH,EXPOSURE,RULE_X,Finding on A");
+        assertThat(csv).contains("b.example.com,bh-test-1,HIGH,EXPOSURE,RULE_X,Finding on B");
     }
 }
