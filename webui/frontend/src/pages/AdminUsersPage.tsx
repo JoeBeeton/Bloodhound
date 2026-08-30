@@ -318,8 +318,11 @@ function AddUserModal({
     <Modal title="Add user" onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Email</label>
+          <label htmlFor="adduser-email" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Email
+          </label>
           <input
+            id="adduser-email"
             required
             type="email"
             value={email}
@@ -328,8 +331,11 @@ function AddUserModal({
           />
         </div>
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Display name</label>
+          <label htmlFor="adduser-display-name" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Display name
+          </label>
           <input
+            id="adduser-display-name"
             required
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -337,8 +343,11 @@ function AddUserModal({
           />
         </div>
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Role</label>
+          <label htmlFor="adduser-role" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Role
+          </label>
           <select
+            id="adduser-role"
             value={role}
             onChange={(e) => setRole(e.target.value as UserRole)}
             className="select-cyber w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"

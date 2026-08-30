@@ -363,8 +363,11 @@ export function TargetDetailPage() {
 
         {target && (
           <div className="mb-8 flex flex-wrap items-center gap-3 rounded-lg border border-neon-cyan/10 bg-panel/60 px-4 py-3">
-            <label className="font-mono text-xs uppercase tracking-widest text-slate-400">Scan schedule</label>
+            <label htmlFor="scan-schedule" className="font-mono text-xs uppercase tracking-widest text-slate-400">
+              Scan schedule
+            </label>
             <select
+              id="scan-schedule"
               value={target.scanCadenceSeconds}
               disabled={updateScheduleMutation.isPending}
               onChange={(e) => updateScheduleMutation.mutate(Number(e.target.value))}

@@ -74,8 +74,11 @@ export function LoginPage() {
           >
             <h1 className="mb-6 text-center font-display text-xl font-bold tracking-widest text-neon-cyan">SIGN IN</h1>
 
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Email</label>
+            <label htmlFor="login-email" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+              Email
+            </label>
             <input
+              id="login-email"
               type="email"
               required
               autoComplete="email"
@@ -85,8 +88,11 @@ export function LoginPage() {
               className="mb-4 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
             />
 
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Password</label>
+            <label htmlFor="login-password" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+              Password
+            </label>
             <input
+              id="login-password"
               type="password"
               required
               autoComplete="current-password"
@@ -124,6 +130,7 @@ export function LoginPage() {
             <div className="flex gap-2">
               <input
                 type="text"
+                aria-label="Organization slug"
                 placeholder="org-slug"
                 value={ssoSlug}
                 onChange={(e) => setSsoSlug(e.target.value)}
