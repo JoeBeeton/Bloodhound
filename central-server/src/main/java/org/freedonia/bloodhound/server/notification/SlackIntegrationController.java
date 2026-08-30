@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -11,6 +12,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,9 +25,16 @@ import org.springframework.web.server.ResponseStatusException;
 public class SlackIntegrationController {
 
     private final SlackIntegrationRepository slackIntegrationRepository;
+    private final SlackNotifier slackNotifier;
+    private final String appBaseUrl;
 
-    public SlackIntegrationController(SlackIntegrationRepository slackIntegrationRepository) {
+    public SlackIntegrationController(
+            SlackIntegrationRepository slackIntegrationRepository,
+            SlackNotifier slackNotifier,
+            @Value("${bloodhound.notifications.app-base-url}") String appBaseUrl) {
         this.slackIntegrationRepository = slackIntegrationRepository;
+        this.slackNotifier = slackNotifier;
+        this.appBaseUrl = appBaseUrl;
     }
 
     public record SlackConfigRequest(
@@ -100,6 +109,36 @@ public class SlackIntegrationController {
         SlackIntegration saved =
                 slackIntegrationRepository.upsert(orgId, webhookUrl, request.enabled(), types, request.ownTargetsOnly());
         return SlackIntegrationResponse.from(saved);
+    }
+
+    public record TestSendResponse(boolean success, String detail) {}
+
+    /**
+     * A product/ops review found this integration was entirely fire-and-forget: SlackNotifier's
+     * real delivery path is deliberately @Async so a slow/unreachable Slack endpoint never delays
+     * the scan/finding pipeline, and any failure only ever reached a server log line an admin
+     * would have no reason to go looking at. An admin who fat-fingers a webhook URL (or whose
+     * webhook gets revoked from the Slack side) currently finds out only when they realize alerts
+     * have quietly stopped arriving - potentially never, if alert volume is already low. This
+     * fires one real message synchronously and reports the actual outcome back, the same "does
+     * this even work" check every other webhook-integration UI (Stripe, GitHub, etc.) offers.
+     * Deliberately synchronous, unlike the real delivery path - a manual button click blocking
+     * for up to ~8s (SlackNotifier's own HTTP timeout) is the whole point here.
+     */
+    @PostMapping("/test")
+    public TestSendResponse test(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireSameOrg(orgId, principal);
+        SlackIntegration integration = slackIntegrationRepository
+                .findByOrganization(orgId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "No Slack webhook configured yet - save one first."));
+        var result = slackNotifier.attemptDelivery(
+                integration.webhookUrl(),
+                "Bloodhound test notification",
+                "This is a test message from Bloodhound. If you're seeing this, delivery is working.",
+                "INFO",
+                appBaseUrl + "/dashboard");
+        return new TestSendResponse(result.success(), result.detail());
     }
 
     @DeleteMapping

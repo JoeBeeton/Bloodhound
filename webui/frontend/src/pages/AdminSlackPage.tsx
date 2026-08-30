@@ -62,6 +62,29 @@ async function deleteIntegration(orgId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to remove Slack integration.");
 }
 
+interface TestSendResult {
+  success: boolean;
+  detail: string | null;
+}
+
+/**
+ * Fires one real message against the currently-*saved* webhook and reports back whether it
+ * actually landed - a product/ops review found this integration was entirely fire-and-forget:
+ * SlackNotifier's real delivery path is deliberately async (so a slow/unreachable Slack endpoint
+ * never delays the scan/finding pipeline that triggered it) and any failure only ever reached a
+ * server log line, never this page. An admin who fat-fingers a webhook URL - or whose webhook
+ * gets revoked from the Slack side later - previously found out only by noticing alerts had
+ * quietly stopped, if they noticed at all.
+ */
+async function sendTestMessage(orgId: string): Promise<TestSendResult> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/slack-integration/test`, { method: "POST" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || "Failed to send test message.");
+  }
+  return res.json();
+}
+
 export function AdminSlackPage() {
   usePageTitle("Slack Notifications");
   const { user } = useAuth();
@@ -108,7 +131,13 @@ export function AdminSlackPage() {
         notificationTypes: types,
         ownTargetsOnly,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-slack-integration", orgId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-slack-integration", orgId] });
+      // A previous test result is only meaningful against whatever webhook was saved at the
+      // time - stale "test succeeded" from before this save would be misleading once the URL
+      // itself may have just changed.
+      testMutation.reset();
+    },
   });
 
   const deleteMutation = useMutation({
@@ -121,6 +150,8 @@ export function AdminSlackPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-slack-integration", orgId] });
     },
   });
+
+  const testMutation = useMutation({ mutationFn: () => sendTestMessage(orgId) });
 
   const urlLooksValid = webhookUrl === "" || SLACK_URL_PATTERN.test(webhookUrl);
   // While editing, a valid non-blank URL is required (blank would be read as "leave unchanged"
@@ -163,7 +194,10 @@ export function AdminSlackPage() {
               </code>
               <button
                 type="button"
-                onClick={() => setIsEditingWebhook(true)}
+                onClick={() => {
+                  setIsEditingWebhook(true);
+                  testMutation.reset();
+                }}
                 className="shrink-0 font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline"
               >
                 Change
@@ -239,14 +273,46 @@ export function AdminSlackPage() {
               {saveMutation.isPending ? "Saving…" : "Save"}
             </button>
             {query.data && (
-              <button
-                type="button"
-                onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
-                className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
-              >
-                Remove integration
-              </button>
+              <>
+                {/* Only meaningful against a webhook that's actually saved - testing whatever's
+                    mid-edit in the URL field above would report on a URL that was never stored,
+                    which is confusing at best if the admin then navigates away without saving. */}
+                <button
+                  type="button"
+                  onClick={() => testMutation.mutate()}
+                  disabled={testMutation.isPending || isEditingWebhook}
+                  title={isEditingWebhook ? "Save the webhook URL before sending a test message." : undefined}
+                  className="rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10 disabled:opacity-40"
+                >
+                  {testMutation.isPending ? "Sending…" : "Send test message"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                  className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
+                >
+                  Remove integration
+                </button>
+              </>
+            )}
+          </div>
+          {/* aria-live: the outcome of a manual "does this work" check is exactly the kind of
+              confirmation a screen reader user needs announced, not just painted for sighted
+              users - same reasoning as CopyButton's own live region. */}
+          <div aria-live="polite">
+            {testMutation.isSuccess &&
+              (testMutation.data.success ? (
+                <p className="mt-2 font-mono text-xs text-neon-cyan">✓ Test message sent - check your Slack channel.</p>
+              ) : (
+                <p className="mt-2 font-mono text-xs text-severity-critical">
+                  ✕ Delivery failed{testMutation.data.detail ? `: ${testMutation.data.detail}` : "."}
+                </p>
+              ))}
+            {testMutation.isError && (
+              <p className="mt-2 font-mono text-xs text-severity-critical">
+                {(testMutation.error as Error)?.message ?? "Failed to send test message."}
+              </p>
             )}
           </div>
           {saveMutation.isError && (

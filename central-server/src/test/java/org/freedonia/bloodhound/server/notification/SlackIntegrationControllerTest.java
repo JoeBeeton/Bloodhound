@@ -21,7 +21,9 @@ import org.springframework.web.server.ResponseStatusException;
 class SlackIntegrationControllerTest {
 
     private final SlackIntegrationRepository repository = mock(SlackIntegrationRepository.class);
-    private final SlackIntegrationController controller = new SlackIntegrationController(repository);
+    private final SlackNotifier slackNotifier = mock(SlackNotifier.class);
+    private final SlackIntegrationController controller =
+            new SlackIntegrationController(repository, slackNotifier, "https://app.example");
 
     private final UUID orgId = UUID.randomUUID();
     private final JwtPrincipal admin = new JwtPrincipal(UUID.randomUUID(), orgId, "ADMIN", "admin@example.com");
@@ -89,5 +91,49 @@ class SlackIntegrationControllerTest {
 
         verify(repository).upsert(orgId, newUrl, true, List.of("NEW_FINDINGS"), false);
         assertThat(response.webhookUrlMasked()).doesNotContain("newtoken");
+    }
+
+    @Test
+    void test_noIntegrationConfigured_rejectedBeforeAnyDeliveryAttempt() {
+        when(repository.findByOrganization(orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.test(orgId, admin))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        verify(slackNotifier, never()).attemptDelivery(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void test_deliverySucceeds_reportsSuccessWithNoDetail() {
+        when(repository.findByOrganization(orgId)).thenReturn(Optional.of(existing()));
+        when(slackNotifier.attemptDelivery(eq(REAL_URL), any(), any(), eq("INFO"), eq("https://app.example/dashboard")))
+                .thenReturn(new SlackNotifier.DeliveryResult(true, null));
+
+        SlackIntegrationController.TestSendResponse response = controller.test(orgId, admin);
+
+        assertThat(response.success()).isTrue();
+        assertThat(response.detail()).isNull();
+    }
+
+    @Test
+    void test_deliveryFails_reportsFailureWithDetail_usingTheStoredUnmaskedUrl() {
+        // The controller must pass the real, stored webhookUrl to SlackNotifier - never the masked
+        // display value the frontend sees, which isn't a usable URL at all.
+        when(repository.findByOrganization(orgId)).thenReturn(Optional.of(existing()));
+        when(slackNotifier.attemptDelivery(eq(REAL_URL), any(), any(), any(), any()))
+                .thenReturn(new SlackNotifier.DeliveryResult(false, "Slack responded with HTTP 404"));
+
+        SlackIntegrationController.TestSendResponse response = controller.test(orgId, admin);
+
+        assertThat(response.success()).isFalse();
+        assertThat(response.detail()).isEqualTo("Slack responded with HTTP 404");
+    }
+
+    @Test
+    void test_orgIdMismatch_forbidden_beforeAnyDeliveryAttempt() {
+        UUID otherOrgId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> controller.test(otherOrgId, admin)).isInstanceOf(ResponseStatusException.class);
+        verify(slackNotifier, never()).attemptDelivery(any(), any(), any(), any(), any());
     }
 }

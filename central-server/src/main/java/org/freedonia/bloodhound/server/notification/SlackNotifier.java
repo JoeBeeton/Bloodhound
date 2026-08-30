@@ -34,6 +34,31 @@ public class SlackNotifier {
 
     @Async
     public void send(String webhookUrl, String title, String message, String severity, String linkUrl) {
+        attemptDelivery(webhookUrl, title, message, severity, linkUrl);
+    }
+
+    /** Whether delivery reached Slack with a 200, and - if not - enough detail to act on (a bad
+     * URL, a revoked webhook, a network failure) without digging through server logs. */
+    public record DeliveryResult(boolean success, String detail) {
+        static DeliveryResult ok() {
+            return new DeliveryResult(true, null);
+        }
+
+        static DeliveryResult failed(String detail) {
+            return new DeliveryResult(false, detail);
+        }
+    }
+
+    /**
+     * The synchronous core {@link #send} fires-and-forgets on the async executor - split out so
+     * SlackIntegrationController's "send a test message" endpoint can call it directly and return
+     * the real outcome to whoever clicked the button, instead of the silent server-log-only
+     * failure path every other caller of this class gets (acceptable there since the in-app
+     * notification is the source of truth regardless, but not for a deliberate "does this even
+     * work" check - an admin who fat-fingers a webhook URL deserves to find out immediately, not
+     * by waiting for the next real alert that never arrives).
+     */
+    DeliveryResult attemptDelivery(String webhookUrl, String title, String message, String severity, String linkUrl) {
         String payload = buildPayload(title, message, severity, linkUrl);
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(webhookUrl))
@@ -42,11 +67,14 @@ public class SlackNotifier {
                     .POST(HttpRequest.BodyPublishers.ofString(payload))
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                log.warn("Slack webhook delivery failed: HTTP {} - {}", response.statusCode(), response.body());
+            if (response.statusCode() == 200) {
+                return DeliveryResult.ok();
             }
+            log.warn("Slack webhook delivery failed: HTTP {} - {}", response.statusCode(), response.body());
+            return DeliveryResult.failed("Slack responded with HTTP " + response.statusCode());
         } catch (Exception e) {
             log.warn("Slack webhook delivery failed: {}", e.toString());
+            return DeliveryResult.failed(e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
