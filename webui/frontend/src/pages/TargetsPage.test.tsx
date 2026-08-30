@@ -159,3 +159,55 @@ describe("TargetsPage - bulk scan selection", () => {
     expect(screen.queryByLabelText("Select gone.example.com")).not.toBeInTheDocument();
   });
 });
+
+describe("TargetsPage - notes indicator and search", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // The filter input only renders once there are more than 5 targets - pad the list so it shows.
+  function manyTargets(overrides: Partial<Target>[]): Target[] {
+    const named = overrides.map((o, i) => target({ id: `named-${i}`, hostname: `named-${i}.example.com`, ...o }));
+    const padding = Array.from({ length: 5 }, (_, i) =>
+      target({ id: `pad-${i}`, hostname: `pad-${i}.example.com` }),
+    );
+    return [...named, ...padding];
+  }
+
+  it("shows a notes indicator only on targets that have notes", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse(manyTargets([{ hostname: "annotated.example.com", notes: "staging environment" }, { hostname: "bare.example.com", notes: null }])),
+    );
+
+    renderPage();
+    await screen.findByText("annotated.example.com", {}, { timeout: 5000 });
+
+    expect(screen.getByLabelText(/notes: staging environment/i)).toBeInTheDocument();
+    expect(screen.getAllByText("📝")).toHaveLength(1);
+  });
+
+  it("searching matches a target by its notes content, not just its hostname", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse(
+        manyTargets([
+          { hostname: "prod-a.example.com", notes: "primary customer-facing domain" },
+          { hostname: "prod-b.example.com", notes: "internal admin portal" },
+        ]),
+      ),
+    );
+
+    renderPage();
+    await screen.findByText("prod-a.example.com", {}, { timeout: 5000 });
+
+    await user.type(screen.getByPlaceholderText(/filter by hostname or notes/i), "customer-facing");
+
+    expect(screen.getByText("prod-a.example.com")).toBeInTheDocument();
+    expect(screen.queryByText("prod-b.example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("pad-0.example.com")).not.toBeInTheDocument();
+  });
+});
