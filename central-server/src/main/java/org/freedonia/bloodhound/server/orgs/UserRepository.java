@@ -21,7 +21,8 @@ public class UserRepository {
             rs.getString("role"),
             rs.getString("status"),
             rs.getTimestamp("created_at").toInstant(),
-            rs.getBoolean("mcp_enabled"));
+            rs.getBoolean("mcp_enabled"),
+            rs.getTimestamp("last_login_at") != null ? rs.getTimestamp("last_login_at").toInstant() : null);
 
     private final JdbcTemplate jdbc;
 

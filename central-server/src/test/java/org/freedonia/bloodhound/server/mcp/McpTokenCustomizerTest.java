@@ -28,7 +28,7 @@ class McpTokenCustomizerTest {
     private final UUID orgId = UUID.randomUUID();
 
     private User user() {
-        return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", "ACTIVE", Instant.now(), true);
+        return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", "ACTIVE", Instant.now(), true, null);
     }
 
     private JwtEncodingContext contextFor(Authentication principal, OAuth2TokenType tokenType) {

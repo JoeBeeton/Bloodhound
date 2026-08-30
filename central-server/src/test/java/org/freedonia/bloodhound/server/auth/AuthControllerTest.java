@@ -25,7 +25,7 @@ class AuthControllerTest {
     void login_success_returns200WithTokens() {
         User user = new User(
                 UUID.randomUUID(), UUID.randomUUID(), "u@example.com", "Name", "hash", "LOCAL", "VIEWER", "ACTIVE",
-                Instant.now(), true);
+                Instant.now(), true, null);
         AuthResult result = new AuthResult("access-jwt", 900L, "raw-refresh", UUID.randomUUID(), UserSummary.from(user));
         when(authenticationService.login("u@example.com", "correct-pw")).thenReturn(result);
 

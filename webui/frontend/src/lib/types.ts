@@ -365,6 +365,8 @@ export interface AdminUser {
   mcpEnabled: boolean;
   /** "LOCAL" (password-based) or "SAML" (SSO - no local password to reset). */
   identitySource: string;
+  /** Null if this user has never successfully logged in. */
+  lastLoginAt: string | null;
 }
 
 export type UserRole = "ADMIN" | "ANALYST" | "VIEWER";

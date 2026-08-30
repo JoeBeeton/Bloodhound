@@ -115,18 +115,19 @@ export function AdminUsersPage() {
           // (confirmed live: previously the whole page did, pushing content off-screen with no
           // visible scrollbar to find it), not trying to force six columns into 375px.
           <div className="overflow-x-auto rounded-lg border border-neon-cyan/20 bg-panel/60">
-            <div className="grid min-w-[720px] grid-cols-[1fr_1fr_140px_140px_70px_120px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
+            <div className="grid min-w-[860px] grid-cols-[1fr_1fr_140px_140px_70px_130px_120px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
               <span>Email</span>
               <span>Display name</span>
               <span>Role</span>
               <span>Status</span>
               <span>MCP</span>
+              <span>Last login</span>
               <span>Password</span>
             </div>
             {usersQuery.data.map((u, i) => (
               <div
                 key={u.id}
-                className={`grid min-w-[720px] grid-cols-[1fr_1fr_140px_140px_70px_120px] items-center gap-2 px-4 py-2.5 ${
+                className={`grid min-w-[860px] grid-cols-[1fr_1fr_140px_140px_70px_130px_120px] items-center gap-2 px-4 py-2.5 ${
                   i > 0 ? "border-t border-neon-cyan/10" : ""
                 }`}
               >
@@ -168,6 +169,7 @@ export function AdminUsersPage() {
                   onChange={(e) => mutate.mutate({ userId: u.id, patch: { mcpEnabled: e.target.checked } })}
                   title={`${u.mcpEnabled ? "Disable" : "Enable"} MCP access for this user`}
                 />
+                <LastLoginLabel lastLoginAt={u.lastLoginAt} />
                 {u.identitySource === "LOCAL" ? (
                   <button
                     onClick={() => setConfirmingResetFor(u)}
@@ -260,6 +262,30 @@ export function AdminUsersPage() {
       )}
     </Shell>
   );
+}
+
+const LAST_LOGIN_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+};
+
+/**
+ * last_login_at was written on every LOCAL/SAML sign-in from day one, but a product/AppSec
+ * review found nothing anywhere ever read it back - an admin auditing who actually has access
+ * had no way to spot a dormant account (SSO/SCIM-provisioned but never signed in, or an old
+ * account nobody remembered to disable) versus one in active use.
+ */
+function LastLoginLabel({ lastLoginAt }: { lastLoginAt: string | null }) {
+  if (!lastLoginAt) {
+    return (
+      <span className="font-mono text-xs text-slate-600" title="This account has never signed in">
+        Never
+      </span>
+    );
+  }
+  return <span className="font-mono text-xs text-slate-400">{new Date(lastLoginAt).toLocaleString(undefined, LAST_LOGIN_DATE_FORMAT)}</span>;
 }
 
 function AddUserModal({
