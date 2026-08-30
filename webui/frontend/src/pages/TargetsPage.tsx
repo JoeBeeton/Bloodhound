@@ -81,6 +81,26 @@ async function triggerBulkScan(targetIds: string[]): Promise<BulkScanOutcome[]> 
   );
 }
 
+interface BulkRemoveOutcome {
+  targetId: string;
+  ok: boolean;
+}
+
+/**
+ * The bulk-scan feature's obvious next step, and the second half of "every action on this page
+ * was one-target-at-a-time" - a product review recommended shipping it as one shared
+ * confirmation (listing every hostname about to be removed) rather than N per-target
+ * confirmations, since Remove is already soft/reversible (see setTargetActive's own comment -
+ * pauses scanning, keeps all history, restorable from "Show removed") and per-item confirmation
+ * for a reversible bulk action would be exactly the kind of disproportionate friction the bulk
+ * scan feature already avoided. Same Promise.allSettled pattern as triggerBulkScan, reusing the
+ * existing single-target PATCH endpoint - no new backend endpoint needed.
+ */
+async function triggerBulkRemove(targetIds: string[]): Promise<BulkRemoveOutcome[]> {
+  const results = await Promise.allSettled(targetIds.map((id) => setTargetActive(id, false)));
+  return results.map((r, i) => ({ targetId: targetIds[i], ok: r.status === "fulfilled" }));
+}
+
 async function triggerDeepScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan/deep`, { method: "POST" });
   if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start deep scan.");
@@ -112,6 +132,8 @@ export function TargetsPage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkScanSummary, setBulkScanSummary] = useState<{ started: number; failed: number } | null>(null);
+  const [pendingBulkRemoval, setPendingBulkRemoval] = useState<Target[] | null>(null);
+  const [bulkRemoveSummary, setBulkRemoveSummary] = useState<{ removed: number; failed: number } | null>(null);
 
   const [hostname, setHostname] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("OWN");
@@ -178,6 +200,18 @@ export function TargetsPage() {
       return next;
     });
   }
+
+  const bulkRemove = useMutation({
+    mutationFn: triggerBulkRemove,
+    onSuccess: (outcomes) => {
+      const removed = outcomes.filter((o) => o.ok).length;
+      const failed = outcomes.length - removed;
+      setBulkRemoveSummary({ removed, failed });
+      setPendingBulkRemoval(null);
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["targets"] });
+    },
+  });
 
   return (
     <Shell>
@@ -290,6 +324,24 @@ export function TargetsPage() {
           </p>
         )}
 
+        {bulkRemoveSummary && (
+          <p className="mb-3 flex items-center justify-between gap-3 rounded border border-neon-cyan/20 bg-panel/40 px-3 py-2 font-mono text-xs text-neon-cyan" role="status">
+            <span>
+              Removed {bulkRemoveSummary.removed} target{bulkRemoveSummary.removed === 1 ? "" : "s"}
+              {bulkRemoveSummary.failed > 0 && (
+                <span className="text-severity-critical">
+                  {" "}
+                  · {bulkRemoveSummary.failed} failed
+                </span>
+              )}
+              .
+            </span>
+            <button onClick={() => setBulkRemoveSummary(null)} className="text-slate-500 hover:text-slate-300">
+              ✕
+            </button>
+          </p>
+        )}
+
         <div className="flex flex-col gap-3">
           {(() => {
             const byRemoved = showRemoved
@@ -354,6 +406,12 @@ export function TargetsPage() {
                         >
                           {bulkScan.isPending ? "Starting…" : `Scan ${selectedCount} selected`}
                         </button>
+                        <button
+                          onClick={() => setPendingBulkRemoval(visible.filter((t) => selectedIds.has(t.id)))}
+                          className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:border-severity-critical/50 hover:text-severity-critical"
+                        >
+                          Remove {selectedCount} selected
+                        </button>
                       </div>
                     )}
                   </div>
@@ -399,6 +457,41 @@ export function TargetsPage() {
               className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
             >
               {setActive.isPending ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {pendingBulkRemoval && (
+        <Modal title="Remove targets" onClose={() => setPendingBulkRemoval(null)}>
+          <p className="mb-3 text-sm text-slate-300">
+            Remove these {pendingBulkRemoval.length} targets from monitoring? This pauses future scans but keeps
+            all of their existing findings and scan history — you can restore any of them any time from the "Show
+            removed" view.
+          </p>
+          <ul className="mb-4 max-h-48 overflow-y-auto rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-300">
+            {pendingBulkRemoval.map((t) => (
+              <li key={t.id} className="truncate py-0.5">
+                {t.hostname}
+              </li>
+            ))}
+          </ul>
+          {bulkRemove.isError && (
+            <p className="mb-3 font-mono text-xs text-severity-critical">Failed to remove targets.</p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setPendingBulkRemoval(null)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => bulkRemove.mutate(pendingBulkRemoval.map((t) => t.id))}
+              disabled={bulkRemove.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {bulkRemove.isPending ? "Removing…" : `Remove ${pendingBulkRemoval.length}`}
             </button>
           </div>
         </Modal>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -249,5 +249,101 @@ describe("TargetsPage - scan-now failure surfacing", () => {
     await user.click(screen.getByRole("button", { name: "Scan now" }));
 
     expect(await screen.findByText("Failed to start scan.", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+});
+
+describe("TargetsPage - bulk remove", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clicking 'Remove N selected' opens one shared confirmation listing every selected hostname, without removing anything yet", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]),
+    );
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByLabelText(/select all visible targets/i));
+    await user.click(screen.getByRole("button", { name: "Remove 2 selected" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(screen.getByRole("heading", { name: "Remove targets" })).toBeInTheDocument();
+    expect(within(dialog).getByText("example.com")).toBeInTheDocument();
+    expect(within(dialog).getByText("second.example.com")).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1); // only the initial list load - no PATCH yet
+  });
+
+  it("Cancel closes the confirmation without removing anything", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]));
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByLabelText(/select all visible targets/i));
+    await user.click(screen.getByRole("button", { name: "Remove 2 selected" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("heading", { name: "Remove targets" })).not.toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirming fires one PATCH per selected target and reports the summary", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })])) // list
+      .mockResolvedValueOnce(jsonResponse({ ...target(), isActive: false })) // PATCH t1
+      .mockResolvedValueOnce(jsonResponse({ ...target({ id: "t2" }), isActive: false })); // PATCH t2
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByLabelText(/select all visible targets/i));
+    await user.click(screen.getByRole("button", { name: "Remove 2 selected" }));
+    await user.click(screen.getByRole("button", { name: "Remove 2" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/targets/t1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: false }),
+      }),
+    );
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/targets/t2", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: false }),
+    });
+
+    expect(await screen.findByText(/removed 2 targets/i, {}, { timeout: 5000 })).toBeInTheDocument();
+    // Modal closes and selection clears once the bulk action completes.
+    expect(screen.queryByRole("heading", { name: "Remove targets" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+  });
+
+  it("reports a partial-failure summary when one of several removals fails", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]))
+      .mockResolvedValueOnce(jsonResponse({ ...target(), isActive: false }))
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
+
+    renderPage();
+    await screen.findByText("example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByLabelText(/select all visible targets/i));
+    await user.click(screen.getByRole("button", { name: "Remove 2 selected" }));
+    await user.click(screen.getByRole("button", { name: "Remove 2" }));
+
+    const summary = await screen.findByRole("status", {}, { timeout: 5000 });
+    expect(summary.textContent).toMatch(/removed 1 target/i);
+    expect(summary.textContent).toMatch(/1 failed/i);
   });
 });
