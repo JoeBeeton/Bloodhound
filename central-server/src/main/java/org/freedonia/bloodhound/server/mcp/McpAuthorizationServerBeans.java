@@ -1,5 +1,9 @@
 package org.freedonia.bloodhound.server.mcp;
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
@@ -11,12 +15,15 @@ import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.auth.AuthenticatedUserPrincipal;
+import org.freedonia.bloodhound.server.orgs.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.jackson2.SecurityJackson2Modules;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationConsentService;
@@ -26,6 +33,7 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.jackson2.OAuth2AuthorizationServerJackson2Module;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 
 /**
@@ -45,14 +53,37 @@ public class McpAuthorizationServerBeans {
         return new JdbcRegisteredClientRepository(jdbc);
     }
 
+    /**
+     * Deliberately builds its own ObjectMapper rather than reusing the app's regular {@code
+     * ObjectMapper} bean (JacksonConfig's Jackson-2 compatibility bean) - the {@code attributes}
+     * column stores polymorphic Spring Security types (e.g. the original OAuth2AuthorizationRequest
+     * for the authorization_code flow), which need the library's own Jackson modules registered to
+     * deserialize back to their real type rather than a generic LinkedHashMap. Confirmed live: with
+     * the app's plain ObjectMapper, the very first authorization_code token exchange 500'd with
+     * {@code ClassCastException: LinkedHashMap cannot be cast to OAuth2AuthorizationRequest} - this
+     * is Spring Authorization Server's own documented pattern for JDBC-backed authorization storage.
+     */
     @Bean
     public OAuth2AuthorizationService authorizationService(
-            JdbcTemplate jdbc, RegisteredClientRepository registeredClientRepository, ObjectMapper objectMapper) {
+            JdbcTemplate jdbc, RegisteredClientRepository registeredClientRepository) {
+        ObjectMapper oauth2ObjectMapper = new ObjectMapper();
+        oauth2ObjectMapper.registerModules(SecurityJackson2Modules.getModules(getClass().getClassLoader()));
+        oauth2ObjectMapper.registerModule(new OAuth2AuthorizationServerJackson2Module());
+        // AuthenticatedUserPrincipal (this app's own UserDetails implementation, the Authentication
+        // principal formLogin produces) isn't a Spring-Security-recognized type, so the security
+        // modules' deserialization allowlist rejects it by default - Spring's own documented fix
+        // for a custom UserDetails type is a Mixin (see AuthenticatedUserPrincipalMixin below).
+        oauth2ObjectMapper.addMixIn(AuthenticatedUserPrincipal.class, AuthenticatedUserPrincipalMixin.class);
+
         JdbcOAuth2AuthorizationService service = new JdbcOAuth2AuthorizationService(jdbc, registeredClientRepository);
         JdbcOAuth2AuthorizationService.OAuth2AuthorizationRowMapper rowMapper =
                 new JdbcOAuth2AuthorizationService.OAuth2AuthorizationRowMapper(registeredClientRepository);
-        rowMapper.setObjectMapper(objectMapper);
+        rowMapper.setObjectMapper(oauth2ObjectMapper);
         service.setAuthorizationRowMapper(rowMapper);
+        JdbcOAuth2AuthorizationService.OAuth2AuthorizationParametersMapper parametersMapper =
+                new JdbcOAuth2AuthorizationService.OAuth2AuthorizationParametersMapper();
+        parametersMapper.setObjectMapper(oauth2ObjectMapper);
+        service.setAuthorizationParametersMapper(parametersMapper);
         return service;
     }
 
@@ -127,5 +158,30 @@ public class McpAuthorizationServerBeans {
     public JwtDecoder mcpJwtDecoder(KeyPair mcpSigningKeyPair) {
         RSAPublicKey publicKey = (RSAPublicKey) mcpSigningKeyPair.getPublic();
         return NimbusJwtDecoder.withPublicKey(publicKey).build();
+    }
+
+    /**
+     * Field-visibility (not getter/setter) since AuthenticatedUserPrincipal exposes its one field
+     * via a record-style {@code user()} accessor, not a JavaBean {@code getUser()} - simplest to
+     * just let Jackson read/write the private field directly rather than adding a bean-style
+     * getter to a class whose real job is being a UserDetails wrapper, not a Jackson DTO.
+     *
+     * <p>Getter/setter auto-detection is explicitly turned OFF (not just left at field-only): the
+     * UserDetails interface's own derived methods (getAuthorities/getPassword/isEnabled/etc.) would
+     * otherwise still be auto-detected as bean properties on top of the "user" field, and
+     * getAuthorities() in particular - a getter-only, polymorphically-typed
+     * Collection&lt;GrantedAuthority&gt; - fails deserialization outright ("no way to handle typed
+     * deser with setterless yet", confirmed live). None of those are needed on round-trip: the
+     * "user" field alone reconstructs everything the real getters derive from it.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonAutoDetect(
+            fieldVisibility = JsonAutoDetect.Visibility.ANY,
+            getterVisibility = JsonAutoDetect.Visibility.NONE,
+            isGetterVisibility = JsonAutoDetect.Visibility.NONE,
+            setterVisibility = JsonAutoDetect.Visibility.NONE)
+    abstract static class AuthenticatedUserPrincipalMixin {
+        @JsonCreator
+        AuthenticatedUserPrincipalMixin(@JsonProperty("user") User user) {}
     }
 }
