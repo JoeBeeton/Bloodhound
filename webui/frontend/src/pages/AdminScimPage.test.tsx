@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
@@ -83,7 +83,7 @@ function renderPage() {
   );
 }
 
-describe("AdminScimPage - revoke failure surfacing", () => {
+describe("AdminScimPage - revoke confirmation and failure surfacing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -103,19 +103,70 @@ describe("AdminScimPage - revoke failure surfacing", () => {
     expect(screen.queryByText(/failed to revoke/i)).not.toBeInTheDocument();
   });
 
-  it("shows an error message when revoking fails", async () => {
+  it("clicking 'Revoke' opens a confirmation modal without firing the request until confirmed", async () => {
+    // A security/AppSec review found this page was the one credential-revoke flow in the app
+    // that fired straight from the row's onClick with zero confirmation - a stray click on this
+    // table's only per-row control could otherwise silently break an org's live IdP-driven user
+    // provisioning. Mirrors ApiKeysPage's own confirmation modal for the identical shape of risk.
     const user = userEvent.setup();
-    mockedApiFetch
-      .mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] })) // list
-      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // DELETE
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] }));
 
     renderPage();
     await screen.findByText("Okta", {}, { timeout: 5000 });
 
     await user.click(screen.getByRole("button", { name: "Revoke" }));
 
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+    // Only the initial list-load GET has happened so far - no DELETE fired just from opening the modal.
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("Cancel closes the confirmation without revoking anything", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] }));
+
+    renderPage();
+    await screen.findByText("Okta", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirming revokes the token and refetches the list", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] })) // list
+      .mockResolvedValueOnce(jsonResponse(undefined)) // DELETE
+      .mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [] })); // refetch
+
+    renderPage();
+    await screen.findByText("Okta", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    await user.click(screen.getByRole("button", { name: "Revoke token" }));
+
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/orgs/org-1/scim-tokens/t1", { method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument());
+  });
+
+  it("shows an error message inside the modal when revoking fails, and does not close it", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ scimBaseUrl: "https://app/scim/v2", tokens: [token()] })) // list
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // DELETE fails
+
+    renderPage();
+    await screen.findByText("Okta", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    await user.click(screen.getByRole("button", { name: "Revoke token" }));
+
     expect(
       await screen.findByText("Failed to revoke token. Try again.", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument(); // modal stays open
   });
 });
