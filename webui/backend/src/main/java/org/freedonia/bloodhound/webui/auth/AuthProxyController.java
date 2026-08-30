@@ -7,6 +7,8 @@ import org.freedonia.bloodhound.webui.auth.dto.LoginRequest;
 import org.freedonia.bloodhound.webui.auth.dto.RefreshTokenRequest;
 import org.freedonia.bloodhound.webui.auth.dto.SsoExchangeRequest;
 import org.freedonia.bloodhound.webui.auth.dto.UpstreamAuthResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -31,6 +33,7 @@ import org.springframework.web.client.RestClient;
 @RequestMapping("/api/auth")
 public class AuthProxyController {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthProxyController.class);
     private static final String REFRESH_COOKIE = "bh_refresh";
     private static final Duration REFRESH_COOKIE_MAX_AGE = Duration.ofDays(30);
 
@@ -122,8 +125,15 @@ public class AuthProxyController {
                         .body(new RefreshTokenRequest(refreshToken))
                         .retrieve()
                         .toBodilessEntity();
-            } catch (Exception ignored) {
-                // best-effort revoke; the cookie is cleared client-side regardless
+            } catch (Exception e) {
+                // Best-effort revoke; the cookie is cleared client-side regardless (the user must
+                // not stay stuck in a "logged in" UI state over a transient backend failure). A
+                // security review noted this was previously silently swallowed, though: on
+                // failure here the token is NOT actually revoked server-side and stays valid until
+                // its natural expiry even though the user believes they've logged out - logging it
+                // at least makes that residual-session window visible to operators instead of
+                // disappearing entirely.
+                log.warn("failed to revoke refresh token on logout - token remains valid until natural expiry", e);
             }
         }
         return ResponseEntity.noContent()
