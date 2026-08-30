@@ -41,14 +41,47 @@ async function fetchTarget(id: string): Promise<Target> {
   return res.json();
 }
 
-async function fetchFindings(targetId: string, filters: FindingsFilterState): Promise<FindingsPage> {
-  const params = new URLSearchParams({ limit: "500" });
+function findingsFilterParams(filters: FindingsFilterState): URLSearchParams {
+  const params = new URLSearchParams();
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
+  return params;
+}
+
+async function fetchFindings(targetId: string, filters: FindingsFilterState): Promise<FindingsPage> {
+  const params = findingsFilterParams(filters);
+  params.set("limit", "500");
   const res = await apiFetch(`/api/v1/targets/${targetId}/findings?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load findings.");
   const items: Finding[] = await res.json();
   return { items, totalCount: totalCountFromResponse(res, items.length) };
+}
+
+/**
+ * A plain `<a href>` pointed at the export endpoint can't work - it requires the bearer token
+ * apiFetch attaches, which a bare link has no way to send (same constraint ScreenshotThumbnail
+ * hit for images). So this fetches the CSV as a blob and drives the download through a
+ * synthetic, immediately-revoked object URL instead. Respects the currently-applied
+ * severity/category filters - exporting "everything currently visible", not always the
+ * unfiltered full set.
+ */
+async function downloadFindingsCsv(targetId: string, filters: FindingsFilterState): Promise<void> {
+  const params = findingsFilterParams(filters);
+  const res = await apiFetch(`/api/v1/targets/${targetId}/findings/export?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to export findings.");
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : "findings.csv";
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function triggerScan(targetId: string): Promise<{ id: string }> {
@@ -194,6 +227,10 @@ export function TargetDetailPage() {
   const updateScheduleMutation = useMutation({
     mutationFn: (scanCadenceSeconds: number) => updateSchedule(targetId, scanCadenceSeconds),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["target", targetId] }),
+  });
+
+  const exportCsvMutation = useMutation({
+    mutationFn: () => downloadFindingsCsv(targetId, filters),
   });
 
   // Once a run completes, findings/subdomains/score are all stale - refresh them.
@@ -368,15 +405,30 @@ export function TargetDetailPage() {
           <h2 id="findings" className="scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
             Open findings {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
           </h2>
-          {findingsQuery.data && findingsQuery.data.items.length > 1 && (
-            <button
-              onClick={() => setSortByScoreImpact((v) => !v)}
-              className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
-            >
-              Sort: {sortByScoreImpact ? "Score impact ▾" : "Severity ▾"}
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {findingsQuery.data && findingsQuery.data.totalCount > 0 && (
+              <button
+                onClick={() => exportCsvMutation.mutate()}
+                disabled={exportCsvMutation.isPending}
+                className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan disabled:opacity-50"
+                title="Export the currently filtered findings as CSV"
+              >
+                {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
+              </button>
+            )}
+            {findingsQuery.data && findingsQuery.data.items.length > 1 && (
+              <button
+                onClick={() => setSortByScoreImpact((v) => !v)}
+                className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
+              >
+                Sort: {sortByScoreImpact ? "Score impact ▾" : "Severity ▾"}
+              </button>
+            )}
+          </div>
         </div>
+        {exportCsvMutation.isError && (
+          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export findings. Try again.</p>
+        )}
 
         <FindingsFilterBar value={filters} onChange={setFilters} resultCount={findingsQuery.data?.totalCount} />
 

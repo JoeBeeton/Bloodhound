@@ -2,6 +2,8 @@ package org.freedonia.bloodhound.server.findings;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +20,9 @@ import org.freedonia.bloodhound.server.scoring.ScoreImpact;
 import org.freedonia.bloodhound.server.scoring.ScoreImpactCalculator;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -120,6 +124,47 @@ public class FindingController {
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(FindingController::notFound);
         return list(target.id(), severity, category, status, affectedAsset, limit, offset);
+    }
+
+    /**
+     * Deliberately bounded, not truly unbounded - the exact "SELECT f.* with no cap" shape
+     * that {@link FindingRepository#findByTargetDetailed}'s own javadoc documents as a real
+     * production incident (a 36,466-open-finding target, 16MB response, over two minutes with
+     * no result). 50,000 is comfortably above that observed real-world maximum while still
+     * protecting the server from an unbounded response if a target's finding count grows far
+     * past anything seen so far - score-impact computation is skipped entirely here (unlike the
+     * paginated list endpoint), since "what would remediating this improve" is an interactive
+     * prioritization aid, not something a static report row needs.
+     */
+    private static final int MAX_EXPORT_LIMIT = 50_000;
+
+    @GetMapping(value = "/api/v1/targets/{id}/findings/export", produces = "text/csv")
+    public ResponseEntity<byte[]> exportForTarget(
+            @PathVariable UUID id,
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String affectedAsset,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        Target target = targetRepository
+                .findByIdAndOrganization(id, principal.organizationId())
+                .orElseThrow(FindingController::notFound);
+        var rows = findingRepository.findByTargetDetailed(
+                target.id(), severity, category, status, affectedAsset, MAX_EXPORT_LIMIT, 0);
+        List<FindingSummary> summaries = rows.stream()
+                .map(d -> FindingSummary.from(d, parseEvidence(d.finding().evidenceJson()), null))
+                .toList();
+        byte[] csv = FindingCsvWriter.write(summaries).getBytes(StandardCharsets.UTF_8);
+        String filename = sanitizeFilename(target.hostname()) + "-findings-" + LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(csv);
+    }
+
+    /** hostname is user-supplied at target creation - strip anything that could break a quoted Content-Disposition filename. */
+    private static String sanitizeFilename(String hostname) {
+        return hostname.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     @GetMapping("/api/v1/runs/{runId}/findings")
