@@ -119,6 +119,34 @@ public class FindingController {
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 
+    /**
+     * A product review found no way to export findings across more than one target at a time -
+     * even after the org-wide Findings page (GET /api/v1/findings, same filters) shipped, only
+     * the single-target export below did. Same MAX_EXPORT_LIMIT/no-score-impact reasoning as
+     * that endpoint's own javadoc, just against findOpenByOrganization instead of one target's
+     * rows.
+     */
+    @GetMapping(value = "/api/v1/findings/export", produces = "text/csv")
+    public ResponseEntity<byte[]> exportForOrganization(
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String status,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        List<String> severities = severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
+        List<String> categories = category == null || category.isBlank() ? List.of() : List.of(category.split(","));
+        List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
+                principal.organizationId(), severities, categories, status, MAX_EXPORT_LIMIT, 0);
+        List<OrgFindingSummary> summaries = orgFindings.stream()
+                .map(of -> OrgFindingSummary.from(of, parseEvidence(of.finding().evidenceJson()), null))
+                .toList();
+        byte[] csv = FindingCsvWriter.writeOrgWide(summaries).getBytes(StandardCharsets.UTF_8);
+        String filename = "bloodhound-findings-" + LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(csv);
+    }
+
     /** Generous enough that the overwhelming majority of targets see everything in one request, without risking the multi-minute/multi-MB response an unbounded query against a large target produces - confirmed live, 36,466 open findings for one target in this deployment. */
     private static final int DEFAULT_FINDINGS_LIMIT = 200;
 

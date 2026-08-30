@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ErrorState } from "../components/ErrorState";
 import { FindingDetailModal } from "../components/FindingDetailModal";
 import { FindingsFilterBar, type FindingsFilterState } from "../components/FindingsFilterBar";
@@ -17,15 +17,47 @@ interface FindingsPageData {
 
 const PAGE_SIZE = 50;
 
-async function fetchOrgFindings(filters: FindingsFilterState, limit: number): Promise<FindingsPageData> {
-  const params = new URLSearchParams({ limit: String(limit), offset: "0" });
+function orgFindingsFilterParams(filters: FindingsFilterState): URLSearchParams {
+  const params = new URLSearchParams();
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
   if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  return params;
+}
+
+async function fetchOrgFindings(filters: FindingsFilterState, limit: number): Promise<FindingsPageData> {
+  const params = orgFindingsFilterParams(filters);
+  params.set("limit", String(limit));
+  params.set("offset", "0");
   const res = await apiFetch(`/api/v1/findings?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load findings.");
   const items: OrgFinding[] = await res.json();
   return { items, totalCount: totalCountFromResponse(res, items.length) };
+}
+
+/**
+ * A plain `<a href>` can't carry the bearer token the export endpoint requires - same
+ * constraint TargetDetailPage's own downloadFindingsCsv (and ScreenshotThumbnail before it) hit,
+ * fetches the CSV as a blob and drives the download through a synthetic, immediately-revoked
+ * object URL instead. Respects the currently-applied filters, same as the target-scoped export.
+ */
+async function downloadOrgFindingsCsv(filters: FindingsFilterState): Promise<void> {
+  const params = orgFindingsFilterParams(filters);
+  const res = await apiFetch(`/api/v1/findings/export?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to export findings.");
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/);
+  const filename = filenameMatch ? filenameMatch[1] : "findings.csv";
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 const SEVERITY_STYLES: Record<Severity, string> = {
@@ -80,13 +112,32 @@ export function FindingsPage() {
     queryFn: () => fetchOrgFindings(filters, visibleCount),
   });
 
+  const exportCsvMutation = useMutation({
+    mutationFn: () => downloadOrgFindingsCsv(filters),
+  });
+
   return (
     <Shell>
       <div className="w-full max-w-4xl text-left">
-        <div className="mb-2">
-          <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Org-wide</p>
-          <h1 className="font-display text-2xl font-bold text-neon-cyan">Findings</h1>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Org-wide</p>
+            <h1 className="font-display text-2xl font-bold text-neon-cyan">Findings</h1>
+          </div>
+          {query.data && query.data.totalCount > 0 && (
+            <button
+              onClick={() => exportCsvMutation.mutate()}
+              disabled={exportCsvMutation.isPending}
+              className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan disabled:opacity-50"
+              title="Export the currently filtered findings as CSV"
+            >
+              {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
+            </button>
+          )}
         </div>
+        {exportCsvMutation.isError && (
+          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export findings. Try again.</p>
+        )}
 
         <FindingsFilterBar
           value={filters}

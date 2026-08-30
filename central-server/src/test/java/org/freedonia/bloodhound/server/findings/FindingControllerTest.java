@@ -253,4 +253,30 @@ class FindingControllerTest {
 
         verify(findingRepository).findOpenByOrganization(eq(orgId), any(), any(), any(), eq(20), eq(0));
     }
+
+    @Test
+    void exportForOrganization_returnsCsvWithAttachmentHeader_includingTargetColumn() {
+        Finding f = finding(UUID.randomUUID());
+        when(findingRepository.findOpenByOrganization(eq(orgId), any(), any(), any(), eq(50_000), eq(0)))
+                .thenReturn(List.of(new OrgFinding(f, "host.example.com", Instant.now(), "fix it")));
+
+        ResponseEntity<byte[]> response = controller.exportForOrganization(null, null, null, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getContentDisposition().isAttachment()).isTrue();
+        assertThat(response.getHeaders().getContentDisposition().getFilename()).endsWith(".csv");
+        String csv = new String(response.getBody(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("Target,Display ID").contains("host.example.com").contains("bh-test-1");
+    }
+
+    @Test
+    void exportForOrganization_passesFiltersThrough_unboundedByTheDisplayPageLimit() {
+        when(findingRepository.findOpenByOrganization(eq(orgId), eq(List.of("CRITICAL")), eq(List.of("EXPOSURE")), eq("RESOLVED"), eq(50_000), eq(0)))
+                .thenReturn(List.of());
+
+        controller.exportForOrganization("CRITICAL", "EXPOSURE", "RESOLVED", principal);
+
+        verify(findingRepository)
+                .findOpenByOrganization(orgId, List.of("CRITICAL"), List.of("EXPOSURE"), "RESOLVED", 50_000, 0);
+    }
 }

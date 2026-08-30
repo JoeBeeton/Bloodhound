@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.freedonia.bloodhound.server.findings.dto.FindingSummary;
+import org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary;
 
 /**
  * Pure CSV formatting for a list of findings - see FindingController's /export endpoint. No
@@ -27,6 +28,22 @@ public final class FindingCsvWriter {
             "Resolved At",
             "Remediation Advice");
 
+    /** Same as {@link #HEADER}, plus a leading Target column - a row with no target context is meaningless once findings span more than one target. */
+    private static final List<String> ORG_WIDE_HEADER = List.of(
+            "Target",
+            "Display ID",
+            "Severity",
+            "Category",
+            "Rule ID",
+            "Title",
+            "Description",
+            "Affected Asset",
+            "Status",
+            "First Seen",
+            "Last Seen",
+            "Resolved At",
+            "Remediation Advice");
+
     private FindingCsvWriter() {}
 
     public static String write(List<FindingSummary> findings) {
@@ -35,6 +52,36 @@ public final class FindingCsvWriter {
         for (FindingSummary f : findings) {
             sb.append(String.join(
                             ",",
+                            escape(f.displayId()),
+                            escape(f.severity()),
+                            escape(f.category()),
+                            escape(f.ruleId()),
+                            escape(f.title()),
+                            escape(f.description()),
+                            escape(f.affectedAsset()),
+                            escape(f.status()),
+                            escape(formatInstant(f.firstSeenAt())),
+                            escape(formatInstant(f.lastSeenAt())),
+                            escape(formatInstant(f.resolvedAt())),
+                            escape(f.remediationAdvice())))
+                    .append("\r\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * The org-wide equivalent of {@link #write} - a product review found no way to export
+     * findings across more than one target at a time existed anywhere, even after the org-wide
+     * Findings page (which shares this exact filter model) shipped. Same escaping, same column
+     * set, plus the target's hostname up front.
+     */
+    public static String writeOrgWide(List<OrgFindingSummary> findings) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.join(",", ORG_WIDE_HEADER)).append("\r\n");
+        for (OrgFindingSummary f : findings) {
+            sb.append(String.join(
+                            ",",
+                            escape(f.targetHostname()),
                             escape(f.displayId()),
                             escape(f.severity()),
                             escape(f.category()),
