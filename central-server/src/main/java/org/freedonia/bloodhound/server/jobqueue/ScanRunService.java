@@ -252,22 +252,30 @@ public class ScanRunService {
      * single, auditable place rather than being duplicated per module type
      * as Tier 2 grows.
      *
-     * <p>One {@code scan_jobs} row per (module type, host) pair - deliberately
-     * NOT one row per module type carrying every host in its payload, which is
-     * how this used to work and how {@link #insertTier1Jobs} still works.
-     * That approach pinned an entire deep scan's ZAP/port-scan phase to whichever
-     * single worker claimed the one job, no matter how many other workers
-     * sat idle, since the fan-out across hosts happened *inside* that one
-     * job rather than as separate claimable units. Real observed behavior:
-     * 3 workers available, only 1-2 ever busy during a deep scan. Splitting
-     * per host lets the existing FOR UPDATE SKIP LOCKED claim logic - built
-     * exactly for this - spread the work across every idle worker instead.
-     * Tier 1 doesn't need this: its per-host work is seconds, not minutes,
-     * so pinning one worker to one module's whole fan-out isn't the same
-     * kind of waste.
+     * <p>Also queues every Tier 1 job (via {@link #insertTier1Jobs}, the exact same call
+     * {@link #createManualScan} makes) - a product review found "Deep scan" was previously a
+     * Tier-2-*only* run, silently skipping the regular Tier 1 checks (DNS posture, headers, TLS,
+     * WHOIS, breach correlation, etc.) entirely. That's surprising: "deep" reads as "everything a
+     * regular scan does, plus more," not "instead of." A user who only ever deep-scans an
+     * authorized target should never end up with LESS coverage than one who only ever runs
+     * regular scans.
+     *
+     * <p>One {@code scan_jobs} row per (module type, host) pair for the Tier 2 modules -
+     * deliberately NOT one row per module type carrying every host in its payload, which is how
+     * this used to work and how {@link #insertTier1Jobs} still works for Tier 1. That approach
+     * pinned an entire deep scan's ZAP/port-scan phase to whichever single worker claimed the one
+     * job, no matter how many other workers sat idle, since the fan-out across hosts happened
+     * *inside* that one job rather than as separate claimable units. Real observed behavior: 3
+     * workers available, only 1-2 ever busy during a deep scan. Splitting per host lets the
+     * existing FOR UPDATE SKIP LOCKED claim logic - built exactly for this - spread the work
+     * across every idle worker instead. Tier 1 doesn't need this: its per-host work is seconds,
+     * not minutes, so pinning one worker to one module's whole fan-out isn't the same kind of
+     * waste - and it stays exactly 11 extra jobs regardless of subdomain count, a small, bounded
+     * addition to a deep scan's total job count.
      */
     public ScanRun createDeepScan(UUID targetId, UUID triggeredByUserId) {
         ScanRun run = scanRunRepository.insert(targetId, "MANUAL", triggeredByUserId);
+        insertTier1Jobs(run.id(), targetId);
         Target target = targetRepository.findById(targetId).orElseThrow();
         FanoutSelection fanout = buildSubdomainPayload(targetId, TIER2_SUBDOMAIN_CAP);
         List<String> hosts = new java.util.ArrayList<>();
