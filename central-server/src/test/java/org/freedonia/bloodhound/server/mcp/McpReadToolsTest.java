@@ -124,7 +124,7 @@ class McpReadToolsTest {
                 "HIGH", "MISCONFIG", "Missing header", "desc", "{}", "example.com", UUID.randomUUID(), "OPEN",
                 null, Instant.now(), Instant.now());
         FindingDetail detail = new FindingDetail(finding, Instant.now(), "fix it");
-        when(findingRepository.findByTargetDetailed(targetId, null, null, null, null, 200, 0))
+        when(findingRepository.findByTargetDetailed(targetId, null, null, null, null, null, 200, 0))
                 .thenReturn(List.of(detail));
 
         List<FindingSummary> result = tools.listFindingsForTarget(targetId, null, null, null, null, null, null);

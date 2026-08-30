@@ -86,6 +86,7 @@ public class FindingController {
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -94,7 +95,7 @@ public class FindingController {
         int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
         int boundedOffset = Math.max(offset, 0);
         List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
-                principal.organizationId(), severities, categories, status, boundedLimit, boundedOffset);
+                principal.organizationId(), severities, categories, status, search, boundedLimit, boundedOffset);
 
         var ruleWeights = ruleWeightRepository.findAllWeights();
         Map<UUID, Set<UUID>> displayedIdsByTarget = orgFindings.stream()
@@ -115,7 +116,7 @@ public class FindingController {
                 })
                 .toList();
         int totalCount = findingRepository.countOpenByOrganizationFiltered(
-                principal.organizationId(), severities, categories, status);
+                principal.organizationId(), severities, categories, status, search);
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 
@@ -131,11 +132,12 @@ public class FindingController {
             @RequestParam(required = false) String severity,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String search,
             @AuthenticationPrincipal JwtPrincipal principal) {
         List<String> severities = severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
         List<String> categories = category == null || category.isBlank() ? List.of() : List.of(category.split(","));
         List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
-                principal.organizationId(), severities, categories, status, MAX_EXPORT_LIMIT, 0);
+                principal.organizationId(), severities, categories, status, search, MAX_EXPORT_LIMIT, 0);
         List<OrgFindingSummary> summaries = orgFindings.stream()
                 .map(of -> OrgFindingSummary.from(of, parseEvidence(of.finding().evidenceJson()), null))
                 .toList();
@@ -159,13 +161,14 @@ public class FindingController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String affectedAsset,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "" + DEFAULT_FINDINGS_LIMIT) int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
         Target target = targetRepository
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(FindingController::notFound);
-        return list(target.id(), severity, category, status, affectedAsset, limit, offset);
+        return list(target.id(), severity, category, status, affectedAsset, search, limit, offset);
     }
 
     /**
@@ -187,12 +190,13 @@ public class FindingController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String affectedAsset,
+            @RequestParam(required = false) String search,
             @AuthenticationPrincipal JwtPrincipal principal) {
         Target target = targetRepository
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(FindingController::notFound);
         var rows = findingRepository.findByTargetDetailed(
-                target.id(), severity, category, status, affectedAsset, MAX_EXPORT_LIMIT, 0);
+                target.id(), severity, category, status, affectedAsset, search, MAX_EXPORT_LIMIT, 0);
         List<FindingSummary> summaries = rows.stream()
                 .map(d -> FindingSummary.from(d, parseEvidence(d.finding().evidenceJson()), null))
                 .toList();
@@ -216,6 +220,7 @@ public class FindingController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String affectedAsset,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "" + DEFAULT_FINDINGS_LIMIT) int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -223,7 +228,7 @@ public class FindingController {
         Target target = targetRepository
                 .findByIdAndOrganization(run.targetId(), principal.organizationId())
                 .orElseThrow(FindingController::notFound);
-        return list(target.id(), severity, category, status, affectedAsset, limit, offset);
+        return list(target.id(), severity, category, status, affectedAsset, search, limit, offset);
     }
 
     /**
@@ -243,12 +248,19 @@ public class FindingController {
      * being O(n log n) now, not O(n²), makes that affordable even for a large target).
      */
     private ResponseEntity<List<FindingSummary>> list(
-            UUID targetId, String severity, String category, String status, String affectedAsset, int limit, int offset) {
+            UUID targetId,
+            String severity,
+            String category,
+            String status,
+            String affectedAsset,
+            String search,
+            int limit,
+            int offset) {
         int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
         int boundedOffset = Math.max(offset, 0);
 
         var displayed = findingRepository.findByTargetDetailed(
-                targetId, severity, category, status, affectedAsset, boundedLimit, boundedOffset);
+                targetId, severity, category, status, affectedAsset, search, boundedLimit, boundedOffset);
         var allOpen = findingRepository.findOpenForScoring(targetId);
         var ruleWeights = ruleWeightRepository.findAllWeights();
         Set<UUID> displayedIds = displayed.stream().map(d -> d.finding().id()).collect(Collectors.toSet());
@@ -257,7 +269,8 @@ public class FindingController {
         List<FindingSummary> page = displayed.stream()
                 .map(d -> FindingSummary.from(d, parseEvidence(d.finding().evidenceJson()), impacts.get(d.finding().id())))
                 .toList();
-        int totalCount = findingRepository.countByTargetFiltered(targetId, severity, category, status, affectedAsset);
+        int totalCount =
+                findingRepository.countByTargetFiltered(targetId, severity, category, status, affectedAsset, search);
 
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }

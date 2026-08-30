@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { FINDING_CATEGORIES, SEVERITIES, type FindingCategory, type Severity } from "../lib/types";
 
 const SEVERITY_ACTIVE_STYLES: Record<Severity, string> = {
@@ -29,6 +30,8 @@ export interface FindingsFilterState {
   categories: FindingCategory[];
   /** Omitted/undefined means OPEN, matching the server's own default - see FindingRepository#findByTargetDetailed. */
   status?: "OPEN" | "RESOLVED";
+  /** Case-insensitive substring match against title OR description (server-side, see FindingRepository#appendSearchClause) - omitted/blank means no search filter. */
+  search?: string;
 }
 
 function toggle<T>(list: T[], value: T): T[] {
@@ -51,11 +54,43 @@ export function FindingsFilterBar({
   onChange: (next: FindingsFilterState) => void;
   resultCount: number | undefined;
 }) {
-  const hasFilters = value.severities.length > 0 || value.categories.length > 0;
+  const hasFilters = value.severities.length > 0 || value.categories.length > 0 || !!value.search;
   const status = value.status ?? "OPEN";
+
+  // Local, debounced copy of the search text - value.search is server-driving (every callsite's
+  // onChange triggers a real network request), so typing character-by-character straight through
+  // onChange would fire a request per keystroke, same reasoning as SubdomainsPage's own hostname
+  // filter. Synced back from value.search (not just initialized once) so an external reset - e.g.
+  // "Clear filters" below - is reflected in the input, not just in the parent's own state.
+  const [searchInput, setSearchInput] = useState(value.search ?? "");
+  useEffect(() => {
+    setSearchInput(value.search ?? "");
+  }, [value.search]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== (value.search ?? "")) {
+        onChange({ ...value, search: searchInput || undefined });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
 
   return (
     <div className="mb-4 flex flex-col gap-2 rounded-lg border border-neon-cyan/10 bg-panel/40 p-3">
+      <div>
+        <label htmlFor="findings-search" className="sr-only">
+          Search findings by keyword
+        </label>
+        <input
+          id="findings-search"
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search title or description…"
+          className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-muted focus:border-neon-cyan"
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Status</span>
         {(["OPEN", "RESOLVED"] as const).map((s) => (
@@ -116,8 +151,9 @@ export function FindingsFilterBar({
             // Preserves status - it's the primary Open/Resolved view mode, not an incidental
             // narrowing filter, so "Clear filters" while browsing Resolved findings must not
             // silently snap the view back to Open too (a real bug this fixed: the original
-            // version dropped status entirely here, defaulting it back to OPEN).
-            onClick={() => onChange({ severities: [], categories: [], status: value.status })}
+            // version dropped status entirely here, defaulting it back to OPEN). search IS
+            // cleared here, same as severities/categories - it's a narrowing filter like them.
+            onClick={() => onChange({ severities: [], categories: [], status: value.status, search: undefined })}
             className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta transition hover:text-neon-magenta/70"
           >
             Clear filters ✕

@@ -22,6 +22,7 @@ function orgFindingsFilterParams(filters: FindingsFilterState): URLSearchParams 
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
   if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  if (filters.search) params.set("search", filters.search);
   return params;
 }
 
@@ -90,6 +91,7 @@ export function FindingsPage() {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
     status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
+    search: searchParams.get("search") ?? undefined,
   };
   const setFilters = (next: FindingsFilterState) => {
     setSearchParams(
@@ -98,6 +100,7 @@ export function FindingsPage() {
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
         next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
+        next.search ? params.set("search", next.search) : params.delete("search");
         return params;
       },
       { replace: true },
@@ -152,7 +155,7 @@ export function FindingsPage() {
         {query.isError && <ErrorState message="Failed to load findings." onRetry={() => query.refetch()} />}
         {query.data?.totalCount === 0 && (
           <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-neon-cyan">
-            {filters.severities.length > 0 || filters.categories.length > 0
+            {filters.severities.length > 0 || filters.categories.length > 0 || filters.search
               ? `No ${filters.status === "RESOLVED" ? "resolved" : "open"} findings match the selected filters.`
               : filters.status === "RESOLVED"
                 ? "Nothing resolved yet."
