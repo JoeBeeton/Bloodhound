@@ -109,8 +109,13 @@ export function AdminUsersPage() {
         {usersQuery.isError && <ErrorState message="Failed to load users." onRetry={() => usersQuery.refetch()} />}
 
         {usersQuery.data && (
-          <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
-            <div className="grid grid-cols-[1fr_1fr_140px_140px_70px_120px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
+          // Six columns, four of them fixed-width, comfortably exceed any narrow viewport - this
+          // is genuinely tabular data that can't reflow into a single column without losing its
+          // structure, so the standard fix is letting THIS box scroll horizontally on its own
+          // (confirmed live: previously the whole page did, pushing content off-screen with no
+          // visible scrollbar to find it), not trying to force six columns into 375px.
+          <div className="overflow-x-auto rounded-lg border border-neon-cyan/20 bg-panel/60">
+            <div className="grid min-w-[720px] grid-cols-[1fr_1fr_140px_140px_70px_120px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
               <span>Email</span>
               <span>Display name</span>
               <span>Role</span>
@@ -121,7 +126,7 @@ export function AdminUsersPage() {
             {usersQuery.data.map((u, i) => (
               <div
                 key={u.id}
-                className={`grid grid-cols-[1fr_1fr_140px_140px_70px_120px] items-center gap-2 px-4 py-2.5 ${
+                className={`grid min-w-[720px] grid-cols-[1fr_1fr_140px_140px_70px_120px] items-center gap-2 px-4 py-2.5 ${
                   i > 0 ? "border-t border-neon-cyan/10" : ""
                 }`}
               >

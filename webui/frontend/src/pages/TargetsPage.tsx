@@ -355,7 +355,11 @@ function TargetRow({
 
   return (
     <div
-      className={`flex items-center justify-between rounded-lg border bg-panel/60 px-4 py-3 ${
+      // flex-wrap + gap-y-2: a real 375px-viewport screenshot confirmed the hostname block and
+      // the action-button cluster together exceeded the viewport with no way to wrap, pushing
+      // the whole page ~35px past its own width. Letting this row wrap (button cluster drops to
+      // its own line under the hostname on narrow screens) fixes it without hiding any control.
+      className={`flex flex-wrap items-center justify-between gap-y-2 rounded-lg border bg-panel/60 px-4 py-3 ${
         target.isActive ? "border-neon-cyan/10" : "border-slate-700/60 opacity-70"
       }`}
     >
