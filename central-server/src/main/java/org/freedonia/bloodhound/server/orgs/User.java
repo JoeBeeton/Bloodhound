@@ -12,4 +12,7 @@ public record User(
         String identitySource,
         String role,
         String status,
-        Instant createdAt) {}
+        Instant createdAt,
+        /** Per-user MCP kill switch, on top of the org-wide one (see Organization#mcpEnabled) - an
+         * admin can disable MCP access for specific users without affecting the rest of the org. */
+        boolean mcpEnabled) {}

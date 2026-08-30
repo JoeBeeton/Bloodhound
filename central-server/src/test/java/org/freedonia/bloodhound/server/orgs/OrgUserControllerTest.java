@@ -36,7 +36,7 @@ class OrgUserControllerTest {
     private final JwtPrincipal admin = new JwtPrincipal(adminUserId, orgId, "ADMIN", "admin@example.com");
 
     private User user(UUID id, UUID org, String role, String status) {
-        return new User(id, org, "u@example.com", "Name", "hash", "LOCAL", role, status, Instant.now());
+        return new User(id, org, "u@example.com", "Name", "hash", "LOCAL", role, status, Instant.now(), true);
     }
 
     @Test

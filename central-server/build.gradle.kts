@@ -6,6 +6,9 @@ plugins {
 dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:4.1.1")
+        // Spring AI's MCP server support (spring-ai-starter-mcp-server-webmvc below) needs its
+        // own BOM alongside Boot's - Spring AI 2.0.x is the branch that pairs with Boot 4.0/4.1.
+        mavenBom("org.springframework.ai:spring-ai-bom:2.0.1")
     }
 }
 
@@ -35,6 +38,16 @@ dependencies {
     // 3.x line specifically: springdoc-openapi's major version tracks Spring Boot's
     // major version in lockstep, so this must move in step with the Boot 4 bump above.
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
+
+    // MCP server (Model Context Protocol) so AI agents can read findings/scan data on a user's
+    // behalf, OAuth2-authenticated - see config.McpSecurityConfig. spring-ai-community/mcp-security
+    // (Apache-2.0, community-maintained - not an official Spring project, but built specifically
+    // for the MCP authorization spec on top of Spring Authorization Server) provides the
+    // authorization-server (client registration, consent, token issuance) and resource-server
+    // (bearer-token validation for the actual MCP endpoint) auto-configuration.
+    implementation("org.springframework.ai:spring-ai-starter-mcp-server-webmvc")
+    implementation("org.springaicommunity:mcp-server-security-spring-boot:0.1.14")
+    implementation("org.springaicommunity:mcp-authorization-server-spring-boot:0.1.14")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

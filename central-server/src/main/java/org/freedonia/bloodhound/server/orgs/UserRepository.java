@@ -20,7 +20,8 @@ public class UserRepository {
             rs.getString("identity_source"),
             rs.getString("role"),
             rs.getString("status"),
-            rs.getTimestamp("created_at").toInstant());
+            rs.getTimestamp("created_at").toInstant(),
+            rs.getBoolean("mcp_enabled"));
 
     private final JdbcTemplate jdbc;
 
@@ -136,6 +137,11 @@ public class UserRepository {
 
     public void touchLastLogin(UUID id) {
         jdbc.update("UPDATE users SET last_login_at = now() WHERE id = ?", id);
+    }
+
+    /** Per-user MCP kill switch - see User#mcpEnabled and McpAccessGuard. */
+    public void setMcpEnabled(UUID id, boolean enabled) {
+        jdbc.update("UPDATE users SET mcp_enabled = ?, updated_at = now() WHERE id = ?", enabled, id);
     }
 
     public Optional<User> findByOrgIdentitySourceExternalId(UUID organizationId, String identitySource, String externalId) {

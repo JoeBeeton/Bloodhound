@@ -30,7 +30,7 @@ class AuthenticationServiceTest {
             authenticationManager, userRepository, refreshTokenRepository, jwtService, loginAttemptLimiter, 30);
 
     private User user(UUID id, String status) {
-        return new User(id, UUID.randomUUID(), "u@example.com", "Name", "hash", "LOCAL", "VIEWER", status, Instant.now());
+        return new User(id, UUID.randomUUID(), "u@example.com", "Name", "hash", "LOCAL", "VIEWER", status, Instant.now(), true);
     }
 
     @Test
