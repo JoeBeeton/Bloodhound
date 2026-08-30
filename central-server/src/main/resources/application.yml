@@ -32,6 +32,11 @@ bloodhound:
     signing-key: ${JWT_SIGNING_KEY}
     access-token-ttl-minutes: ${JWT_ACCESS_TOKEN_TTL_MINUTES:15}
     refresh-token-ttl-days: ${JWT_REFRESH_TOKEN_TTL_DAYS:30}
+    # Absolute ceiling on a session's lifetime, independent of activity - the sliding TTL above
+    # resets on every login/refresh, so without this a session used at least once per TTL window
+    # never naturally expires. Deliberately longer than the sliding TTL so it doesn't degrade
+    # normal usage, just caps indefinite extension.
+    refresh-token-absolute-max-days: ${JWT_REFRESH_TOKEN_ABSOLUTE_MAX_DAYS:90}
   bootstrap:
     org-name: ${BOOTSTRAP_ORG_NAME:}
     org-slug: ${BOOTSTRAP_ORG_SLUG:}

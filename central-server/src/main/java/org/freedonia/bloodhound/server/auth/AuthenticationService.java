@@ -30,6 +30,7 @@ public class AuthenticationService {
     private final JwtService jwtService;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final Duration refreshTokenTtl;
+    private final Duration absoluteMaxSessionDuration;
 
     public AuthenticationService(
             AuthenticationManager authenticationManager,
@@ -37,13 +38,15 @@ public class AuthenticationService {
             RefreshTokenRepository refreshTokenRepository,
             JwtService jwtService,
             LoginAttemptLimiter loginAttemptLimiter,
-            @Value("${bloodhound.jwt.refresh-token-ttl-days:30}") long refreshTokenTtlDays) {
+            @Value("${bloodhound.jwt.refresh-token-ttl-days:30}") long refreshTokenTtlDays,
+            @Value("${bloodhound.jwt.refresh-token-absolute-max-days:90}") long absoluteMaxSessionDays) {
         this.authenticationManager = authenticationManager;
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtService = jwtService;
         this.loginAttemptLimiter = loginAttemptLimiter;
         this.refreshTokenTtl = Duration.ofDays(refreshTokenTtlDays);
+        this.absoluteMaxSessionDuration = Duration.ofDays(absoluteMaxSessionDays);
     }
 
     public AuthResult login(String email, String password) {
@@ -61,7 +64,7 @@ public class AuthenticationService {
         loginAttemptLimiter.recordSuccess(email);
         User user = principal.user();
         userRepository.touchLastLogin(user.id());
-        return issueTokens(user);
+        return issueTokens(user, Instant.now());
     }
 
     public AuthResult refresh(String rawRefreshToken) {
@@ -83,6 +86,16 @@ public class AuthenticationService {
         if (existing.expiresAt().isBefore(Instant.now())) {
             throw new InvalidRefreshTokenException();
         }
+        // A security review found the sliding 30-day TTL (reset on every login AND every refresh)
+        // had no ceiling independent of activity - a token used at least once a month never
+        // naturally expired. sessionStartedAt is fixed at the lineage's true origin (propagated
+        // unchanged through every rotation, see issueTokens below), so this check holds
+        // regardless of how recently the token was last used - forcing a real re-login past the
+        // absolute cap even for an actively-used session.
+        if (existing.sessionStartedAt().plus(absoluteMaxSessionDuration).isBefore(Instant.now())) {
+            refreshTokenRepository.revokeLineageFrom(existing.id());
+            throw new InvalidRefreshTokenException();
+        }
 
         User user = userRepository
                 .findById(existing.userId())
@@ -102,7 +115,7 @@ public class AuthenticationService {
             refreshTokenRepository.revokeLineageFrom(existing.id());
             throw new InvalidRefreshTokenException();
         }
-        AuthResult result = issueTokens(user);
+        AuthResult result = issueTokens(user, existing.sessionStartedAt());
         refreshTokenRepository.linkReplacement(existing.id(), result.refreshTokenId());
         return result;
     }
@@ -111,8 +124,16 @@ public class AuthenticationService {
         refreshTokenRepository.findActive(hash(rawRefreshToken)).ifPresent(t -> refreshTokenRepository.revoke(t.id()));
     }
 
-    /** Public so the SAML success handler (auth.sso) can mint real tokens the same way local login does. */
+    /**
+     * Public so the SAML success handler (auth.sso) can mint real tokens the same way local login
+     * does - always a fresh session (sessionStartedAt = now()), since SAML doesn't have a
+     * rotation concept of its own to propagate a lineage origin through.
+     */
     public AuthResult issueTokens(User user) {
+        return issueTokens(user, Instant.now());
+    }
+
+    private AuthResult issueTokens(User user, Instant sessionStartedAt) {
         String accessToken = jwtService.issueAccessToken(user.id(), user.organizationId(), user.role(), user.email());
 
         byte[] randomBytes = new byte[32];
@@ -120,7 +141,11 @@ public class AuthenticationService {
         String rawRefreshToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
         UUID refreshTokenId = UUID.randomUUID();
         refreshTokenRepository.insert(
-                refreshTokenId, user.id(), hash(rawRefreshToken), Timestamp.from(Instant.now().plus(refreshTokenTtl)));
+                refreshTokenId,
+                user.id(),
+                hash(rawRefreshToken),
+                Timestamp.from(Instant.now().plus(refreshTokenTtl)),
+                Timestamp.from(sessionStartedAt));
 
         return new AuthResult(
                 accessToken,

@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.auth;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
@@ -45,6 +46,19 @@ public class LoginAttemptLimiter {
 
     public void recordSuccess(String email) {
         byEmail.remove(key(email));
+    }
+
+    /**
+     * A security review found that {@code byEmail} only ever shrinks on success - a failed
+     * attempt against a made-up email adds an entry that nothing ever removes otherwise.
+     * /api/v1/auth/login is unauthenticated, so an attacker submitting failed logins against many
+     * distinct/synthetic email addresses grows this in-memory map without bound - eventual
+     * heap-exhaustion DoS. Sweeping expired-window entries on a timer bounds it to roughly
+     * "distinct emails that failed within the last window", not "every distinct email ever tried".
+     */
+    @Scheduled(fixedRate = 15, initialDelay = 15, timeUnit = java.util.concurrent.TimeUnit.MINUTES)
+    void evictExpiredEntries() {
+        byEmail.values().removeIf(Attempts::windowExpired);
     }
 
     private static String key(String email) {
