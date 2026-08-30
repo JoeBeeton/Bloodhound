@@ -2,6 +2,9 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../lib/apiClient";
 import { Modal } from "./Modal";
+import { PasswordInput } from "./PasswordInput";
+
+const MIN_PASSWORD_LENGTH = 8;
 
 async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   const res = await apiFetch("/api/v1/users/me/password", {
@@ -59,14 +62,21 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
     },
   });
 
+  const newPasswordLongEnough = newPassword.length >= MIN_PASSWORD_LENGTH;
+  const passwordsMatch = confirmPassword.length > 0 && newPassword === confirmPassword;
+  // Belt-and-suspenders with the disabled state below (which is what actually stops a submit in
+  // practice) - a real backend rule, not just UI polish, so it's re-checked here too rather than
+  // trusted to the disabled attribute alone.
+  const canSubmit = currentPassword.length > 0 && newPasswordLongEnough && passwordsMatch;
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword.length < 8) {
-      setError("New password must be at least 8 characters.");
+    if (!newPasswordLongEnough) {
+      setError(`New password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
-    if (newPassword !== confirmPassword) {
+    if (!passwordsMatch) {
       setError("Passwords don't match.");
       return;
     }
@@ -90,52 +100,51 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Change password" onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <PasswordInput
+          id="changepw-current"
+          label="Current password"
+          required
+          autoComplete="current-password"
+          value={currentPassword}
+          onChange={setCurrentPassword}
+        />
         <div>
-          <label htmlFor="changepw-current" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Current password
-          </label>
-          <input
-            id="changepw-current"
-            required
-            type="password"
-            autoComplete="current-password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
-          />
-        </div>
-        <div>
-          <label htmlFor="changepw-new" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            New password
-          </label>
-          <input
+          <PasswordInput
             id="changepw-new"
+            label="New password"
             required
-            type="password"
             autoComplete="new-password"
             value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+            onChange={setNewPassword}
           />
+          {/* Live, not just on submit - shown as soon as there's anything typed, so a mistyped
+              password reveals itself before the user has even reached the confirm field, rather
+              than only after a rejected submit. */}
+          {newPassword.length > 0 && (
+            <p className={`mt-1 font-mono text-[11px] ${newPasswordLongEnough ? "text-neon-cyan" : "text-slate-500"}`}>
+              {newPasswordLongEnough ? "✓" : "○"} At least {MIN_PASSWORD_LENGTH} characters
+            </p>
+          )}
         </div>
         <div>
-          <label htmlFor="changepw-confirm" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Confirm new password
-          </label>
-          <input
+          <PasswordInput
             id="changepw-confirm"
+            label="Confirm new password"
             required
-            type="password"
             autoComplete="new-password"
             value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+            onChange={setConfirmPassword}
           />
+          {confirmPassword.length > 0 && (
+            <p className={`mt-1 font-mono text-[11px] ${passwordsMatch ? "text-neon-cyan" : "text-severity-high"}`}>
+              {passwordsMatch ? "✓ Passwords match" : "✕ Passwords don't match"}
+            </p>
+          )}
         </div>
         {error && <p className="font-mono text-xs text-severity-critical">{error}</p>}
         <button
           type="submit"
-          disabled={mutate.isPending}
+          disabled={mutate.isPending || !canSubmit}
           className="mt-1 rounded bg-neon-magenta/90 px-4 py-2 font-mono text-sm font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
         >
           {mutate.isPending ? "Changing…" : "Change password"}
