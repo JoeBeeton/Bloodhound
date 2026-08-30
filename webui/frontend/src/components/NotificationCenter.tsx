@@ -117,10 +117,17 @@ export function NotificationCenter() {
 
   return (
     <div className="relative">
+      {/* relative z-50 (matching the panel's own z-50, above the backdrop's z-40): found live
+       * while verifying aria-expanded - once open, the full-screen backdrop below sat on top of
+       * this button in paint order (later in the DOM, with its own z-index), silently
+       * swallowing a second click meant to close the panel the same way the first one opened
+       * it. Escape and clicking elsewhere both still worked, but "click the bell again" - the
+       * one interaction most people would actually try first - didn't. */}
       <button
         onClick={() => setPanelOpen((v) => !v)}
-        className="relative font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
+        className="relative z-50 font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
         aria-label="Notifications"
+        aria-expanded={panelOpen}
       >
         <span aria-hidden>🔔</span>
         {unreadCount > 0 && (
@@ -133,7 +140,11 @@ export function NotificationCenter() {
       {panelOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setPanelOpen(false)} aria-hidden />
-          <div className="absolute right-0 top-8 z-50 w-96 max-w-[90vw] rounded-lg border border-neon-cyan/20 bg-panel shadow-glow-cyan">
+          <div
+            role="region"
+            aria-label="Notifications"
+            className="absolute right-0 top-8 z-50 w-96 max-w-[90vw] rounded-lg border border-neon-cyan/20 bg-panel shadow-glow-cyan"
+          >
             <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
               <span className="font-mono text-xs uppercase tracking-widest text-neon-cyan">Notifications</span>
               {unreadCount > 0 && (
