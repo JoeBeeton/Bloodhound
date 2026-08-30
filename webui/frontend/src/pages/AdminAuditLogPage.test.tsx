@@ -1,0 +1,154 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "../lib/apiClient";
+import { AdminAuditLogPage } from "./AdminAuditLogPage";
+
+vi.mock("../lib/apiClient", async () => {
+  const actual = await vi.importActual<typeof import("../lib/apiClient")>("../lib/apiClient");
+  return { ...actual, apiFetch: vi.fn() };
+});
+vi.mock("../components/Shell", () => ({ Shell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+vi.mock("../components/AdminSubNav", () => ({ AdminSubNav: () => <div /> }));
+vi.mock("../lib/useAuth", () => ({
+  useAuth: () => ({ status: "authenticated", user: { organizationId: "org-1", role: "ADMIN" } }),
+}));
+
+function jsonResponse(body: unknown, init: { ok?: boolean; status?: number; totalCount?: number } = {}) {
+  return {
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    headers: new Headers(init.totalCount !== undefined ? { "X-Total-Count": String(init.totalCount) } : {}),
+    json: async () => body,
+  } as Response;
+}
+
+function entry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "e1",
+    actorUserId: "u1",
+    actorEmail: "alice@example.com",
+    action: "TARGET_DELETED",
+    targetType: "TARGET",
+    targetId: "t1",
+    detail: "hostname=example.com",
+    createdAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <AdminAuditLogPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const mockedApiFetch = vi.mocked(apiFetch);
+
+describe("AdminAuditLogPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("loads without any filter params on first render", async () => {
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 }));
+
+    renderPage();
+
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/orgs/org-1/audit-log?limit=50&offset=0");
+  });
+
+  it("debounces the actor-email search and refetches with the actorEmail param", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // initial load
+      .mockResolvedValueOnce(jsonResponse([entry({ actorEmail: "bob@example.com" })], { totalCount: 1 })); // after search
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    await user.type(screen.getByPlaceholderText(/filter by actor email/i), "bob");
+
+    await waitFor(
+      () =>
+        expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/orgs/org-1/audit-log?limit=50&offset=0&actorEmail=bob"),
+      { timeout: 5000 },
+    );
+    expect(await screen.findByText("bob@example.com", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it("clicking an action chip filters by that action and toggling it again clears it", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // initial load
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })) // filtered by action
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 })); // toggled back off
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    const chip = screen.getByRole("button", { name: "Target deleted" });
+    expect(chip).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(chip);
+    await waitFor(
+      () =>
+        expect(mockedApiFetch).toHaveBeenCalledWith(
+          "/api/v1/orgs/org-1/audit-log?limit=50&offset=0&action=TARGET_DELETED",
+        ),
+      { timeout: 5000 },
+    );
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(chip);
+    await waitFor(() => expect(chip).toHaveAttribute("aria-pressed", "false"));
+    expect(mockedApiFetch).toHaveBeenLastCalledWith("/api/v1/orgs/org-1/audit-log?limit=50&offset=0");
+  });
+
+  it("shows 'Clear filters' only once a filter is active, and clearing resets both", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 }))
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 }))
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 }));
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+    expect(screen.queryByText("Clear filters ✕")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Target deleted" }));
+    await waitFor(() => expect(screen.getByText("Clear filters ✕")).toBeInTheDocument());
+
+    await user.click(screen.getByText("Clear filters ✕"));
+    await waitFor(() => expect(screen.queryByText("Clear filters ✕")).not.toBeInTheDocument());
+    expect(mockedApiFetch).toHaveBeenLastCalledWith("/api/v1/orgs/org-1/audit-log?limit=50&offset=0");
+  });
+
+  it("shows the filtered empty state distinctly from the no-history-at-all empty state", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([entry()], { totalCount: 1 }))
+      .mockResolvedValueOnce(jsonResponse([], { totalCount: 0 }));
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Rule enabled" }));
+
+    expect(
+      await screen.findByText("No audited actions match the selected filters.", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  });
+});
