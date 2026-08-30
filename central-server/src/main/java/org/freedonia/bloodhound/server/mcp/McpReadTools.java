@@ -216,13 +216,22 @@ public class McpReadTools {
      * SecurityContext's Authentication principal - org_id is one of the custom claims
      * McpTokenCustomizer adds to every access token at issuance, mirroring what JwtPrincipal
      * carries for the ordinary session-JWT auth path every controller uses.
+     *
+     * <p>McpEnabledGuardFilter already rejects a token with no org_id claim before any tool method
+     * runs, so in practice this can't be reached without one - but a security review flagged the
+     * original UUID.fromString(null) here as an unhandled-NPE-on-500 trap rather than a clean
+     * 401, so this doesn't rely purely on filter-ordering to stay safe.
      */
     private UUID currentOrganizationId() {
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         if (!(principal instanceof Jwt jwt)) {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED);
         }
-        return UUID.fromString(jwt.getClaimAsString("org_id"));
+        String orgId = jwt.getClaimAsString("org_id");
+        if (orgId == null) {
+            throw new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        return UUID.fromString(orgId);
     }
 
     private Map<String, Object> parseEvidence(String json) {

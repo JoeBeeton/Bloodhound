@@ -46,8 +46,21 @@ public class McpEnabledGuardFilter extends OncePerRequestFilter {
             return;
         }
 
-        UUID userId = UUID.fromString(jwt.getClaimAsString("user_id"));
-        UUID orgId = UUID.fromString(jwt.getClaimAsString("org_id"));
+        // user_id/org_id are only added by McpTokenCustomizer for a real human-authenticated
+        // token (an AuthenticatedUserPrincipal) - a token minted some other way (e.g. a
+        // client_credentials grant, which this AS's metadata advertises as supported even though
+        // no code here issues one deliberately) would have neither claim. A security review found
+        // this previously reached UUID.fromString(null), an unhandled NPE surfacing as a bare 500 -
+        // fails closed either way (no data reached the caller), but a deliberate 403 is the correct
+        // response for "this token isn't valid for MCP access", not an unhandled exception.
+        String userIdClaim = jwt.getClaimAsString("user_id");
+        String orgIdClaim = jwt.getClaimAsString("org_id");
+        if (userIdClaim == null || orgIdClaim == null) {
+            respondDisabled(response);
+            return;
+        }
+        UUID userId = UUID.fromString(userIdClaim);
+        UUID orgId = UUID.fromString(orgIdClaim);
 
         Optional<Organization> org = organizationRepository.findById(orgId);
         Optional<User> user = userRepository.findById(userId);
@@ -55,14 +68,18 @@ public class McpEnabledGuardFilter extends OncePerRequestFilter {
         boolean userAllows = user.map(User::mcpEnabled).orElse(false);
 
         if (!orgAllows || !userAllows) {
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter()
-                    .write("{\"error\":\"mcp_disabled\",\"error_description\":"
-                            + "\"The MCP server is disabled for this organization or user.\"}");
+            respondDisabled(response);
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void respondDisabled(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("application/json");
+        response.getWriter()
+                .write("{\"error\":\"mcp_disabled\",\"error_description\":"
+                        + "\"The MCP server is disabled for this organization or user.\"}");
     }
 }
