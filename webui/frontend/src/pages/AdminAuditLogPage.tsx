@@ -90,8 +90,11 @@ export function AdminAuditLogPage() {
         )}
 
         {query.data && query.data.items.length > 0 && (
-          <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
-            <div className="grid grid-cols-[150px_1fr_160px_1fr] gap-3 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
+          // Four columns, two fixed-width, comfortably exceed a narrow viewport - lets this box
+          // scroll horizontally on its own rather than the whole page (see AdminUsersPage for the
+          // same fix and the live-confirmed overflow this closes).
+          <div className="overflow-x-auto rounded-lg border border-neon-cyan/20 bg-panel/60">
+            <div className="grid min-w-[640px] grid-cols-[150px_1fr_160px_1fr] gap-3 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
               <span>When</span>
               <span>Actor</span>
               <span>Action</span>
@@ -100,7 +103,7 @@ export function AdminAuditLogPage() {
             {query.data.items.map((entry, i) => (
               <div
                 key={entry.id}
-                className={`grid grid-cols-[150px_1fr_160px_1fr] items-start gap-3 px-4 py-2.5 ${
+                className={`grid min-w-[640px] grid-cols-[150px_1fr_160px_1fr] items-start gap-3 px-4 py-2.5 ${
                   i > 0 ? "border-t border-neon-cyan/10" : ""
                 }`}
               >
