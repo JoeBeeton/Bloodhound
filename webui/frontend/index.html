@@ -9,14 +9,14 @@
          (16/32/48px) in public/, served as a plain same-origin static file so
          it fits the existing `img-src 'self'` CSP with no change needed there. -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <!-- Google Fonts: purely additive — safe monospace/sans fallback stacks
-         are configured in tailwind.config.js if this is unreachable. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@600;800&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts are self-hosted via @fontsource (see main.tsx) rather than loaded
+         from Google's CDN: SecurityHeadersFilter's CSP is deliberately
+         same-origin-only (style-src/font-src 'self') and, until this fix,
+         silently blocked this exact CDN link - every browser had been
+         falling back to system fonts, unnoticed, since the CSP shipped.
+         Self-hosting was chosen over relaxing the CSP to trust a third-party
+         host: it keeps the "no external hosts anywhere" policy genuinely
+         true, and stops every visitor's IP being sent to Google on load. -->
   </head>
   <body>
     <div id="root"></div>
