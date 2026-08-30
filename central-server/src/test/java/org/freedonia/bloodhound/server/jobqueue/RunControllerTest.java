@@ -22,8 +22,9 @@ class RunControllerTest {
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
     private final ScanJobAttemptRepository scanJobAttemptRepository = mock(ScanJobAttemptRepository.class);
     private final TargetRepository targetRepository = mock(TargetRepository.class);
-    private final RunController controller =
-            new RunController(scanRunRepository, scanJobRepository, scanJobAttemptRepository, targetRepository);
+    private final ScanRunService scanRunService = mock(ScanRunService.class);
+    private final RunController controller = new RunController(
+            scanRunRepository, scanJobRepository, scanJobAttemptRepository, targetRepository, scanRunService);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -92,5 +93,44 @@ class RunControllerTest {
         ScanRunDetail detail = controller.get(runId, principal);
 
         assertThat(detail.jobs().get(0).host()).isNull();
+    }
+
+    private void stubOwnedRun(String status) {
+        ScanRun run = new ScanRun(runId, targetId, "MANUAL", null, Instant.now(), null, status);
+        when(scanRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        Target target =
+                new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target));
+        when(scanJobRepository.findByScanRunId(runId)).thenReturn(List.of());
+    }
+
+    @Test
+    void cancel_runNotFound_notFound() {
+        when(scanRunRepository.findById(runId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.cancel(runId, principal)).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void cancel_runningRun_callsServiceAndReturnsRefreshedDetail() {
+        stubOwnedRun("RUNNING");
+        when(scanRunService.cancel(runId)).thenReturn(true);
+
+        ScanRunDetail detail = controller.cancel(runId, principal);
+
+        org.mockito.Mockito.verify(scanRunService).cancel(runId);
+        assertThat(detail.id()).isEqualTo(runId);
+    }
+
+    @Test
+    void cancel_alreadyTerminalRun_conflict_serviceNeverCalled() {
+        stubOwnedRun("COMPLETE");
+
+        assertThatThrownBy(() -> controller.cancel(runId, principal)).isInstanceOf(ResponseStatusException.class);
+        org.mockito.Mockito.verify(scanRunService, org.mockito.Mockito.never()).cancel(any());
+    }
+
+    private static UUID any() {
+        return org.mockito.ArgumentMatchers.any();
     }
 }

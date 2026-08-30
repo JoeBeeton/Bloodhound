@@ -467,6 +467,38 @@ public class ScanRunService {
         }
     }
 
+    /**
+     * Stops a RUNNING scan from progressing further - a product review found CANCELLED already
+     * treated as a full-fledged terminal status everywhere (ScanEtaEstimator, this class's own
+     * {@link #isTerminal}, the Scans page's status filter/badge), but nothing anywhere could ever
+     * actually produce one - there was no way for a user to cancel a scan they'd started by
+     * mistake or that was stuck.
+     *
+     * <p>Only PENDING/CLAIMED/RUNNING jobs move to CANCELLED (see {@link
+     * ScanJobRepository#cancelNonTerminalForRun}) - a job a worker already claimed keeps running
+     * to completion rather than being forcibly interrupted (this pull-based queue has no
+     * mechanism for that). Its eventual result report can't flip the job back to COMPLETE
+     * (ScanJobRepository#complete/#fail both guard on CLAIMED/RUNNING, which a CANCELLED job no
+     * longer satisfies) or reopen the run (markComplete below only ever applies once), though a
+     * handful of findings the module had already gathered may still land in the DB before that
+     * report is rejected - JobLifecycleService#result ingests before checking the job's status.
+     * Accepted as the same kind of benign raciness the lease reaper already tolerates elsewhere in
+     * this queue, not worth adding an extra guard to a code path this narrow. No score snapshot is
+     * computed for a cancelled run, unlike {@link #checkAndCompleteRun} - a deliberately-stopped
+     * scan has incomplete data, not a real result to score against.
+     *
+     * <p>No-op (returns false) if the run isn't currently RUNNING - matches {@link
+     * ScanRunRepository#markComplete}'s own "applies exactly once" guarantee, so a caller can't
+     * cancel an already-finished run out from under a concurrent completion.
+     */
+    public boolean cancel(UUID runId) {
+        boolean applied = scanRunRepository.markComplete(runId, "CANCELLED");
+        if (applied) {
+            scanJobRepository.cancelNonTerminalForRun(runId);
+        }
+        return applied;
+    }
+
     private static boolean isTerminal(String status) {
         return status.equals("COMPLETE") || status.equals("FAILED") || status.equals("CANCELLED");
     }

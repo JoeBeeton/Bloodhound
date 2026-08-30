@@ -241,6 +241,19 @@ public class ScanJobRepository {
         return Optional.of("FAILED");
     }
 
+    /**
+     * Moves every not-yet-terminal job (PENDING/CLAIMED/RUNNING) of a run to CANCELLED - see
+     * ScanRunService#cancel. A job a worker already claimed keeps executing (this queue has no
+     * way to interrupt work already handed out), but its eventual {@link #complete}/{@link #fail}
+     * report becomes a silent no-op once the job leaves CLAIMED/RUNNING here, since both of those
+     * guard on exactly that status set.
+     */
+    public void cancelNonTerminalForRun(UUID scanRunId) {
+        jdbc.update(
+                "UPDATE scan_jobs SET status = 'CANCELLED' WHERE scan_run_id = ? AND status IN ('PENDING', 'CLAIMED', 'RUNNING')",
+                scanRunId);
+    }
+
     /** 30s after the 1st failure, 120s after the 2nd, capped at 300s for any later attempt. */
     static int backoffSeconds(int nextAttempt) {
         return switch (nextAttempt) {

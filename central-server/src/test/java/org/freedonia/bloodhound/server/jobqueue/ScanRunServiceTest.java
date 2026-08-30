@@ -186,4 +186,27 @@ class ScanRunServiceTest {
         verify(scanJobRepository).insert(eq(runId), eq(targetId), eq("BUCKET_BRUTE_FORCE"), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue()).contains("\"largeWordlistOffset\":0");
     }
+
+    @Test
+    void cancel_runningRun_movesNonTerminalJobsToCancelled() {
+        when(scanRunRepository.markComplete(runId, "CANCELLED")).thenReturn(true);
+
+        boolean applied = service.cancel(runId);
+
+        assertThat(applied).isTrue();
+        verify(scanJobRepository).cancelNonTerminalForRun(runId);
+    }
+
+    @Test
+    void cancel_alreadyTerminalRun_noOp_doesNotTouchJobs() {
+        // markComplete's own guard (status = 'RUNNING') is what makes this a no-op for a run
+        // that's already COMPLETE/FAILED/CANCELLED - same "applies exactly once" contract
+        // checkAndCompleteRun already relies on.
+        when(scanRunRepository.markComplete(runId, "CANCELLED")).thenReturn(false);
+
+        boolean applied = service.cancel(runId);
+
+        assertThat(applied).isFalse();
+        verify(scanJobRepository, org.mockito.Mockito.never()).cancelNonTerminalForRun(any());
+    }
 }
