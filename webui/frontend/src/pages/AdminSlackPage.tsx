@@ -7,7 +7,20 @@ import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 
+/**
+ * The server never sends the real webhook URL back (see SlackWebhookValidator#mask's javadoc -
+ * it's a bearer secret, not an identifier) - webhookUrlMasked is enough to confirm which
+ * integration is configured, never enough to post as it.
+ */
 interface SlackIntegration {
+  webhookUrlMasked: string;
+  enabled: boolean;
+  notificationTypes: string[];
+  ownTargetsOnly: boolean;
+}
+
+interface SaveSlackIntegrationInput {
+  /** Blank means "leave the currently-stored webhook unchanged" - see AdminSlackPage's save handler. */
   webhookUrl: string;
   enabled: boolean;
   notificationTypes: string[];
@@ -31,7 +44,7 @@ async function fetchIntegration(orgId: string): Promise<SlackIntegration | null>
   return res.json();
 }
 
-async function saveIntegration(orgId: string, body: SlackIntegration): Promise<SlackIntegration> {
+async function saveIntegration(orgId: string, body: SaveSlackIntegrationInput): Promise<SlackIntegration> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/slack-integration`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -55,7 +68,14 @@ export function AdminSlackPage() {
   const orgId = user?.organizationId ?? "";
   const queryClient = useQueryClient();
 
+  // The server never sends the real webhook URL (see the SlackIntegration interface's comment) -
+  // webhookUrl here is only ever what the admin is actively typing to SET or REPLACE it, never a
+  // round-tripped value from the server. isEditingWebhook tracks whether that input is shown at
+  // all: once an integration exists, the masked value displays read-only until "Change" is
+  // clicked, so a save that only touches e.g. notification types can't accidentally blank out a
+  // secret the frontend was never given the real value of in the first place.
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [isEditingWebhook, setIsEditingWebhook] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const [types, setTypes] = useState<string[]>(["NEW_FINDINGS", "SCAN_FAILED"]);
   const [ownTargetsOnly, setOwnTargetsOnly] = useState(false);
@@ -68,15 +88,26 @@ export function AdminSlackPage() {
 
   useEffect(() => {
     if (query.data) {
-      setWebhookUrl(query.data.webhookUrl);
+      setWebhookUrl("");
+      setIsEditingWebhook(false);
       setEnabled(query.data.enabled);
       setTypes(query.data.notificationTypes);
       setOwnTargetsOnly(query.data.ownTargetsOnly);
+    } else if (query.data === null) {
+      setIsEditingWebhook(true);
     }
   }, [query.data]);
 
   const saveMutation = useMutation({
-    mutationFn: () => saveIntegration(orgId, { webhookUrl, enabled, notificationTypes: types, ownTargetsOnly }),
+    // Blank webhookUrl (not currently editing it) tells the server "leave the stored webhook
+    // unchanged" - see SlackIntegrationController#save's javadoc for the other half of this.
+    mutationFn: () =>
+      saveIntegration(orgId, {
+        webhookUrl: isEditingWebhook ? webhookUrl : "",
+        enabled,
+        notificationTypes: types,
+        ownTargetsOnly,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-slack-integration", orgId] }),
   });
 
@@ -84,6 +115,7 @@ export function AdminSlackPage() {
     mutationFn: () => deleteIntegration(orgId),
     onSuccess: () => {
       setWebhookUrl("");
+      setIsEditingWebhook(true);
       setTypes([]);
       setOwnTargetsOnly(false);
       queryClient.invalidateQueries({ queryKey: ["admin-slack-integration", orgId] });
@@ -91,6 +123,9 @@ export function AdminSlackPage() {
   });
 
   const urlLooksValid = webhookUrl === "" || SLACK_URL_PATTERN.test(webhookUrl);
+  // While editing, a valid non-blank URL is required (blank would be read as "leave unchanged"
+  // server-side, which isn't what a form the admin is actively filling in should silently do).
+  const canSubmit = isEditingWebhook ? urlLooksValid && webhookUrl !== "" : true;
 
   function toggleType(type: string) {
     setTypes((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]));
@@ -120,19 +155,50 @@ export function AdminSlackPage() {
             Create an Incoming Webhook in your Slack workspace and paste its URL here. Only genuine
             https://hooks.slack.com/services/... URLs are accepted.
           </p>
-          <input
-            value={webhookUrl}
-            onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder="https://hooks.slack.com/services/…"
-            required
-            className={`mb-1 w-full rounded border bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none ${
-              urlLooksValid ? "border-slate-700 focus:border-neon-cyan" : "border-severity-critical"
-            }`}
-          />
-          {!urlLooksValid && (
-            <p className="mb-2 font-mono text-[11px] text-severity-critical">
-              Must be a genuine https://hooks.slack.com/services/… URL.
-            </p>
+
+          {!isEditingWebhook && query.data ? (
+            <div className="mb-2 flex items-center gap-3 rounded border border-slate-700 bg-void px-3 py-2">
+              <code className="flex-1 font-mono text-xs text-slate-400" title="The full URL is a bearer secret - the server never sends it back to the browser, not even right after you set it.">
+                {query.data.webhookUrlMasked}
+              </code>
+              <button
+                type="button"
+                onClick={() => setIsEditingWebhook(true)}
+                className="shrink-0 font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline"
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://hooks.slack.com/services/…"
+                autoFocus={query.data != null}
+                required
+                className={`mb-1 w-full rounded border bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none ${
+                  urlLooksValid ? "border-slate-700 focus:border-neon-cyan" : "border-severity-critical"
+                }`}
+              />
+              {!urlLooksValid && (
+                <p className="mb-2 font-mono text-[11px] text-severity-critical">
+                  Must be a genuine https://hooks.slack.com/services/… URL.
+                </p>
+              )}
+              {query.data && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingWebhook(false);
+                    setWebhookUrl("");
+                  }}
+                  className="mb-2 font-mono text-[11px] uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+                >
+                  Cancel
+                </button>
+              )}
+            </>
           )}
 
           <label className="mt-3 flex items-center gap-2 font-mono text-xs text-slate-300">
@@ -167,7 +233,7 @@ export function AdminSlackPage() {
           <div className="mt-5 flex items-center gap-3">
             <button
               type="submit"
-              disabled={saveMutation.isPending || !urlLooksValid || webhookUrl === ""}
+              disabled={saveMutation.isPending || !canSubmit}
               className="rounded bg-neon-magenta/90 px-4 py-2 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
             >
               {saveMutation.isPending ? "Saving…" : "Save"}
