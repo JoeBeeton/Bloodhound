@@ -111,6 +111,44 @@ class FindingControllerTest {
     }
 
     @Test
+    void exportForTarget_targetInAnotherOrg_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.exportForTarget(targetId, null, null, null, null, principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void exportForTarget_ownedTarget_returnsCsvWithAttachmentHeader() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.findByTargetDetailed(eq(targetId), any(), any(), any(), any(), anyInt(), eq(0)))
+                .thenReturn(List.of(new FindingDetail(finding(UUID.randomUUID()), Instant.now(), "fix it")));
+
+        ResponseEntity<byte[]> response = controller.exportForTarget(targetId, null, null, null, null, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getContentDisposition().isAttachment()).isTrue();
+        assertThat(response.getHeaders().getContentDisposition().getFilename()).contains("example.com").endsWith(".csv");
+        String csv = new String(response.getBody(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(csv).contains("bh-test-1").contains("fix it");
+    }
+
+    @Test
+    void exportForTarget_usesAGenerousBoundedLimit_notTheDisplayPageLimit() {
+        // Export is meant to mean "everything matching the filter", not just one browsable page
+        // (see MAX_EXPORT_LIMIT's javadoc) - this locks in that it asks the repository for far
+        // more rows than the interactive list endpoints ever do (MAX_FINDINGS_LIMIT there is 500).
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.findByTargetDetailed(eq(targetId), any(), any(), any(), any(), anyInt(), eq(0)))
+                .thenReturn(List.of());
+
+        controller.exportForTarget(targetId, "HIGH", "EXPOSURE", "OPEN", "asset.example.com", principal);
+
+        verify(findingRepository)
+                .findByTargetDetailed(targetId, "HIGH", "EXPOSURE", "OPEN", "asset.example.com", 50_000, 0);
+    }
+
+    @Test
     void forRun_runNotFound_notFound() {
         UUID runId = UUID.randomUUID();
         when(scanRunRepository.findById(runId)).thenReturn(Optional.empty());
