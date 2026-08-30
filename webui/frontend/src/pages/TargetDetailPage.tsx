@@ -36,6 +36,9 @@ async function updateSchedule(targetId: string, scanCadenceSeconds: number): Pro
   return res.json();
 }
 
+/** Matches UpdateTargetRequest's own @Size(max = 2000) server-side - enforced here too (via the textarea's maxLength) so a user hits the limit as they type, not as a rejected save after the fact. */
+const NOTES_MAX_LENGTH = 2000;
+
 /** notes always sent explicitly, blank included - see UpdateTargetRequest's own javadoc for why omitting the field (rather than sending "") would mean something different server-side (leave unchanged, not clear). */
 async function updateNotes(targetId: string, notes: string): Promise<Target> {
   const res = await apiFetch(`/api/v1/targets/${targetId}`, {
@@ -227,9 +230,17 @@ export function TargetNotes({ targetId, notes }: { targetId: string; notes: stri
           onChange={(e) => setDraft(e.target.value)}
           autoFocus
           rows={3}
+          maxLength={NOTES_MAX_LENGTH}
           placeholder="Which environment is this? Who owns it? Why is it being tracked?"
           className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
         />
+        <p
+          className={`mt-1 text-right font-mono text-[10px] ${
+            draft.length >= NOTES_MAX_LENGTH ? "text-neon-amber" : "text-muted"
+          }`}
+        >
+          {draft.length} / {NOTES_MAX_LENGTH}
+        </p>
         {saveMutation.isError && <p className="mt-1 font-mono text-xs text-severity-critical">Failed to save notes.</p>}
         <div className="mt-2 flex gap-2">
           <button

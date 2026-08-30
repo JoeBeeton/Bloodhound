@@ -142,7 +142,7 @@ public class TargetController {
     @PatchMapping("/{id}")
     public TargetSummary update(
             @PathVariable UUID id,
-            @RequestBody UpdateTargetRequest request,
+            @Valid @RequestBody UpdateTargetRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
         Target before = requireOwnedTarget(id, principal);
