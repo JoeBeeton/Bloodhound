@@ -138,6 +138,15 @@ public class SecurityConfig {
                                 "/api/v1/dashboard",
                                 "/api/v1/compare",
                                 "/api/v1/findings",
+                                // Exact-match above, not a wildcard, so the org-wide CSV export
+                                // needs its own explicit entry - a live spot-check found it fell
+                                // through to the plain anyRequest() rule below (JWT session
+                                // roles only), unlike its sibling JSON endpoint just above and the
+                                // per-target export (covered by /api/v1/targets/** already).
+                                // Not a security gap (fails closed, not open) but a real
+                                // inconsistency: an API-key caller could list findings and export
+                                // one target's, just not export across the whole org.
+                                "/api/v1/findings/export",
                                 "/api/v1/runs/**",
                                 "/api/v1/rules-catalog",
                                 "/api/v1/scans/**")
