@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CenteredState } from "../components/CenteredState";
 import { ErrorState } from "../components/ErrorState";
 import { FindingCard } from "../components/FindingCard";
 import { FindingDetailModal } from "../components/FindingDetailModal";
+import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { moduleLabel } from "../lib/moduleLabel";
@@ -15,6 +16,20 @@ import { usePageTitle } from "../lib/usePageTitle";
 async function fetchRun(runId: string): Promise<ScanRunDetail> {
   const res = await apiFetch(`/api/v1/runs/${runId}`);
   if (!res.ok) throw new Error("Failed to load scan.");
+  return res.json();
+}
+
+/**
+ * A product review found CANCELLED already treated as a real terminal status everywhere in the
+ * UI (this page's own RUN_STATUS_STYLES, ScansPage's status filter/badge) despite there being no
+ * way to actually produce one - a scan started by mistake, or one stuck on a dead worker, ran
+ * until it finished on its own with no way to stop it. 409 (not a silent failure) means the run
+ * finished on its own between the button being shown and this request landing - see
+ * RunController#cancel.
+ */
+async function cancelRun(runId: string): Promise<ScanRunDetail> {
+  const res = await apiFetch(`/api/v1/runs/${runId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error(res.status === 409 ? "This scan already finished." : "Failed to cancel scan.");
   return res.json();
 }
 
@@ -40,6 +55,7 @@ const RUN_STATUS_STYLES: Record<string, string> = {
   RUNNING: "text-neon-amber",
   COMPLETE: "text-neon-cyan",
   PARTIAL_FAILURE: "text-severity-critical",
+  CANCELLED: "text-slate-500",
 };
 
 const JOB_STATUS_STYLES: Record<string, string> = {
@@ -169,7 +185,13 @@ function JobRow({ job }: { job: ScanJobStatus }) {
 export function ScanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const runId = id!;
+  const queryClient = useQueryClient();
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  // Cancelling stops the scan permanently and can't be undone (see RunController#cancel's own
+  // javadoc for exactly what does/doesn't get interrupted) - same confirmation-modal pattern as
+  // every other irreversible-but-self-service action in this app (ApiKeysPage's revoke,
+  // TargetsPage's remove).
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   const query = useQuery({
     queryKey: ["run", runId],
@@ -181,6 +203,16 @@ export function ScanDetailPage() {
   const findingsQuery = useQuery({
     queryKey: ["run-findings", runId],
     queryFn: () => fetchRunFindings(runId),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelRun(runId),
+    onSuccess: (detail) => {
+      setConfirmingCancel(false);
+      queryClient.setQueryData(["run", runId], detail);
+      queryClient.invalidateQueries({ queryKey: ["scans-active"] });
+      queryClient.invalidateQueries({ queryKey: ["scans-recent"] });
+    },
   });
 
   if (query.isLoading) {
@@ -218,9 +250,19 @@ export function ScanDetailPage() {
               </Link>
             </h1>
           </div>
-          <Link to="/scans" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
-            ← Active scans
-          </Link>
+          <div className="flex items-center gap-4">
+            {run.status === "RUNNING" && (
+              <button
+                onClick={() => setConfirmingCancel(true)}
+                className="font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:underline"
+              >
+                Cancel scan
+              </button>
+            )}
+            <Link to="/scans" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+              ← Active scans
+            </Link>
+          </div>
         </div>
 
         <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-neon-cyan/10 bg-panel/60 px-4 py-3 font-mono text-xs">
@@ -267,6 +309,36 @@ export function ScanDetailPage() {
       </div>
 
       {selectedFinding && <FindingDetailModal finding={selectedFinding} onClose={() => setSelectedFinding(null)} />}
+
+      {confirmingCancel && (
+        <Modal title="Cancel scan" onClose={() => setConfirmingCancel(false)}>
+          <p className="mb-4 text-sm text-slate-300">
+            Cancel this scan of <span className="font-mono text-neon-cyan">{run.targetHostname}</span>? Jobs a worker
+            has already claimed will still finish, but no further findings from this run will be collected and no
+            score will be computed from it. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setConfirmingCancel(false)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Keep running
+            </button>
+            <button
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel scan"}
+            </button>
+          </div>
+          {cancelMutation.isError && (
+            <p className="mt-2 font-mono text-xs text-severity-critical">
+              {(cancelMutation.error as Error).message}
+            </p>
+          )}
+        </Modal>
+      )}
     </Shell>
   );
 }
