@@ -88,15 +88,51 @@ public class ScanRunRepository {
      * them here would flood this list with system noise even under correct, working conditions.
      */
     public java.util.List<OrgScanRun> findRecentByOrganization(UUID organizationId, int limit) {
-        return jdbc.query(
+        return findRecentByOrganization(organizationId, null, limit, 0);
+    }
+
+    /**
+     * Same as the 2-arg overload, plus an optional exact-match status filter and offset
+     * pagination - a product review found the Scans page's "Recent Scans" list had no way to
+     * narrow past the fixed most-recent-30, despite the underlying data (status, target, time)
+     * being exactly what someone diagnosing "did target X's scan actually fail last night" would
+     * want to filter by. status intentionally has no server-side default here (unlike, say,
+     * FindingRepository's OPEN default) - "recent" already means "any status, most recent first"
+     * by design (see this method's own class-level javadoc), so an absent filter should keep
+     * meaning that, not silently narrow to one status.
+     */
+    public java.util.List<OrgScanRun> findRecentByOrganization(UUID organizationId, String status, int limit, int offset) {
+        StringBuilder sql = new StringBuilder(
                 "SELECT sr.*, t.hostname AS target_hostname FROM scan_runs sr "
                         + "JOIN targets t ON t.id = sr.target_id "
                         + "WHERE t.organization_id = ? AND t.is_active = true "
-                        + "AND sr.triggered_by NOT IN ('CT_CHECK', 'CVE_CORRELATION') "
-                        + "ORDER BY sr.started_at DESC LIMIT ?",
-                ORG_RUN_MAPPER,
-                organizationId,
-                limit);
+                        + "AND sr.triggered_by NOT IN ('CT_CHECK', 'CVE_CORRELATION')");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        args.add(organizationId);
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND sr.status = ?");
+            args.add(status);
+        }
+        sql.append(" ORDER BY sr.started_at DESC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), ORG_RUN_MAPPER, args.toArray());
+    }
+
+    /** Same filter as {@link #findRecentByOrganization(UUID, String, int, int)}, unpaginated count - lets a caller show "showing N of TOTAL". */
+    public int countRecentByOrganization(UUID organizationId, String status) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT COUNT(*) FROM scan_runs sr JOIN targets t ON t.id = sr.target_id "
+                        + "WHERE t.organization_id = ? AND t.is_active = true "
+                        + "AND sr.triggered_by NOT IN ('CT_CHECK', 'CVE_CORRELATION')");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        args.add(organizationId);
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND sr.status = ?");
+            args.add(status);
+        }
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
+        return count != null ? count : 0;
     }
 
     /**

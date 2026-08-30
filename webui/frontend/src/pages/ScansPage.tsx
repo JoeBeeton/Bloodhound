@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CenteredState } from "../components/CenteredState";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { WorkerPanel } from "../components/WorkerPanel";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import type { ActiveScan, ActiveScanModule, RecentScan } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -54,10 +55,21 @@ async function fetchActiveScans(): Promise<ActiveScan[]> {
   return res.json();
 }
 
-async function fetchRecentScans(): Promise<RecentScan[]> {
-  const res = await apiFetch("/api/v1/scans/recent?limit=30");
+interface RecentScansPage {
+  items: RecentScan[];
+  totalCount: number;
+}
+
+const RECENT_SCAN_STATUSES = ["RUNNING", "COMPLETE", "PARTIAL_FAILURE", "FAILED", "CANCELLED"] as const;
+const RECENT_PAGE_SIZE = 30;
+
+async function fetchRecentScans(status: string | null, limit: number): Promise<RecentScansPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: "0" });
+  if (status) params.set("status", status);
+  const res = await apiFetch(`/api/v1/scans/recent?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load recent scans.");
-  return res.json();
+  const items: RecentScan[] = await res.json();
+  return { items, totalCount: totalCountFromResponse(res, items.length) };
 }
 
 const RECENT_STATUS_STYLES: Record<string, string> = {
@@ -68,44 +80,103 @@ const RECENT_STATUS_STYLES: Record<string, string> = {
   CANCELLED: "text-slate-500",
 };
 
-function RecentScansSection() {
-  const query = useQuery({ queryKey: ["scans-recent"], queryFn: fetchRecentScans });
+const INACTIVE_STATUS_CHIP = "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200";
 
-  if (query.isLoading) {
-    return <p className="font-mono text-sm text-slate-400">Loading…</p>;
-  }
-  if (query.isError) {
-    return <ErrorState message="Failed to load recent scans." onRetry={() => query.refetch()} />;
-  }
-  if (!query.data || query.data.length === 0) {
-    return <p className="font-mono text-sm text-slate-400">No scans have run yet.</p>;
-  }
+/**
+ * A product review found this list had no way to narrow past a fixed most-recent-30, despite
+ * status/target/time being exactly what someone diagnosing "did target X's scan actually fail
+ * last night" would want to filter by. Status is single-select (clicking the active one again
+ * clears it) rather than multi-select like FindingsFilterBar's severity/category chips - "which
+ * scans failed" is a single yes/no question here, not a multi-value narrowing filter.
+ */
+function RecentScansSection() {
+  const [status, setStatus] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(RECENT_PAGE_SIZE);
+
+  const query = useQuery({
+    queryKey: ["scans-recent", status, visibleCount],
+    queryFn: () => fetchRecentScans(status, visibleCount),
+  });
 
   return (
-    <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
-      {query.data.map((scan, i) => (
-        <Link
-          key={scan.id}
-          to={`/scans/${scan.id}`}
-          className={`flex items-center justify-between px-4 py-2.5 transition hover:bg-panel ${
-            i > 0 ? "border-t border-neon-cyan/10" : ""
-          }`}
-        >
-          <div>
-            <p className="font-mono text-sm text-slate-200">{scan.targetHostname}</p>
-            <p className="font-mono text-[11px] text-slate-500">
-              {scan.triggeredBy} · {new Date(scan.startedAt).toLocaleString()}
-            </p>
-          </div>
-          <span
-            className={`font-mono text-xs uppercase tracking-widest ${
-              RECENT_STATUS_STYLES[scan.status] ?? "text-slate-400"
-            }`}
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Status</span>
+        {RECENT_SCAN_STATUSES.map((s) => {
+          const active = status === s;
+          return (
+            <button
+              key={s}
+              aria-pressed={active}
+              onClick={() => {
+                setStatus(active ? null : s);
+                setVisibleCount(RECENT_PAGE_SIZE);
+              }}
+              className={`rounded border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest transition ${
+                active ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_STATUS_CHIP
+              }`}
+            >
+              {s.replace("_", " ")}
+            </button>
+          );
+        })}
+        {status && (
+          <button
+            onClick={() => {
+              setStatus(null);
+              setVisibleCount(RECENT_PAGE_SIZE);
+            }}
+            className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta transition hover:text-neon-magenta/70"
           >
-            {scan.status.replace("_", " ")}
-          </span>
-        </Link>
-      ))}
+            Clear ✕
+          </button>
+        )}
+      </div>
+
+      {query.isLoading && <p className="font-mono text-sm text-slate-400">Loading…</p>}
+      {query.isError && <ErrorState message="Failed to load recent scans." onRetry={() => query.refetch()} />}
+      {query.data && query.data.items.length === 0 && (
+        <p className="font-mono text-sm text-slate-400">
+          {status ? `No ${status.replace("_", " ").toLowerCase()} scans found.` : "No scans have run yet."}
+        </p>
+      )}
+
+      {query.data && query.data.items.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
+          {query.data.items.map((scan, i) => (
+            <Link
+              key={scan.id}
+              to={`/scans/${scan.id}`}
+              className={`flex items-center justify-between px-4 py-2.5 transition hover:bg-panel ${
+                i > 0 ? "border-t border-neon-cyan/10" : ""
+              }`}
+            >
+              <div>
+                <p className="font-mono text-sm text-slate-200">{scan.targetHostname}</p>
+                <p className="font-mono text-[11px] text-slate-500">
+                  {scan.triggeredBy} · {new Date(scan.startedAt).toLocaleString()}
+                </p>
+              </div>
+              <span
+                className={`font-mono text-xs uppercase tracking-widest ${
+                  RECENT_STATUS_STYLES[scan.status] ?? "text-slate-400"
+                }`}
+              >
+                {scan.status.replace("_", " ")}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {query.data && query.data.items.length < query.data.totalCount && (
+        <button
+          onClick={() => setVisibleCount((c) => c + RECENT_PAGE_SIZE)}
+          className="mt-3 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:text-neon-cyan/70"
+        >
+          Load more ▾ ({query.data.totalCount - query.data.items.length} more)
+        </button>
+      )}
     </div>
   );
 }

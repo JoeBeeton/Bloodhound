@@ -8,6 +8,7 @@ import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator.Estimate;
 import org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator.JobProgress;
 import org.freedonia.bloodhound.server.jobqueue.dto.ActiveScan;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -71,16 +72,32 @@ public class ScansController {
                 .toList();
     }
 
+    private static final int MAX_RECENT_LIMIT = 200;
+
     /**
      * Past scans (any status - including FAILED/PARTIAL_FAILURE), most recent first. {@link
      * #active} only ever shows RUNNING runs, so a scan that fails vanishes from it the moment it
      * reaches a terminal state - this is what makes a since-failed scan findable/diagnosable
      * again afterward, linking through to RunController's per-attempt failure detail.
+     *
+     * <p>status/offset are new - a product review found this list had no way to narrow past a
+     * fixed most-recent-30, despite "did target X's scan actually fail last night" being exactly
+     * the kind of question status filtering (plus paging back further than 30) answers. limit is
+     * unchanged in meaning/default so any existing caller (the docs-listed external API, MCP)
+     * keeps working; the X-Total-Count header is new, same convention as the other paginated list
+     * endpoints in this app (AuditLogController, FindingController).
      */
     @GetMapping("/recent")
-    public List<RecentScan> recent(
-            @AuthenticationPrincipal JwtPrincipal principal, @RequestParam(defaultValue = "30") int limit) {
-        return scanRunRepository.findRecentByOrganization(principal.organizationId(), limit).stream()
+    public ResponseEntity<List<RecentScan>> recent(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "30") int limit,
+            @RequestParam(defaultValue = "0") int offset) {
+        int boundedLimit = Math.clamp(limit, 1, MAX_RECENT_LIMIT);
+        int boundedOffset = Math.max(offset, 0);
+        List<RecentScan> page = scanRunRepository
+                .findRecentByOrganization(principal.organizationId(), status, boundedLimit, boundedOffset)
+                .stream()
                 .map(r -> new RecentScan(
                         r.run().id(),
                         r.run().targetId(),
@@ -90,6 +107,8 @@ public class ScansController {
                         r.run().startedAt(),
                         r.run().completedAt()))
                 .toList();
+        int totalCount = scanRunRepository.countRecentByOrganization(principal.organizationId(), status);
+        return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
 
     public record RecentScan(
