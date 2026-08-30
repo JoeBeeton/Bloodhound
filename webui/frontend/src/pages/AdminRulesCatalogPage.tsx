@@ -100,12 +100,23 @@ export function AdminRulesCatalogPage() {
                     rule.enabled ? "" : "opacity-50"
                   }`}
                 >
-                  <div className="mb-1 flex items-center justify-between gap-3">
+                  {/* flex-wrap: severity/category badge + rule id + enabled toggle together
+                      overflowed a narrow viewport (confirmed live, up to +167px on a real 375px
+                      check) - wraps onto a second line instead rather than pushing the page
+                      sideways. */}
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${SEVERITY_STYLES[rule.defaultSeverity]}`}>
                       {rule.defaultSeverity} · {rule.category}
                     </span>
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{rule.ruleId}</span>
+                    {/* flex-wrap + break-all: the longest rule ids (e.g.
+                        EXPOSURE_CLOUD_BUCKET_BRUTEFORCE_DISCOVERED_PUBLIC) are a single
+                        unbroken ~350px run of characters with no whitespace for normal word-wrap
+                        to break on - confirmed live these alone nearly matched a 375px viewport's
+                        full width, still overflowing after the outer row above learned to wrap. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="break-all font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                        {rule.ruleId}
+                      </span>
                       <label
                         className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-400"
                         title={rule.enabled ? "Disable this rule — its findings stop being reported and any already open are resolved" : "Enable this rule"}
