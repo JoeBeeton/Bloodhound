@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { CenteredState } from "../components/CenteredState";
 import { Shell } from "../components/Shell";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 /**
  * Lands here after a SAML login redirect from central-server, carrying a
@@ -10,6 +11,7 @@ import { useAuth } from "../lib/useAuth";
  * SamlAuthenticationSuccessHandler / SsoHandoffCodeRepository for why.
  */
 export function SsoCallbackPage() {
+  usePageTitle("Signing in…");
   const [searchParams] = useSearchParams();
   const { completeSsoLogin } = useAuth();
   const navigate = useNavigate();

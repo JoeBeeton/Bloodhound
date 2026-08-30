@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 interface ScimTokenSummary {
   id: string;
@@ -58,6 +59,7 @@ function MetadataField({ label, value }: { label: string; value: string }) {
 }
 
 export function AdminScimPage() {
+  usePageTitle("SCIM Provisioning");
   const { user } = useAuth();
   const orgId = user?.organizationId ?? "";
   const queryClient = useQueryClient();

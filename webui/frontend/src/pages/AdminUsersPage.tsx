@@ -8,6 +8,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import type { AdminUser, CreateUserResponse, UserRole, UserStatus } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 const ROLES: UserRole[] = ["ADMIN", "ANALYST", "VIEWER"];
 const STATUSES: UserStatus[] = ["ACTIVE", "DISABLED"];
@@ -49,6 +50,7 @@ async function createUser(
 }
 
 export function AdminUsersPage() {
+  usePageTitle("Users");
   const { user: currentUser } = useAuth();
   const orgId = currentUser?.organizationId ?? "";
   const queryClient = useQueryClient();

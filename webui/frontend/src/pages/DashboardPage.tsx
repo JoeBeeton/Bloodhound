@@ -12,6 +12,7 @@ import { StatTile } from "../components/StatTile";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import type { DashboardSummary, OrgFinding, ScoreSnapshot, Severity, Target } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchDashboard(): Promise<DashboardSummary> {
   const res = await apiFetch("/api/v1/dashboard");
@@ -61,6 +62,7 @@ const RUN_STATUS_STYLES: Record<string, string> = {
 };
 
 export function DashboardPage() {
+  usePageTitle("Dashboard");
   const { user } = useAuth();
   const dashboardQuery = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const dashboard = dashboardQuery.data;

@@ -6,6 +6,7 @@ import { HostingBadge } from "../components/TechHostingPanel";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Severity, Subdomain, Target } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 /** Server-capped page plus the true match count - see totalCountFromResponse; a target can have far more rows than the server will ever return in one request (confirmed live: 57,107 subdomains / 36,466 findings for one real target). */
 interface Page<T> {
@@ -93,6 +94,7 @@ export function SubdomainsPage() {
   }, [search]);
 
   const targetQuery = useQuery({ queryKey: ["target", targetId], queryFn: () => fetchTarget(targetId) });
+  usePageTitle(targetQuery.data ? `Subdomains: ${targetQuery.data.hostname}` : null);
   const subdomainsQuery = useQuery({
     queryKey: ["subdomains", targetId, debouncedSearch],
     queryFn: () => fetchSubdomains(targetId, debouncedSearch),

@@ -9,6 +9,7 @@ import { FingerprintPanel } from "../components/TechHostingPanel";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Subdomain } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 /**
  * Single-hostname lookup, not "fetch the whole target's subdomain list and
@@ -55,6 +56,7 @@ export function SubdomainDetailPage() {
   const { id, hostname: encodedHostname } = useParams<{ id: string; hostname: string }>();
   const targetId = id!;
   const hostname = decodeURIComponent(encodedHostname!);
+  usePageTitle(hostname);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [filters, setFilters] = useState<FindingsFilterState>({ severities: [], categories: [] });
 

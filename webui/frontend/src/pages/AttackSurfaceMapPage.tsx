@@ -6,6 +6,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { buildGraph, SUBDOMAINS_PER_TARGET_CAP } from "../lib/attackSurfaceGraph";
 import type { Subdomain, Target, WorkerStatus } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchTargets(): Promise<Target[]> {
   const res = await apiFetch("/api/v1/targets");
@@ -41,6 +42,7 @@ const WORKER_POLL_INTERVAL_MS = 5000;
  * go to actually search/filter/act on a specific host or job.
  */
 export function AttackSurfaceMapPage() {
+  usePageTitle("Attack Surface Map");
   const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: fetchTargets });
   const targets = targetsQuery.data ?? [];
 

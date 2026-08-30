@@ -4,8 +4,10 @@ import { BloodhoundMascot } from "../components/BloodhoundMascot";
 import { CenteredState } from "../components/CenteredState";
 import { Shell } from "../components/Shell";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 export function LoginPage() {
+  usePageTitle("Sign In");
   const { login, status } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
