@@ -5,6 +5,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import type { RulesCatalogEntry, Severity } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchRulesCatalog(): Promise<RulesCatalogEntry[]> {
   const res = await apiFetch("/api/v1/rules-catalog");
@@ -33,6 +34,7 @@ const SEVERITY_ACCENT: Record<Severity, string> = {
 
 /** Every check Bloodhound runs, grouped by category - in-product documentation of the whole rules catalog built up across Milestones 3-6b. */
 export function AdminRulesCatalogPage() {
+  usePageTitle("Rules Catalog");
   const rulesQuery = useQuery({ queryKey: ["rules-catalog"], queryFn: fetchRulesCatalog });
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
 

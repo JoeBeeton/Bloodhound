@@ -6,6 +6,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
+import { usePageTitle } from "../lib/usePageTitle";
 
 export interface ApiKeySummary {
   id: string;
@@ -75,6 +76,7 @@ export function statusDisplay(key: ApiKeySummary, now: number = Date.now()): { l
 
 /** Self-service management of the caller's own read-only external API keys - any authenticated role, not admin-gated (a key only ever grants what its creator could already see). */
 export function ApiKeysPage() {
+  usePageTitle("API Keys");
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
   const [expiresInDays, setExpiresInDays] = useState(DEFAULT_EXPIRY_DAYS);

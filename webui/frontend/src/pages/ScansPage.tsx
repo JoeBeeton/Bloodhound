@@ -6,6 +6,7 @@ import { Shell } from "../components/Shell";
 import { WorkerPanel } from "../components/WorkerPanel";
 import { apiFetch } from "../lib/apiClient";
 import type { ActiveScan, ActiveScanModule, RecentScan } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 const TERMINAL = new Set(["COMPLETE", "FAILED", "CANCELLED"]);
 // Worst-first: a group's badge should reflect the most attention-worthy job in it,
@@ -217,6 +218,7 @@ function ScanCard({ scan }: { scan: ActiveScan }) {
 }
 
 export function ScansPage() {
+  usePageTitle("Active Scans");
   const query = useQuery({
     queryKey: ["scans-active"],
     queryFn: fetchActiveScans,

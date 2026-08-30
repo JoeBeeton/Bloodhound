@@ -8,6 +8,7 @@ import { Shell } from "../components/Shell";
 import { TargetTypeBadge } from "../components/TargetTypeBadge";
 import { apiFetch } from "../lib/apiClient";
 import type { CompareSeries, Target } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchTargets(): Promise<Target[]> {
   const res = await apiFetch("/api/v1/targets");
@@ -28,6 +29,7 @@ async function fetchCompare(targetIds: string[]): Promise<CompareSeries[]> {
  * first load, without assuming which competitors matter to the viewer.
  */
 export function ComparePage() {
+  usePageTitle("Compare");
   const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: fetchTargets });
   const [selected, setSelected] = useState<Set<string> | null>(null);
   // Defaults to the fair-comparison score: Tier 2 (deep port scan, ZAP) only ever runs against

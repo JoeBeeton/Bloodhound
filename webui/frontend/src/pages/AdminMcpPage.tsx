@@ -5,6 +5,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 interface OrgSettings {
   mcpEnabled: boolean;
@@ -32,6 +33,7 @@ async function saveSettings(orgId: string, body: OrgSettings): Promise<OrgSettin
  * mcp.McpEnabledGuardFilter, which checks both live on every /mcp/** request).
  */
 export function AdminMcpPage() {
+  usePageTitle("MCP Server");
   const { user } = useAuth();
   const orgId = user?.organizationId ?? "";
   const queryClient = useQueryClient();

@@ -17,6 +17,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
 import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 /** Server-capped page of results plus the true match count (see X-Total-Count / totalCountFromResponse) - the count can exceed items.length when the server truncated a large result set. */
 interface FindingsPage {
@@ -160,6 +161,7 @@ export function TargetDetailPage() {
   };
 
   const targetQuery = useQuery({ queryKey: ["target", targetId], queryFn: () => fetchTarget(targetId) });
+  usePageTitle(targetQuery.data?.hostname);
   const findingsQuery = useQuery({
     queryKey: ["findings", targetId, filters],
     queryFn: () => fetchFindings(targetId, filters),

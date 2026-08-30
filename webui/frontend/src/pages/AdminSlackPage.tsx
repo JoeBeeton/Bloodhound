@@ -5,6 +5,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 interface SlackIntegration {
   webhookUrl: string;
@@ -49,6 +50,7 @@ async function deleteIntegration(orgId: string): Promise<void> {
 }
 
 export function AdminSlackPage() {
+  usePageTitle("Slack Notifications");
   const { user } = useAuth();
   const orgId = user?.organizationId ?? "";
   const queryClient = useQueryClient();

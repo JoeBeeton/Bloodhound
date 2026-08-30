@@ -9,6 +9,7 @@ import { apiFetch } from "../lib/apiClient";
 import { colorForTargetType } from "../lib/attackSurfaceGraph";
 import type { ScanRunDetail, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchTargets(includeInactive: boolean): Promise<Target[]> {
   const res = await apiFetch(`/api/v1/targets?includeInactive=${includeInactive}`);
@@ -67,6 +68,7 @@ async function fetchRun(runId: string): Promise<ScanRunDetail> {
 const TARGET_TYPES: TargetType[] = ["OWN", "COMPETITOR", "WATCHLIST"];
 
 export function TargetsPage() {
+  usePageTitle("Targets");
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";

@@ -10,6 +10,7 @@ import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { moduleLabel } from "../lib/moduleLabel";
 import { groupJobsByModule, type JobGroup } from "../lib/scanJobs";
 import type { Finding, ScanJobAttempt, ScanJobStatus, ScanRunDetail } from "../lib/types";
+import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchRun(runId: string): Promise<ScanRunDetail> {
   const res = await apiFetch(`/api/v1/runs/${runId}`);
@@ -175,6 +176,7 @@ export function ScanDetailPage() {
     queryFn: () => fetchRun(runId),
     refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? 3000 : false),
   });
+  usePageTitle(query.data ? `Scan: ${query.data.targetHostname}` : null);
 
   const findingsQuery = useQuery({
     queryKey: ["run-findings", runId],
