@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
@@ -31,8 +32,9 @@ class OrgUserControllerTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final OrgUserController controller =
-            new OrgUserController(userRepository, passwordEncoder, refreshTokenRepository);
+            new OrgUserController(userRepository, passwordEncoder, refreshTokenRepository, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();
@@ -92,6 +94,8 @@ class OrgUserControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(201);
         assertThat(response.getBody().temporaryPassword()).isNotBlank();
         assertThat(response.getBody().user().id()).isEqualTo(created.id());
+        verify(auditLogRepository)
+                .record(eq(orgId), eq(admin.userId()), eq(admin.email()), eq("USER_CREATED"), eq("USER"), eq(created.id().toString()), any());
     }
 
     @Test
@@ -134,6 +138,8 @@ class OrgUserControllerTest {
         assertThat(response.temporaryPassword()).isNotBlank();
         verify(userRepository).updatePasswordHash(targetUserId, "newHash");
         verify(refreshTokenRepository).revokeAllForUser(targetUserId);
+        verify(auditLogRepository)
+                .record(eq(orgId), eq(admin.userId()), eq(admin.email()), eq("USER_PASSWORD_RESET"), eq("USER"), eq(targetUserId.toString()), any());
     }
 
     @Test
@@ -183,6 +189,29 @@ class OrgUserControllerTest {
 
         assertThat(result.role()).isEqualTo("ANALYST");
         verify(userRepository).updateRoleAndStatus(targetUserId, "ANALYST", "ACTIVE");
+        verify(auditLogRepository)
+                .record(
+                        eq(orgId),
+                        eq(admin.userId()),
+                        eq(admin.email()),
+                        eq("USER_ROLE_OR_STATUS_CHANGED"),
+                        eq("USER"),
+                        eq(targetUserId.toString()),
+                        any());
+    }
+
+    @Test
+    void update_noActualRoleOrStatusChange_notAudited() {
+        // mcpEnabled-only change, or a patch that names the same value the user already has -
+        // neither is a real privilege/access change, so it shouldn't clutter the audit trail.
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest("VIEWER", "ACTIVE", null), admin);
+
+        verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

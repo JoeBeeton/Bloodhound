@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
@@ -32,8 +33,9 @@ class TargetControllerDeleteTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final TargetController controller = new TargetController(
-            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository);
+            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -68,6 +70,8 @@ class TargetControllerDeleteTest {
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
         verify(targetRepository).delete(targetId);
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "TARGET_DELETED", "TARGET", targetId.toString(), "hostname=example.com");
     }
 
     @Test

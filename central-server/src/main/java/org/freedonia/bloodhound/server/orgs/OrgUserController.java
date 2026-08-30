@@ -5,6 +5,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import jakarta.validation.Valid;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
@@ -41,12 +42,17 @@ public class OrgUserController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final AuditLogRepository auditLogRepository;
 
     public OrgUserController(
-            UserRepository userRepository, PasswordEncoder passwordEncoder, RefreshTokenRepository refreshTokenRepository) {
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            RefreshTokenRepository refreshTokenRepository,
+            AuditLogRepository auditLogRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     @GetMapping
@@ -74,6 +80,14 @@ public class OrgUserController {
         try {
             User created = userRepository.insertLocalUser(
                     orgId, request.email(), request.displayName(), request.role(), passwordEncoder.encode(temporaryPassword));
+            auditLogRepository.record(
+                    orgId,
+                    principal.userId(),
+                    principal.email(),
+                    "USER_CREATED",
+                    "USER",
+                    created.id().toString(),
+                    "email=" + created.email() + " role=" + created.role());
             return ResponseEntity.status(HttpStatus.CREATED).body(CreateUserResponse.of(created, temporaryPassword));
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "a user with that email already exists in this organization");
@@ -105,6 +119,14 @@ public class OrgUserController {
         String temporaryPassword = generateTemporaryPassword();
         userRepository.updatePasswordHash(id, passwordEncoder.encode(temporaryPassword));
         refreshTokenRepository.revokeAllForUser(id);
+        auditLogRepository.record(
+                orgId,
+                principal.userId(),
+                principal.email(),
+                "USER_PASSWORD_RESET",
+                "USER",
+                id.toString(),
+                "email=" + target.email());
         return CreateUserResponse.of(userRepository.findById(id).orElseThrow(), temporaryPassword);
     }
 
@@ -133,6 +155,17 @@ public class OrgUserController {
         if (!updated) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "cannot demote or deactivate the organization's last remaining admin");
+        }
+        if (!newRole.equals(target.role()) || !newStatus.equals(target.status())) {
+            auditLogRepository.record(
+                    orgId,
+                    principal.userId(),
+                    principal.email(),
+                    "USER_ROLE_OR_STATUS_CHANGED",
+                    "USER",
+                    id.toString(),
+                    "email=" + target.email() + " role=" + target.role() + "->" + newRole + " status=" + target.status()
+                            + "->" + newStatus);
         }
         // No last-admin-style invariant and no lockout risk here (unlike role/status above) - an
         // admin toggling their own MCP access, or another user's, is an ordinary permission change,

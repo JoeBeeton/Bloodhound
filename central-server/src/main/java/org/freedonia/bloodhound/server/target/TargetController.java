@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
@@ -39,18 +40,21 @@ public class TargetController {
     private final ScoreSnapshotRepository scoreSnapshotRepository;
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
+    private final AuditLogRepository auditLogRepository;
 
     public TargetController(
             TargetRepository targetRepository,
             ScanRunService scanRunService,
             ScoreSnapshotRepository scoreSnapshotRepository,
             ScanRunRepository scanRunRepository,
-            ScanJobRepository scanJobRepository) {
+            ScanJobRepository scanJobRepository,
+            AuditLogRepository auditLogRepository) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
         this.scoreSnapshotRepository = scoreSnapshotRepository;
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     @GetMapping
@@ -172,6 +176,14 @@ public class TargetController {
                     HttpStatus.CONFLICT, "target must be removed (isActive=false) before it can be permanently deleted");
         }
         targetRepository.delete(id);
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "TARGET_DELETED",
+                "TARGET",
+                id.toString(),
+                "hostname=" + target.hostname());
         return ResponseEntity.noContent().build();
     }
 
