@@ -96,6 +96,30 @@ describe("ChangePasswordModal", () => {
     expect(screen.getByRole("button", { name: "Change password" })).toBeInTheDocument();
   });
 
+  it("shows a specific, actionable rate-limit message on 429 - not the generic failure text", async () => {
+    // A security review added the same LoginAttemptLimiter brute-force guard the login form
+    // already has to this endpoint - a rate-limited response deserves the same clear "you're
+    // locked out, try again in N minutes" treatment the login flow's own authClient gives it,
+    // not the generic "Failed to change password" every other unrecognized failure gets.
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ count: 1 }))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "645" }),
+        json: async () => null,
+      } as Response);
+
+    renderModal();
+    await user.type(screen.getByLabelText("Current password"), "wrongpass");
+    await user.type(screen.getByLabelText("New password"), "newpass123");
+    await user.type(screen.getByLabelText("Confirm new password"), "newpass123");
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(await screen.findByText("Too many failed attempts. Try again in 11 minutes.")).toBeInTheDocument();
+  });
+
   it("the password fields default masked and can be revealed via the Show toggle", async () => {
     const user = userEvent.setup();
     mockedApiFetch.mockResolvedValueOnce(jsonResponse({ count: 1 }));

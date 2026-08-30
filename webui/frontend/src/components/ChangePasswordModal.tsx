@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../lib/apiClient";
+import { formatRetryAfter } from "../lib/authClient";
 import { Modal } from "./Modal";
 import { PasswordInput } from "./PasswordInput";
 
@@ -13,6 +14,15 @@ async function changePassword(currentPassword: string, newPassword: string): Pro
     body: JSON.stringify({ currentPassword, newPassword }),
   });
   if (!res.ok) {
+    // A security review found this endpoint gained the same LoginAttemptLimiter brute-force
+    // guard the login form already has (guessing a stolen session's own currentPassword is the
+    // same threat, just reached through a JWT instead of a login form) - 429 handled explicitly
+    // here for the same reason authClient's own login flow does: the generic "Failed to change
+    // password" message reads as transient and invites immediately retrying the exact thing
+    // being throttled.
+    if (res.status === 429) {
+      throw new Error(`Too many failed attempts. Try again in ${formatRetryAfter(res)}.`);
+    }
     const message = res.status === 403 ? "Current password is incorrect." : "Failed to change password.";
     throw new Error(message);
   }

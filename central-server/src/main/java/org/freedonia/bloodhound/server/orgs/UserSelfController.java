@@ -2,10 +2,13 @@ package org.freedonia.bloodhound.server.orgs;
 
 import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
+import org.freedonia.bloodhound.server.auth.LoginRateLimitedException;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
 import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
 import org.freedonia.bloodhound.server.security.HashUtil;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -31,25 +34,53 @@ public class UserSelfController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final LoginAttemptLimiter loginAttemptLimiter;
 
     public UserSelfController(
-            UserRepository userRepository, PasswordEncoder passwordEncoder, RefreshTokenRepository refreshTokenRepository) {
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            RefreshTokenRepository refreshTokenRepository,
+            LoginAttemptLimiter loginAttemptLimiter) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.loginAttemptLimiter = loginAttemptLimiter;
     }
 
+    /**
+     * A security review found this was the one other place in the app that verifies a password
+     * against its stored hash (see AuthenticationService#login for the other) with no brute-force
+     * guard at all - an attacker holding a stolen but still-valid session (an XSS'd access token,
+     * a leaked refresh cookie) could try unlimited currentPassword guesses here, bounded only by
+     * BCrypt's own cost, to recover the account's real password - useful to them well beyond that
+     * one session's lifetime, and for credential-stuffing anywhere the user reuses it. Reuses
+     * LoginAttemptLimiter as-is (same 10-attempts/15-minute window, keyed by email) rather than a
+     * second limiter instance - it's the exact same "someone is guessing a password" threat this
+     * endpoint just happens to reach through a JWT instead of a login form, and sharing it means
+     * the two paths' failures count against one combined lockout per email rather than each
+     * getting its own independent budget of guesses.
+     */
     @PatchMapping("/password")
     public ResponseEntity<Void> changePassword(
             @Valid @RequestBody ChangePasswordRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
+        try {
+            loginAttemptLimiter.checkAllowed(principal.email());
+        } catch (LoginRateLimitedException e) {
+            long retryAfterSeconds = loginAttemptLimiter.remainingLockoutSeconds(principal.email());
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                    .build();
+        }
         User user = userRepository.findById(principal.userId()).orElseThrow();
         if (!"LOCAL".equals(user.identitySource()) || user.passwordHash() == null) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "this account doesn't use a local password");
         }
         if (!passwordEncoder.matches(request.currentPassword(), user.passwordHash())) {
+            loginAttemptLimiter.recordFailure(principal.email());
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "current password is incorrect");
         }
+        loginAttemptLimiter.recordSuccess(principal.email());
         userRepository.updatePasswordHash(user.id(), passwordEncoder.encode(request.newPassword()));
         // A security review found that changing your password previously left every other
         // active session (refresh token / httpOnly cookie, on any device, including the caller's
