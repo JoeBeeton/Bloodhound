@@ -137,6 +137,7 @@ export function AdminRulesCatalogPage() {
 function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
+      aria-pressed={active}
       onClick={onClick}
       className={`rounded border px-2.5 py-1 font-mono text-[11px] uppercase tracking-widest transition ${
         active

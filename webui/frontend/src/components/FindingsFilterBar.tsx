@@ -61,6 +61,7 @@ export function FindingsFilterBar({
         {(["OPEN", "RESOLVED"] as const).map((s) => (
           <button
             key={s}
+            aria-pressed={status === s}
             onClick={() => onChange({ ...value, status: s })}
             className={`rounded border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest transition ${
               status === s ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_TOGGLE
@@ -77,6 +78,7 @@ export function FindingsFilterBar({
           return (
             <button
               key={severity}
+              aria-pressed={active}
               onClick={() => onChange({ ...value, severities: toggle(value.severities, severity) })}
               className={`rounded border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest transition ${
                 active ? SEVERITY_ACTIVE_STYLES[severity] : INACTIVE_TOGGLE
@@ -94,6 +96,7 @@ export function FindingsFilterBar({
           return (
             <button
               key={category}
+              aria-pressed={active}
               onClick={() => onChange({ ...value, categories: toggle(value.categories, category) })}
               className={`rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest transition ${
                 active ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_TOGGLE
@@ -110,7 +113,11 @@ export function FindingsFilterBar({
         </span>
         {hasFilters && (
           <button
-            onClick={() => onChange({ severities: [], categories: [] })}
+            // Preserves status - it's the primary Open/Resolved view mode, not an incidental
+            // narrowing filter, so "Clear filters" while browsing Resolved findings must not
+            // silently snap the view back to Open too (a real bug this fixed: the original
+            // version dropped status entirely here, defaulting it back to OPEN).
+            onClick={() => onChange({ severities: [], categories: [], status: value.status })}
             className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta transition hover:text-neon-magenta/70"
           >
             Clear filters ✕
