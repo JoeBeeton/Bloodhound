@@ -2,11 +2,14 @@ package org.freedonia.bloodhound.server.target;
 
 import jakarta.validation.Valid;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
@@ -34,14 +37,20 @@ public class TargetController {
     private final TargetRepository targetRepository;
     private final ScanRunService scanRunService;
     private final ScoreSnapshotRepository scoreSnapshotRepository;
+    private final ScanRunRepository scanRunRepository;
+    private final ScanJobRepository scanJobRepository;
 
     public TargetController(
             TargetRepository targetRepository,
             ScanRunService scanRunService,
-            ScoreSnapshotRepository scoreSnapshotRepository) {
+            ScoreSnapshotRepository scoreSnapshotRepository,
+            ScanRunRepository scanRunRepository,
+            ScanJobRepository scanJobRepository) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
         this.scoreSnapshotRepository = scoreSnapshotRepository;
+        this.scanRunRepository = scanRunRepository;
+        this.scanJobRepository = scanJobRepository;
     }
 
     @GetMapping
@@ -49,12 +58,34 @@ public class TargetController {
             @RequestParam(required = false) String type,
             @RequestParam(required = false, defaultValue = "false") boolean includeInactive,
             @AuthenticationPrincipal JwtPrincipal principal) {
-        // One latest-score lookup per target - fine at Phase 1 scale (a handful
+        // One latest-score (+ now last-scan) lookup per target - fine at Phase 1 scale (a handful
         // of targets per org); a batched query is a candidate optimization if
         // that stops being true.
         return targetRepository.findByOrganization(principal.organizationId(), type, includeInactive).stream()
-                .map(target -> TargetSummary.from(target, scoreSnapshotRepository.findLatest(target.id()).orElse(null)))
+                .map(this::composeSummary)
                 .toList();
+    }
+
+    /**
+     * Composes the score + last-scan-time/tier fields every TargetSummary needs - lastScanAt
+     * prefers completedAt, falling back to startedAt for a run still in progress (or one that
+     * never completed cleanly), so "last scan" always reflects the most recent real activity
+     * rather than going blank while a scan is running. lastScanWasDeep asks ScanJobRepository
+     * whether that run queued any Tier 2 module type (see ScanRunService#allTier2ModuleTypes,
+     * the single source of truth for tier classification - a scan run has no tier column of its
+     * own, tier is purely a property of which modules got queued under it).
+     */
+    private TargetSummary composeSummary(Target target) {
+        var latestScore = scoreSnapshotRepository.findLatest(target.id()).orElse(null);
+        var lastScan = scanRunRepository.findMostRecentByTarget(target.id()).orElse(null);
+        Instant lastScanAt = null;
+        Boolean lastScanWasDeep = null;
+        if (lastScan != null) {
+            lastScanAt = lastScan.completedAt() != null ? lastScan.completedAt() : lastScan.startedAt();
+            lastScanWasDeep =
+                    scanJobRepository.existsForRunWithModuleTypeIn(lastScan.id(), ScanRunService.allTier2ModuleTypes());
+        }
+        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep);
     }
 
     @PostMapping
@@ -101,7 +132,7 @@ public class TargetController {
     @GetMapping("/{id}")
     public TargetSummary get(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
         Target target = requireOwnedTarget(id, principal);
-        return TargetSummary.from(target, scoreSnapshotRepository.findLatest(target.id()).orElse(null));
+        return composeSummary(target);
     }
 
     @PatchMapping("/{id}")

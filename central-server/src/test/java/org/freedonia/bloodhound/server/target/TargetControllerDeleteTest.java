@@ -11,6 +11,8 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.junit.jupiter.api.Test;
@@ -28,8 +30,10 @@ class TargetControllerDeleteTest {
     private final TargetRepository targetRepository = mock(TargetRepository.class);
     private final ScanRunService scanRunService = mock(ScanRunService.class);
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
-    private final TargetController controller =
-            new TargetController(targetRepository, scanRunService, scoreSnapshotRepository);
+    private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
+    private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final TargetController controller = new TargetController(
+            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

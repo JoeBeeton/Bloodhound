@@ -139,6 +139,23 @@ public class ScanRunRepository {
         return Boolean.TRUE.equals(exists);
     }
 
+    /**
+     * Most recent scan run for a single target (any status), for the Targets list' "last scan"
+     * display - excludes CT_CHECK and CVE_CORRELATION for the same reason {@link
+     * #findRecentByOrganization} does: neither is something a human would recognize as "a scan,"
+     * and without excluding them a ~20-minute background crt.sh sweep could show as the target's
+     * most recent activity instead of the actual last real scan.
+     */
+    public Optional<ScanRun> findMostRecentByTarget(UUID targetId) {
+        return jdbc.query(
+                        "SELECT * FROM scan_runs WHERE target_id = ? AND triggered_by NOT IN ('CT_CHECK', 'CVE_CORRELATION') "
+                                + "ORDER BY started_at DESC LIMIT 1",
+                        ROW_MAPPER,
+                        targetId)
+                .stream()
+                .findFirst();
+    }
+
     public boolean markComplete(UUID id, String status) {
         int rows = jdbc.update(
                 "UPDATE scan_runs SET status = ?, completed_at = now() WHERE id = ? AND status = 'RUNNING'",

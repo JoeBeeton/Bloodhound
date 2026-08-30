@@ -100,6 +100,29 @@ public class ScanJobRepository {
     }
 
     /**
+     * Whether this run queued any job of a module type in the given set - used by the Targets
+     * list to say "last scan: regular / deep" without fetching every job row just to check
+     * membership (see ScanRunService#isTier2ModuleType, the single source of truth for which
+     * module types count as Tier 2).
+     */
+    public boolean existsForRunWithModuleTypeIn(UUID scanRunId, List<String> moduleTypes) {
+        if (moduleTypes.isEmpty()) {
+            return false;
+        }
+        String placeholders = moduleTypes.stream().map(m -> "?").collect(java.util.stream.Collectors.joining(","));
+        Object[] args = new Object[moduleTypes.size() + 1];
+        args[0] = scanRunId;
+        for (int i = 0; i < moduleTypes.size(); i++) {
+            args[i + 1] = moduleTypes.get(i);
+        }
+        Boolean exists = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM scan_jobs WHERE scan_run_id = ? AND module_type IN (" + placeholders + "))",
+                Boolean.class,
+                args);
+        return Boolean.TRUE.equals(exists);
+    }
+
+    /**
      * True if this target already has a not-yet-finished job of this module
      * type sitting in the queue (PENDING, CLAIMED, or RUNNING) - used by
      * callers that dispatch on their own fixed schedule (CtMonitorScheduler)

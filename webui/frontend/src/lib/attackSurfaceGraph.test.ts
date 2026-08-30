@@ -24,6 +24,8 @@ function target(overrides: Partial<Target> = {}): Target {
     grade: "B",
     tier1OverallScore: 80,
     tier1Grade: "B",
+    lastScanAt: null,
+    lastScanWasDeep: null,
     ...overrides,
   };
 }
