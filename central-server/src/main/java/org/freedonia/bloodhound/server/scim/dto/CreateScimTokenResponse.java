@@ -4,4 +4,4 @@ import java.time.Instant;
 import java.util.UUID;
 
 /** token is the raw plaintext bearer value - returned exactly once, at creation, never again. */
-public record CreateScimTokenResponse(UUID id, String label, String token, Instant createdAt) {}
+public record CreateScimTokenResponse(UUID id, String label, String token, Instant createdAt, Instant expiresAt) {}

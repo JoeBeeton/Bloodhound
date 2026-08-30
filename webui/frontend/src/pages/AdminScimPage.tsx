@@ -14,6 +14,9 @@ interface ScimTokenSummary {
   label: string;
   createdAt: string;
   revokedAt: string | null;
+  /** Null means it never expires - unlike API keys, that's a deliberate, supported choice for a continuous directory-sync credential, not a gap. */
+  expiresAt: string | null;
+  expired: boolean;
 }
 
 interface CreatedToken {
@@ -21,11 +24,30 @@ interface CreatedToken {
   label: string;
   token: string;
   createdAt: string;
+  expiresAt: string | null;
 }
 
 interface ScimTokensResponse {
   scimBaseUrl: string;
   tokens: ScimTokenSummary[];
+}
+
+/** Same urgency treatment ApiKeysPage already gives a lapsing key - amber once expiry is close enough to act on, but only ever shown for a token that has an expiry at all. */
+const EXPIRY_WARNING_DAYS = 14;
+
+function daysUntil(iso: string, now: number = Date.now()): number {
+  return Math.ceil((new Date(iso).getTime() - now) / (24 * 60 * 60 * 1000));
+}
+
+export function statusDisplay(token: ScimTokenSummary, now: number = Date.now()): { label: string; className: string } {
+  if (token.revokedAt) return { label: "Revoked", className: "text-slate-500" };
+  if (token.expired) return { label: "Expired", className: "text-neon-amber" };
+  if (!token.expiresAt) return { label: "Active · never expires", className: "text-neon-cyan" };
+  const remaining = daysUntil(token.expiresAt, now);
+  if (remaining > 0 && remaining <= EXPIRY_WARNING_DAYS) {
+    return { label: `Active · ${remaining}d left`, className: "text-neon-amber" };
+  }
+  return { label: "Active", className: "text-neon-cyan" };
 }
 
 async function fetchTokens(orgId: string): Promise<ScimTokensResponse> {
@@ -34,11 +56,11 @@ async function fetchTokens(orgId: string): Promise<ScimTokensResponse> {
   return res.json();
 }
 
-async function createToken(orgId: string, label: string): Promise<CreatedToken> {
+async function createToken(orgId: string, label: string, expiresInDays: number | null): Promise<CreatedToken> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/scim-tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, expiresInDays }),
   });
   if (!res.ok) throw new Error("Failed to create SCIM token.");
   return res.json();
@@ -64,15 +86,20 @@ export function AdminScimPage() {
   const orgId = user?.organizationId ?? "";
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
+  // String, not number: "" is the meaningful "never expires" default (unlike ApiKeysPage, which
+  // always has a numeric DEFAULT_EXPIRY_DAYS) - a continuous directory-sync integration shouldn't
+  // get an unannounced expiry forced on it just because a numeric input needs *some* value.
+  const [expiresInDays, setExpiresInDays] = useState("");
   const [created, setCreated] = useState<CreatedToken | null>(null);
 
   const tokensQuery = useQuery({ queryKey: ["admin-scim-tokens", orgId], queryFn: () => fetchTokens(orgId), enabled: !!orgId });
 
   const createMutation = useMutation({
-    mutationFn: () => createToken(orgId, label),
+    mutationFn: () => createToken(orgId, label, expiresInDays === "" ? null : Number(expiresInDays)),
     onSuccess: (token) => {
       setCreated(token);
       setLabel("");
+      setExpiresInDays("");
       queryClient.invalidateQueries({ queryKey: ["admin-scim-tokens", orgId] });
     },
   });
@@ -120,6 +147,20 @@ export function AdminScimPage() {
               required
               className="min-w-0 flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
             />
+            <label className="flex items-center gap-2 font-mono text-xs text-slate-400">
+              Expires in
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={expiresInDays}
+                onChange={(e) => setExpiresInDays(e.target.value)}
+                placeholder="never"
+                title="Leave blank for a token that never expires - the right default for a continuous directory-sync integration."
+                className="w-20 rounded border border-slate-700 bg-void px-2 py-2 text-center text-slate-200 outline-none focus:border-neon-magenta"
+              />
+              days
+            </label>
             <button
               type="submit"
               disabled={createMutation.isPending}
@@ -128,6 +169,10 @@ export function AdminScimPage() {
               {createMutation.isPending ? "Generating…" : "Generate token"}
             </button>
           </form>
+          <p className="mt-2 font-mono text-[11px] text-slate-500">
+            Leave "Expires in" blank for a token that never expires — the right default for an ongoing SCIM sync.
+            Set a value if your compliance posture requires bounded-lifetime credentials.
+          </p>
           {createMutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to generate token.</p>}
         </div>
 
@@ -149,29 +194,30 @@ export function AdminScimPage() {
                 </tr>
               </thead>
               <tbody>
-                {tokensQuery.data.tokens.map((t) => (
-                  <tr key={t.id} className="border-b border-slate-800">
-                    <td className="py-2 text-slate-200">{t.label}</td>
-                    <td className="py-2 text-slate-400">{new Date(t.createdAt).toLocaleString()}</td>
-                    <td className="py-2">
-                      {t.revokedAt ? (
-                        <span className="text-slate-500">Revoked</span>
-                      ) : (
-                        <span className="text-neon-cyan">Active</span>
-                      )}
-                    </td>
-                    <td className="py-2 text-right">
-                      {!t.revokedAt && (
-                        <button
-                          onClick={() => revokeMutation.mutate(t.id)}
-                          className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
-                        >
-                          Revoke
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {tokensQuery.data.tokens.map((t) => {
+                  const status = statusDisplay(t);
+                  return (
+                    <tr key={t.id} className="border-b border-slate-800">
+                      <td className="py-2 text-slate-200">{t.label}</td>
+                      <td className="py-2 text-slate-400">{new Date(t.createdAt).toLocaleString()}</td>
+                      <td className="py-2">
+                        <span className={status.className} title={t.expiresAt ? `Expires ${new Date(t.expiresAt).toLocaleString()}` : "Never expires"}>
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        {!t.revokedAt && (
+                          <button
+                            onClick={() => revokeMutation.mutate(t.id)}
+                            className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -182,6 +228,11 @@ export function AdminScimPage() {
         <Modal title="SCIM token generated" onClose={() => setCreated(null)}>
           <p className="mb-3 text-sm text-slate-300">
             Paste this bearer token into your IdP's SCIM configuration alongside the base URL above.
+            {created.expiresAt ? (
+              <> It expires {new Date(created.expiresAt).toLocaleDateString()}.</>
+            ) : (
+              <> It never expires — remember to revoke it yourself if this integration is ever decommissioned.</>
+            )}
           </p>
           <div className="mb-1 flex items-center gap-2 rounded border border-neon-amber/40 bg-void/60 px-3 py-2">
             <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">{created.token}</code>

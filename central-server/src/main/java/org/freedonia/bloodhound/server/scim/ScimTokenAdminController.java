@@ -1,6 +1,8 @@
 package org.freedonia.bloodhound.server.scim;
 
 import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -60,12 +62,17 @@ public class ScimTokenAdminController {
     public ResponseEntity<CreateScimTokenResponse> create(
             @PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal, @Valid @RequestBody CreateScimTokenRequest request) {
         requireSameOrg(orgId, principal);
+        // Unlike API keys, no forced default here - null (never expires) is a deliberate,
+        // supported choice for a continuous directory-sync credential, not a gap to close later.
+        // See V44__scim_token_expiry.sql for the full reasoning.
+        Instant expiresAt =
+                request.expiresInDays() != null ? Instant.now().plus(request.expiresInDays(), ChronoUnit.DAYS) : null;
         byte[] raw = new byte[32];
         SECURE_RANDOM.nextBytes(raw);
         String token = "scim_" + Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
-        ScimToken created = scimTokenRepository.insert(orgId, request.label(), HashUtil.sha256Hex(token));
+        ScimToken created = scimTokenRepository.insert(orgId, request.label(), HashUtil.sha256Hex(token), expiresAt);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(new CreateScimTokenResponse(created.id(), created.label(), token, created.createdAt()));
+                .body(new CreateScimTokenResponse(created.id(), created.label(), token, created.createdAt(), created.expiresAt()));
     }
 
     @DeleteMapping("/{tokenId}")

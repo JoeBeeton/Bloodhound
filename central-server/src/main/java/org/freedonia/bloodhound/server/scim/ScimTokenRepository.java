@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.scim;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -17,7 +18,8 @@ public class ScimTokenRepository {
             rs.getString("label"),
             rs.getString("token_hash"),
             rs.getTimestamp("created_at").toInstant(),
-            rs.getTimestamp("revoked_at") != null ? rs.getTimestamp("revoked_at").toInstant() : null);
+            rs.getTimestamp("revoked_at") != null ? rs.getTimestamp("revoked_at").toInstant() : null,
+            rs.getTimestamp("expires_at") != null ? rs.getTimestamp("expires_at").toInstant() : null);
 
     private final JdbcTemplate jdbc;
 
@@ -28,7 +30,7 @@ public class ScimTokenRepository {
     public Optional<ScimToken> findActiveByTokenHash(String tokenHash) {
         return jdbc.query("SELECT * FROM scim_tokens WHERE token_hash = ?", ROW_MAPPER, tokenHash).stream()
                 .findFirst()
-                .filter(t -> t.revokedAt() == null);
+                .filter(t -> t.isActive(Instant.now()));
     }
 
     public List<ScimToken> findByOrganization(UUID organizationId) {
@@ -38,14 +40,16 @@ public class ScimTokenRepository {
                 organizationId);
     }
 
-    public ScimToken insert(UUID organizationId, String label, String tokenHash) {
+    /** expiresAt null means the token never expires - see V44__scim_token_expiry.sql. */
+    public ScimToken insert(UUID organizationId, String label, String tokenHash, Instant expiresAt) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO scim_tokens (id, organization_id, label, token_hash) VALUES (?, ?, ?, ?)",
+                "INSERT INTO scim_tokens (id, organization_id, label, token_hash, expires_at) VALUES (?, ?, ?, ?, ?)",
                 id,
                 organizationId,
                 label,
-                tokenHash);
+                tokenHash,
+                expiresAt != null ? java.sql.Timestamp.from(expiresAt) : null);
         return jdbc.query("SELECT * FROM scim_tokens WHERE id = ?", ROW_MAPPER, id).get(0);
     }
 
