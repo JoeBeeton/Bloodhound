@@ -190,6 +190,10 @@ const MODULE_STATUS_STYLES: Record<string, string> = {
   RUNNING: "bg-neon-amber/20 text-neon-amber animate-pulse",
   COMPLETE: "bg-neon-cyan/20 text-neon-cyan",
   FAILED: "bg-severity-critical/20 text-severity-critical",
+  // A cancelled run drops out of this active-scans list within one poll cycle, so this is a
+  // narrow window - added anyway for the same reason every other status-style map in this sweep
+  // got it: an undefined entry falls back to the exact same style PENDING gets below.
+  CANCELLED: "bg-slate-800 text-muted",
 };
 
 function formatElapsed(startedAt: string): string {

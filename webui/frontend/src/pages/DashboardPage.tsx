@@ -59,6 +59,10 @@ const RUN_STATUS_STYLES: Record<string, string> = {
   COMPLETE: "text-neon-cyan",
   PARTIAL_FAILURE: "text-severity-critical",
   FAILED: "text-severity-critical",
+  // A cancelled run stays in "Recent scan activity" indefinitely (it's real history, not
+  // filtered out) - a product review found it had no defined style here, falling back to the
+  // same flat text-slate-400 an unrecognized status would get.
+  CANCELLED: "text-muted",
 };
 
 export function DashboardPage() {
