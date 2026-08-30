@@ -4,7 +4,14 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.orgs.User;
 
 public record UserSummary(
-        UUID id, String email, String displayName, String role, String status, UUID organizationId, boolean mcpEnabled) {
+        UUID id,
+        String email,
+        String displayName,
+        String role,
+        String status,
+        UUID organizationId,
+        boolean mcpEnabled,
+        String identitySource) {
     public static UserSummary from(User user) {
         return new UserSummary(
                 user.id(),
@@ -13,6 +20,7 @@ public record UserSummary(
                 user.role(),
                 user.status(),
                 user.organizationId(),
-                user.mcpEnabled());
+                user.mcpEnabled(),
+                user.identitySource());
     }
 }

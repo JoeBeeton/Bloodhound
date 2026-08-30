@@ -49,13 +49,27 @@ async function createUser(
   return res.json();
 }
 
+async function resetPassword(orgId: string, userId: string): Promise<CreateUserResponse> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/users/${userId}/reset-password`, { method: "POST" });
+  if (!res.ok) {
+    const message = res.status === 409 ? "This user signs in via SSO and has no local password to reset." : "Failed to reset password.";
+    throw new Error(message);
+  }
+  return res.json();
+}
+
 export function AdminUsersPage() {
   usePageTitle("Users");
   const { user: currentUser } = useAuth();
   const orgId = currentUser?.organizationId ?? "";
   const queryClient = useQueryClient();
   const [showAddUser, setShowAddUser] = useState(false);
-  const [createdUser, setCreatedUser] = useState<CreateUserResponse | null>(null);
+  // Shown-once temporary password from either flow (new user, or an admin resetting an existing
+  // one) - both hand back the identical CreateUserResponse shape, so one reveal modal covers both.
+  const [passwordReveal, setPasswordReveal] = useState<{ response: CreateUserResponse; mode: "created" | "reset" } | null>(
+    null,
+  );
+  const [confirmingResetFor, setConfirmingResetFor] = useState<AdminUser | null>(null);
 
   const usersQuery = useQuery({ queryKey: ["admin-users", orgId], queryFn: () => fetchUsers(orgId), enabled: !!orgId });
 
@@ -63,6 +77,15 @@ export function AdminUsersPage() {
     mutationFn: (input: { userId: string; patch: { role?: string; status?: string; mcpEnabled?: boolean } }) =>
       updateUser(orgId, input.userId, input.patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] }),
+  });
+
+  const resetMutate = useMutation({
+    mutationFn: (userId: string) => resetPassword(orgId, userId),
+    onSuccess: (response) => {
+      setConfirmingResetFor(null);
+      setPasswordReveal({ response, mode: "reset" });
+      queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] });
+    },
   });
 
   return (
@@ -87,17 +110,18 @@ export function AdminUsersPage() {
 
         {usersQuery.data && (
           <div className="overflow-hidden rounded-lg border border-neon-cyan/20 bg-panel/60">
-            <div className="grid grid-cols-[1fr_1fr_140px_140px_70px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
+            <div className="grid grid-cols-[1fr_1fr_140px_140px_70px_120px] gap-2 border-b border-neon-cyan/20 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-400">
               <span>Email</span>
               <span>Display name</span>
               <span>Role</span>
               <span>Status</span>
               <span>MCP</span>
+              <span>Password</span>
             </div>
             {usersQuery.data.map((u, i) => (
               <div
                 key={u.id}
-                className={`grid grid-cols-[1fr_1fr_140px_140px_70px] items-center gap-2 px-4 py-2.5 ${
+                className={`grid grid-cols-[1fr_1fr_140px_140px_70px_120px] items-center gap-2 px-4 py-2.5 ${
                   i > 0 ? "border-t border-neon-cyan/10" : ""
                 }`}
               >
@@ -139,6 +163,22 @@ export function AdminUsersPage() {
                   onChange={(e) => mutate.mutate({ userId: u.id, patch: { mcpEnabled: e.target.checked } })}
                   title={`${u.mcpEnabled ? "Disable" : "Enable"} MCP access for this user`}
                 />
+                {u.identitySource === "LOCAL" ? (
+                  <button
+                    onClick={() => setConfirmingResetFor(u)}
+                    className="justify-self-start rounded border border-slate-700 px-2 py-1 font-mono text-[11px] uppercase tracking-widest text-slate-300 transition hover:border-neon-amber/60 hover:text-neon-amber"
+                    title="Generate a new temporary password and sign this user out everywhere"
+                  >
+                    Reset
+                  </button>
+                ) : (
+                  <span
+                    className="font-mono text-[11px] text-slate-600"
+                    title={`This user is provisioned via ${u.identitySource} and has no local password to reset`}
+                  >
+                    {u.identitySource === "SAML" ? "SSO" : u.identitySource}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -151,30 +191,62 @@ export function AdminUsersPage() {
           onClose={() => setShowAddUser(false)}
           onCreated={(created) => {
             setShowAddUser(false);
-            setCreatedUser(created);
+            setPasswordReveal({ response: created, mode: "created" });
             queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] });
           }}
         />
       )}
 
-      {createdUser && (
-        <Modal title="User created" onClose={() => setCreatedUser(null)}>
+      {confirmingResetFor && (
+        <Modal title="Reset password?" onClose={() => setConfirmingResetFor(null)}>
           <p className="mb-3 text-sm text-slate-300">
-            <span className="font-mono text-neon-cyan">{createdUser.user.email}</span> can now log in with the
-            temporary password below.
+            This generates a new temporary password for{" "}
+            <span className="font-mono text-neon-cyan">{confirmingResetFor.email}</span> and immediately signs them
+            out of every device — their current password stops working the moment you confirm.
+          </p>
+          {resetMutate.isError && (
+            <p className="mb-3 font-mono text-xs text-severity-critical">
+              {(resetMutate.error as Error)?.message ?? "Failed to reset password."}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirmingResetFor(null)}
+              className="flex-1 rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => resetMutate.mutate(confirmingResetFor.id)}
+              disabled={resetMutate.isPending}
+              className="flex-1 rounded bg-neon-magenta/90 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
+            >
+              {resetMutate.isPending ? "Resetting…" : "Reset password"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {passwordReveal && (
+        <Modal title={passwordReveal.mode === "created" ? "User created" : "Password reset"} onClose={() => setPasswordReveal(null)}>
+          <p className="mb-3 text-sm text-slate-300">
+            <span className="font-mono text-neon-cyan">{passwordReveal.response.user.email}</span>{" "}
+            {passwordReveal.mode === "created"
+              ? "can now log in with the temporary password below."
+              : "has been signed out everywhere and can log back in with the temporary password below."}
           </p>
           <div className="mb-1 flex items-center gap-2 rounded border border-neon-amber/40 bg-void/60 px-3 py-2">
             <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">
-              {createdUser.temporaryPassword}
+              {passwordReveal.response.temporaryPassword}
             </code>
-            <CopyButton value={createdUser.temporaryPassword} />
+            <CopyButton value={passwordReveal.response.temporaryPassword} />
           </div>
           <p className="mb-4 font-mono text-xs text-severity-critical">
-            This password is shown once and cannot be retrieved again. Relay it to {createdUser.user.displayName}{" "}
-            securely — they should change it after logging in.
+            This password is shown once and cannot be retrieved again. Relay it to{" "}
+            {passwordReveal.response.user.displayName} securely — they should change it after logging in.
           </p>
           <button
-            onClick={() => setCreatedUser(null)}
+            onClick={() => setPasswordReveal(null)}
             className="w-full rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10"
           >
             Done
