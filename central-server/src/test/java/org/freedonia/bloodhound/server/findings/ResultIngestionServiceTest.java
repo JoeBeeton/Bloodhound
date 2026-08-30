@@ -10,20 +10,29 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 
 class ResultIngestionServiceTest {
 
     private final FindingRepository repository = mock(FindingRepository.class);
-    private final ResultIngestionService service = new ResultIngestionService(repository);
+    private final RuleWeightRepository ruleWeightRepository = mock(RuleWeightRepository.class);
+    private final ResultIngestionService service = new ResultIngestionService(repository, ruleWeightRepository);
 
     private final UUID scanRunId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
 
     private static FindingPayload payload(String ruleId, String asset) {
         return new FindingPayload(ruleId, "HIGH", "DNS", "title", "description", asset, Map.of());
+    }
+
+    @BeforeEach
+    void noRulesDisabledByDefault() {
+        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of());
     }
 
     @Test
@@ -74,5 +83,38 @@ class ResultIngestionServiceTest {
         verify(repository, times(1)).touch(List.of(openId), scanRunId);
         verify(repository, times(1)).resolve(List.of(staleId));
         verify(repository, times(0)).insert(eq(scanRunId), eq(targetId), eq("DNS_POSTURE"), eq(reproduced));
+    }
+
+    @Test
+    void disabledRule_neverInserted_evenThoughItWasReported() {
+        // The actual point of this test: a product/AppSec review found rules_catalog.enabled was
+        // completely inert - returned by the API, rendered on the admin page, but never checked
+        // anywhere. This is the enforcement that makes it real.
+        when(repository.findOpenKeys(targetId, "DNS_POSTURE")).thenReturn(List.of());
+        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of("DNS_SPF_MISSING"));
+        FindingPayload disabled = payload("DNS_SPF_MISSING", "example.com");
+        FindingPayload stillEnabled = payload("DNS_CAA_MISSING", "example.com");
+
+        service.ingest(scanRunId, targetId, "DNS_POSTURE", List.of(disabled, stillEnabled));
+
+        verify(repository, times(0)).insert(eq(scanRunId), eq(targetId), eq("DNS_POSTURE"), eq(disabled));
+        verify(repository).insert(scanRunId, targetId, "DNS_POSTURE", stillEnabled);
+    }
+
+    @Test
+    void ruleDisabledAfterItsFindingWasAlreadyOpen_getsResolvedOnNextScan() {
+        // A rule that was open, then got disabled, is no longer in this run's reported batch at
+        // all (filtered before FindingReconciler ever sees it) - the exact same "not reproduced
+        // this run" path that resolves any other stale finding, with no separate cleanup needed.
+        UUID openId = UUID.randomUUID();
+        when(repository.findOpenKeys(targetId, "DNS_POSTURE"))
+                .thenReturn(List.of(new OpenFindingKey(openId, "DNS_SPF_MISSING", "example.com")));
+        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of("DNS_SPF_MISSING"));
+        FindingPayload nowDisabled = payload("DNS_SPF_MISSING", "example.com");
+
+        service.ingest(scanRunId, targetId, "DNS_POSTURE", List.of(nowDisabled));
+
+        verify(repository).resolve(List.of(openId));
+        verify(repository, times(0)).insert(eq(scanRunId), eq(targetId), eq("DNS_POSTURE"), eq(nowDisabled));
     }
 }

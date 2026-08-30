@@ -1,7 +1,9 @@
 package org.freedonia.bloodhound.server.findings;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -14,14 +16,26 @@ public class ResultIngestionService {
     private static final Logger log = LoggerFactory.getLogger(ResultIngestionService.class);
 
     private final FindingRepository findingRepository;
+    private final RuleWeightRepository ruleWeightRepository;
 
-    public ResultIngestionService(FindingRepository findingRepository) {
+    public ResultIngestionService(FindingRepository findingRepository, RuleWeightRepository ruleWeightRepository) {
         this.findingRepository = findingRepository;
+        this.ruleWeightRepository = ruleWeightRepository;
     }
 
     public void ingest(UUID scanRunId, UUID targetId, String moduleType, List<FindingPayload> reported) {
+        // A product/AppSec review found rules_catalog.enabled was completely inert - not
+        // checked anywhere. Filtering here (before reconciliation, not after) means a disabled
+        // rule's findings are never persisted at all, AND any of its findings already open from
+        // before it was disabled get resolved on this target's next scan - FindingReconciler
+        // treats "not in this run's reported batch" as "no longer present" regardless of why,
+        // so this needs no separate cleanup logic of its own.
+        Set<String> disabledRuleIds = ruleWeightRepository.findDisabledRuleIds();
+        List<FindingPayload> allowed =
+                disabledRuleIds.isEmpty() ? reported : reported.stream().filter(f -> !disabledRuleIds.contains(f.ruleId())).toList();
+
         List<OpenFindingKey> currentlyOpen = findingRepository.findOpenKeys(targetId, moduleType);
-        ReconciliationPlan plan = FindingReconciler.reconcile(currentlyOpen, reported);
+        ReconciliationPlan plan = FindingReconciler.reconcile(currentlyOpen, allowed);
 
         plan.toInsert().forEach(payload -> insertTolerant(scanRunId, targetId, moduleType, payload));
         if (!plan.toTouch().isEmpty()) {
