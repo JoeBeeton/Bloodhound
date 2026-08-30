@@ -7,6 +7,7 @@ import { ChangePasswordModal } from "./ChangePasswordModal";
 import { GridHorizon } from "./GridHorizon";
 import { Modal } from "./Modal";
 import { NotificationCenter } from "./NotificationCenter";
+import { QuickTargetSearch } from "./QuickTargetSearch";
 import { SecurityStatusBanner } from "./SecurityStatusBanner";
 
 const NAV_LINK_CLASS =
@@ -144,6 +145,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {status === "authenticated" && (
             <div className="flex items-center gap-4">
               <nav className="hidden items-center gap-5 lg:flex">{navLinks}</nav>
+              <QuickTargetSearch />
               <NotificationCenter />
               <button
                 onClick={() => setMobileMenuOpen((v) => !v)}
