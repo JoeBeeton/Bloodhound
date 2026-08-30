@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
@@ -126,7 +126,39 @@ describe("AdminSlackPage - test-send", () => {
     await waitFor(() => expect(screen.queryByText(/test message sent/i)).not.toBeInTheDocument());
   });
 
-  it("shows an error message when removing the integration fails", async () => {
+  it("clicking 'Remove integration' opens a confirmation modal without deleting anything yet", async () => {
+    // A security/AppSec review found this was the last credential-revoke-shaped action in the
+    // app that still fired straight from onClick with zero confirmation, the same "one stray
+    // click, no undo" bug ApiKeysPage's and AdminScimPage's own revoke flows were already fixed
+    // against - the webhook URL isn't retrievable once removed, so undoing this means generating
+    // a brand new one from Slack's own admin UI, not just re-toggling a switch.
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration()));
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+
+    await user.click(screen.getByRole("button", { name: "Remove integration" }));
+
+    expect(await screen.findByText(/isn't retrievable once removed/i)).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1); // only the initial load - no DELETE fired yet
+  });
+
+  it("Cancel closes the confirmation without removing anything", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration()));
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+
+    await user.click(screen.getByRole("button", { name: "Remove integration" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText(/isn't retrievable once removed/i)).not.toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error message inside the modal when removing the integration fails, and it stays open", async () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse(existingIntegration())) // initial load
@@ -136,9 +168,30 @@ describe("AdminSlackPage - test-send", () => {
     await screen.findByRole("button", { name: /send test message/i });
 
     await user.click(screen.getByRole("button", { name: "Remove integration" }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Remove integration" }));
 
     expect(
       await screen.findByText("Failed to remove the integration. Try again.", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/isn't retrievable once removed/i)).toBeInTheDocument(); // modal stays open
+  });
+
+  it("confirming removes the integration and resets the form", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse(existingIntegration())) // initial load
+      .mockResolvedValueOnce(jsonResponse(undefined)) // DELETE
+      .mockResolvedValueOnce(jsonResponse(null, { status: 204 })); // refetch after invalidation - none configured
+
+    renderPage();
+    await screen.findByRole("button", { name: /send test message/i });
+
+    await user.click(screen.getByRole("button", { name: "Remove integration" }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Remove integration" }));
+
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/orgs/org-1/slack-integration", { method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
