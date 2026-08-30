@@ -37,7 +37,26 @@ describe("FindingsFilterBar", () => {
     const clearButton = screen.getByText(/clear filters/i);
     await user.click(clearButton);
 
-    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [] });
+    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [], status: undefined });
+  });
+
+  it("Clear filters preserves the Resolved status view instead of snapping back to Open", async () => {
+    // Regression coverage: status is the primary Open/Resolved view mode, not an incidental
+    // narrowing filter like severity/category - clearing those must not also silently discard
+    // which view the user is looking at.
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <FindingsFilterBar
+        value={{ severities: ["HIGH"], categories: [], status: "RESOLVED" }}
+        onChange={onChange}
+        resultCount={3}
+      />,
+    );
+
+    await user.click(screen.getByText(/clear filters/i));
+
+    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [], status: "RESOLVED" });
   });
 
   it("clicking an inactive severity toggle adds it to the selection", async () => {
