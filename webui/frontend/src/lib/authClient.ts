@@ -1,6 +1,7 @@
 import type { AuthState } from "./types";
 
-function formatRetryAfter(res: Response): string {
+/** Exported for reuse by any other endpoint that can return the same 429 + Retry-After shape - see ChangePasswordModal, which hits the same LoginAttemptLimiter through a different endpoint. */
+export function formatRetryAfter(res: Response): string {
   const seconds = Number(res.headers.get("Retry-After"));
   if (!Number.isFinite(seconds) || seconds <= 0) return "a few minutes";
   const minutes = Math.ceil(seconds / 60);
