@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
+import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
@@ -102,6 +103,13 @@ export function AdminSlackPage() {
   const [enabled, setEnabled] = useState(true);
   const [types, setTypes] = useState<string[]>(["NEW_FINDINGS", "SCAN_FAILED"]);
   const [ownTargetsOnly, setOwnTargetsOnly] = useState(false);
+  // The webhook URL is never sent back to the browser once saved (see SlackIntegration's own
+  // comment) - removing the integration means re-generating and re-pasting a brand new one from
+  // Slack's own admin UI to restore it, not just re-toggling a switch. A security/AppSec review
+  // found this button fired deleteMutation straight from onClick with zero confirmation, the
+  // same "one stray click, no undo" shape ApiKeysPage's and AdminScimPage's own revoke flows
+  // were already fixed against this session - this is the last one that hadn't been.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const query = useQuery({
     queryKey: ["admin-slack-integration", orgId],
@@ -143,6 +151,7 @@ export function AdminSlackPage() {
   const deleteMutation = useMutation({
     mutationFn: () => deleteIntegration(orgId),
     onSuccess: () => {
+      setConfirmingDelete(false);
       setWebhookUrl("");
       setIsEditingWebhook(true);
       setTypes([]);
@@ -288,8 +297,7 @@ export function AdminSlackPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => deleteMutation.mutate()}
-                  disabled={deleteMutation.isPending}
+                  onClick={() => setConfirmingDelete(true)}
                   className="font-mono text-xs uppercase tracking-widest text-severity-critical hover:underline"
                 >
                   Remove integration
@@ -320,11 +328,36 @@ export function AdminSlackPage() {
               {(saveMutation.error as Error)?.message ?? "Failed to save."}
             </p>
           )}
+        </form>
+      </div>
+
+      {confirmingDelete && (
+        <Modal title="Remove Slack integration" onClose={() => setConfirmingDelete(false)}>
+          <p className="mb-4 text-sm text-slate-300">
+            Remove this Slack integration? Notifications stop immediately, and the webhook URL isn't retrievable
+            once removed - restoring this later means generating a new Incoming Webhook in Slack and pasting it in
+            again from scratch.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {deleteMutation.isPending ? "Removing…" : "Remove integration"}
+            </button>
+          </div>
           {deleteMutation.isError && (
             <p className="mt-2 font-mono text-xs text-severity-critical">Failed to remove the integration. Try again.</p>
           )}
-        </form>
-      </div>
+        </Modal>
+      )}
     </Shell>
   );
 }
