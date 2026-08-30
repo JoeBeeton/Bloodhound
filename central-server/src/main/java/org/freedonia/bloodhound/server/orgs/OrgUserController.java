@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
@@ -39,10 +40,13 @@ public class OrgUserController {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenRepository refreshTokenRepository;
 
-    public OrgUserController(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public OrgUserController(
+            UserRepository userRepository, PasswordEncoder passwordEncoder, RefreshTokenRepository refreshTokenRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     @GetMapping
@@ -74,6 +78,34 @@ public class OrgUserController {
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "a user with that email already exists in this organization");
         }
+    }
+
+    /**
+     * The only recourse for a LOCAL user who forgot their password - there's no self-serve
+     * "forgot password" flow, since (as with user creation, see #create) there's no
+     * email-sending infrastructure in this project to deliver a reset link to. Rejects SAML
+     * users: they have no password_hash to reset (auth happens entirely at the IdP), so this
+     * would silently do nothing useful for them. Revokes every existing session for the user,
+     * the same as a self-service password change already does (see
+     * UserSelfController#changePassword) - if the account was reset because it was compromised,
+     * this is also what cuts off whoever was already logged in as them.
+     */
+    @PostMapping("/{id}/reset-password")
+    public CreateUserResponse resetPassword(
+            @PathVariable UUID orgId, @PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireSameOrg(orgId, principal);
+        User target = userRepository
+                .findById(id)
+                .filter(u -> u.organizationId().equals(orgId))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!"LOCAL".equals(target.identitySource())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "this user signs in via SSO and has no local password to reset");
+        }
+        String temporaryPassword = generateTemporaryPassword();
+        userRepository.updatePasswordHash(id, passwordEncoder.encode(temporaryPassword));
+        refreshTokenRepository.revokeAllForUser(id);
+        return CreateUserResponse.of(userRepository.findById(id).orElseThrow(), temporaryPassword);
     }
 
     @PatchMapping("/{id}")

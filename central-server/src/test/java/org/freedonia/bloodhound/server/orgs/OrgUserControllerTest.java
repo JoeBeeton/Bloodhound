@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
@@ -29,7 +30,9 @@ class OrgUserControllerTest {
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final OrgUserController controller = new OrgUserController(userRepository, passwordEncoder);
+    private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final OrgUserController controller =
+            new OrgUserController(userRepository, passwordEncoder, refreshTokenRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();
@@ -38,6 +41,10 @@ class OrgUserControllerTest {
 
     private User user(UUID id, UUID org, String role, String status) {
         return new User(id, org, "u@example.com", "Name", "hash", "LOCAL", role, status, Instant.now(), true);
+    }
+
+    private User samlUser(UUID id, UUID org) {
+        return new User(id, org, "u@example.com", "Name", null, "SAML", "VIEWER", "ACTIVE", Instant.now(), true);
     }
 
     @Test
@@ -85,6 +92,48 @@ class OrgUserControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(201);
         assertThat(response.getBody().temporaryPassword()).isNotBlank();
         assertThat(response.getBody().user().id()).isEqualTo(created.id());
+    }
+
+    @Test
+    void resetPassword_orgIdMismatch_forbidden_neverTouchesPasswordOrSessions() {
+        assertThatThrownBy(() -> controller.resetPassword(otherOrgId, UUID.randomUUID(), admin))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(userRepository, never()).updatePasswordHash(any(), any());
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void resetPassword_targetInDifferentOrg_notFound() {
+        UUID targetUserId = UUID.randomUUID();
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(user(targetUserId, otherOrgId, "VIEWER", "ACTIVE")));
+
+        assertThatThrownBy(() -> controller.resetPassword(orgId, targetUserId, admin))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void resetPassword_samlUser_conflict_hasNoLocalPasswordToReset() {
+        UUID targetUserId = UUID.randomUUID();
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(samlUser(targetUserId, orgId)));
+
+        assertThatThrownBy(() -> controller.resetPassword(orgId, targetUserId, admin))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(409));
+        verify(userRepository, never()).updatePasswordHash(any(), any());
+    }
+
+    @Test
+    void resetPassword_localUser_setsNewHashAndRevokesEverySession() {
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.encode(any())).thenReturn("newHash");
+
+        CreateUserResponse response = controller.resetPassword(orgId, targetUserId, admin);
+
+        assertThat(response.temporaryPassword()).isNotBlank();
+        verify(userRepository).updatePasswordHash(targetUserId, "newHash");
+        verify(refreshTokenRepository).revokeAllForUser(targetUserId);
     }
 
     @Test

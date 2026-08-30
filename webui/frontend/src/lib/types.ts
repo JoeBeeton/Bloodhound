@@ -362,6 +362,8 @@ export interface AdminUser {
   status: string;
   organizationId: string;
   mcpEnabled: boolean;
+  /** "LOCAL" (password-based) or "SAML" (SSO - no local password to reset). */
+  identitySource: string;
 }
 
 export type UserRole = "ADMIN" | "ANALYST" | "VIEWER";
