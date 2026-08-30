@@ -33,6 +33,7 @@ function target(overrides: Partial<Target> = {}): Target {
     tier1Grade: "A",
     lastScanAt: "2026-01-01T00:00:00Z",
     lastScanWasDeep: false,
+    notes: null,
     ...overrides,
   };
 }

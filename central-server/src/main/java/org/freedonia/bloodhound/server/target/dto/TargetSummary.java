@@ -24,7 +24,8 @@ public record TargetSummary(
         /** Absent (null) until this target has had its first scan (CT_CHECK/CVE_CORRELATION don't count - see ScanRunRepository#findMostRecentByTarget). */
         Instant lastScanAt,
         /** Null alongside lastScanAt when there's no scan yet; otherwise true for a Tier 2 deep scan, false for a regular Tier 1 scan. */
-        Boolean lastScanWasDeep) {
+        Boolean lastScanWasDeep,
+        String notes) {
 
     /** No scan has ever completed for this target yet - score/grade are absent, not zero. */
     public static TargetSummary from(Target target) {
@@ -51,6 +52,7 @@ public record TargetSummary(
                 latestScore != null ? latestScore.tier1OverallScore() : null,
                 latestScore != null ? latestScore.tier1Grade() : null,
                 lastScanAt,
-                lastScanWasDeep);
+                lastScanWasDeep,
+                target.notes());
     }
 }

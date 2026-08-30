@@ -41,7 +41,7 @@ class DashboardControllerTest {
     private final JwtPrincipal principal = new JwtPrincipal(UUID.randomUUID(), orgId, "VIEWER", "viewer@example.com");
 
     private Target target(String type) {
-        return new Target(UUID.randomUUID(), orgId, "t-" + type + ".example.com", type, "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now());
+        return new Target(UUID.randomUUID(), orgId, "t-" + type + ".example.com", type, "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
     }
 
     private Finding finding(UUID id, UUID targetId, String evidenceJson) {

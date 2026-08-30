@@ -43,7 +43,7 @@ class TargetControllerDeleteTest {
     private final JwtPrincipal analyst = new JwtPrincipal(UUID.randomUUID(), orgId, "ANALYST", "analyst@example.com");
 
     private Target target(boolean isActive) {
-        return new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), isActive, Instant.now());
+        return new Target(targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), isActive, Instant.now(), null);
     }
 
     @Test
