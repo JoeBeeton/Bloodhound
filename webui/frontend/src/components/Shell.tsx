@@ -112,6 +112,19 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="relative min-h-screen bg-void">
+      {/* WCAG 2.4.1 (Bypass Blocks) - a product/AppSec review found no way to skip the nav at
+          all. Every page routes through this one Shell, and the nav has grown to 7+ links plus
+          the notification bell over the course of this session - a keyboard user had to tab
+          through the entire thing, on every single page, before ever reaching that page's actual
+          content. sr-only/focus:not-sr-only is the standard pattern: invisible until it
+          receives keyboard focus (the very first Tab press on any page), then shown as a real,
+          clickable/activatable link that jumps straight to <main>. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:border focus:border-neon-cyan focus:bg-void focus:px-4 focus:py-2 focus:font-mono focus:text-xs focus:uppercase focus:tracking-widest focus:text-neon-cyan"
+      >
+        Skip to main content
+      </a>
       <GridHorizon />
       <div className="relative z-10 flex min-h-screen flex-col">
         <header className="flex items-center justify-between gap-4 px-6 py-6">
@@ -153,7 +166,13 @@ export function Shell({ children }: { children: ReactNode }) {
             which (targets list, findings, compare charts) are taller than the viewport.
             Screens that want a centered card (login, transient full-page states) opt in
             themselves via <CenteredState>/their own flex-1 wrapper, same pattern LoginPage uses. */}
-        <main className="flex flex-1 flex-col items-center gap-4 px-6 pb-16">{children}</main>
+        {/* tabIndex={-1}: <main> isn't natively focusable, so without this, activating the skip
+            link above would scroll here but leave keyboard focus wherever it already was (on the
+            link itself) - the next Tab press would just walk back into the nav, defeating the
+            whole point. This makes it a valid focus target so focus actually lands here too. */}
+        <main id="main-content" tabIndex={-1} className="flex flex-1 flex-col items-center gap-4 px-6 pb-16 outline-none">
+          {children}
+        </main>
       </div>
       {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
       {idleWarning && (
