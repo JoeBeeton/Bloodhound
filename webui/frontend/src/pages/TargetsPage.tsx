@@ -47,9 +47,12 @@ async function createTarget(input: { hostname: string; targetType: TargetType })
   return res.json();
 }
 
+/** A 409 means TargetController's own in-flight check rejected this - a real, expected outcome
+ * (a cadence-scheduled scan already running, or a near-simultaneous second click) worth telling
+ * the user apart from an actual failure, not a generic error. */
 async function triggerScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to start scan.");
+  if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start scan.");
   return res.json();
 }
 
@@ -80,7 +83,7 @@ async function triggerBulkScan(targetIds: string[]): Promise<BulkScanOutcome[]> 
 
 async function triggerDeepScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan/deep`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to start deep scan.");
+  if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start deep scan.");
   return res.json();
 }
 
@@ -495,17 +498,22 @@ function TargetRow({
   });
 
   const status = runQuery.data?.status;
+  // Neither mutation ever surfaced a failure before - a 409 ("already running", see
+  // TargetController#requireNoRunInFlight) is a real, expected outcome now that bulk scan can
+  // fire many of these in parallel, not something that should fail silently like before.
+  const scanError = scanNow.isError ? (scanNow.error as Error).message : deepScanNow.isError ? (deepScanNow.error as Error).message : null;
 
   return (
-    <div
-      // flex-wrap + gap-y-2: a real 375px-viewport screenshot confirmed the hostname block and
-      // the action-button cluster together exceeded the viewport with no way to wrap, pushing
-      // the whole page ~35px past its own width. Letting this row wrap (button cluster drops to
-      // its own line under the hostname on narrow screens) fixes it without hiding any control.
-      className={`flex flex-wrap items-center justify-between gap-y-2 rounded-lg border bg-panel/60 px-4 py-3 ${
-        target.isActive ? "border-neon-cyan/10" : "border-slate-700/60 opacity-70"
-      }`}
-    >
+    <div>
+      <div
+        // flex-wrap + gap-y-2: a real 375px-viewport screenshot confirmed the hostname block and
+        // the action-button cluster together exceeded the viewport with no way to wrap, pushing
+        // the whole page ~35px past its own width. Letting this row wrap (button cluster drops to
+        // its own line under the hostname on narrow screens) fixes it without hiding any control.
+        className={`flex flex-wrap items-center justify-between gap-y-2 rounded-lg border bg-panel/60 px-4 py-3 ${
+          target.isActive ? "border-neon-cyan/10" : "border-slate-700/60 opacity-70"
+        }`}
+      >
       <div className="flex items-center gap-3">
         {selectable && (
           <input
@@ -609,6 +617,8 @@ function TargetRow({
           </>
         )}
       </div>
+      </div>
+      {scanError && <p className="mt-1 px-1 font-mono text-xs text-severity-critical">{scanError}</p>}
     </div>
   );
 }

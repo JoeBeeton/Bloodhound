@@ -199,6 +199,7 @@ public class TargetController {
     public ResponseEntity<ScanRunSummary> scanNow(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
         requireOwnedTarget(id, principal);
+        requireNoRunInFlight(id);
         ScanRun run = scanRunService.createManualScan(id, principal.userId());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ScanRunSummary(run.id(), run.targetId(), run.status(), run.startedAt()));
@@ -215,9 +216,29 @@ public class TargetController {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN, "target is not authorized for Tier 2 active scanning");
         }
+        requireNoRunInFlight(id);
         ScanRun run = scanRunService.createDeepScan(id, principal.userId());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ScanRunSummary(run.id(), run.targetId(), run.status(), run.startedAt()));
+    }
+
+    /**
+     * A security/reliability review found neither manual trigger had ever checked this -
+     * {@link org.freedonia.bloodhound.server.jobqueue.ScanAutoScheduler} already guards its own
+     * cadence-driven scans against exactly this race (see its own use of the same repository
+     * method), but a human clicking "Scan now" twice quickly, or the new bulk "Scan N selected"
+     * action on the Targets page firing many requests in parallel against targets that may
+     * already have a cadence-scheduled scan mid-flight, could previously enqueue a second full
+     * set of Tier 1/2 jobs for the same target concurrently - double the real outbound traffic
+     * against the actual scanned domain, and two ScanRuns racing to reconcile the same findings
+     * set against each other's still-in-progress results. Reported as 409, not silently ignored,
+     * so a caller (the UI, an API-key integration) can tell "didn't start because one's already
+     * running" apart from a real failure.
+     */
+    private void requireNoRunInFlight(UUID targetId) {
+        if (scanRunRepository.existsRunningForTarget(targetId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "a scan is already running for this target");
+        }
     }
 
     private Target requireOwnedTarget(UUID id, JwtPrincipal principal) {

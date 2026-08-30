@@ -97,15 +97,18 @@ async function downloadFindingsCsv(targetId: string, filters: FindingsFilterStat
   URL.revokeObjectURL(url);
 }
 
+/** A 409 means TargetController's own in-flight check rejected this - a real, expected outcome
+ * (a cadence-scheduled scan already running, or a near-simultaneous second click) worth telling
+ * the user apart from an actual failure, not a generic error. */
 async function triggerScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to start scan.");
+  if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start scan.");
   return res.json();
 }
 
 async function triggerDeepScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan/deep`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to start deep scan.");
+  if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start deep scan.");
   return res.json();
 }
 
@@ -454,6 +457,14 @@ export function TargetDetailPage() {
             (deep scans: up to {TIER2_SUBDOMAIN_CAP}, scanned sequentially within a time budget)
             {subdomainCount > 0 ? ` — ${subdomainCount} currently discovered.` : "."}
           </p>
+          {/* Neither mutation ever surfaced a failure before - a 409 ("already running", see
+              TargetController#requireNoRunInFlight) is a real, expected outcome, not something
+              that should fail silently. */}
+          {(scanNow.isError || deepScanNow.isError) && (
+            <p className="mt-1 font-mono text-xs text-severity-critical">
+              {((scanNow.error ?? deepScanNow.error) as Error).message}
+            </p>
+          )}
           {runQuery.data && status !== "RUNNING" && <ScanRunDrilldown run={runQuery.data} />}
         </div>
 
