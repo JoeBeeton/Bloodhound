@@ -3,16 +3,36 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CenteredState } from "../components/CenteredState";
 import { ErrorState } from "../components/ErrorState";
+import { FindingCard } from "../components/FindingCard";
+import { FindingDetailModal } from "../components/FindingDetailModal";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { moduleLabel } from "../lib/moduleLabel";
 import { groupJobsByModule, type JobGroup } from "../lib/scanJobs";
-import type { ScanJobAttempt, ScanJobStatus, ScanRunDetail } from "../lib/types";
+import type { Finding, ScanJobAttempt, ScanJobStatus, ScanRunDetail } from "../lib/types";
 
 async function fetchRun(runId: string): Promise<ScanRunDetail> {
   const res = await apiFetch(`/api/v1/runs/${runId}`);
   if (!res.ok) throw new Error("Failed to load scan.");
   return res.json();
+}
+
+interface FindingsPage {
+  items: Finding[];
+  totalCount: number;
+}
+
+/**
+ * Same target-scoped "current open findings" endpoint TargetDetailPage uses, resolved through
+ * the run's target rather than a path param (see FindingController.forRun) - a scan run doesn't
+ * have its own separate findings set, so this shows the target's current state in the context of
+ * this run, matching the endpoint's existing semantics.
+ */
+async function fetchRunFindings(runId: string): Promise<FindingsPage> {
+  const res = await apiFetch(`/api/v1/runs/${runId}/findings?limit=500`);
+  if (!res.ok) throw new Error("Failed to load findings.");
+  const items: Finding[] = await res.json();
+  return { items, totalCount: totalCountFromResponse(res, items.length) };
 }
 
 const RUN_STATUS_STYLES: Record<string, string> = {
@@ -148,11 +168,17 @@ function JobRow({ job }: { job: ScanJobStatus }) {
 export function ScanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const runId = id!;
+  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
 
   const query = useQuery({
     queryKey: ["run", runId],
     queryFn: () => fetchRun(runId),
     refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? 3000 : false),
+  });
+
+  const findingsQuery = useQuery({
+    queryKey: ["run-findings", runId],
+    queryFn: () => fetchRunFindings(runId),
   });
 
   if (query.isLoading) {
@@ -211,7 +237,7 @@ export function ScanDetailPage() {
           )}
         </div>
 
-        <div className="rounded-lg border border-neon-cyan/20 bg-panel/80 px-4">
+        <div className="mb-6 rounded-lg border border-neon-cyan/20 bg-panel/80 px-4">
           {groupJobsByModule(run.jobs).map((group) =>
             group.jobs.length === 1 ? (
               <JobRow key={group.moduleType} job={group.jobs[0]} />
@@ -220,7 +246,25 @@ export function ScanDetailPage() {
             ),
           )}
         </div>
+
+        <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">
+          Findings {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
+        </h2>
+        {findingsQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading findings…</p>}
+        {findingsQuery.isError && (
+          <ErrorState message="Failed to load findings." onRetry={() => findingsQuery.refetch()} />
+        )}
+        {findingsQuery.data?.totalCount === 0 && (
+          <p className="font-mono text-sm text-slate-400">No findings from this scan's target.</p>
+        )}
+        <div className="flex flex-col gap-3">
+          {findingsQuery.data?.items.map((finding) => (
+            <FindingCard key={finding.id} finding={finding} onSelect={() => setSelectedFinding(finding)} />
+          ))}
+        </div>
       </div>
+
+      {selectedFinding && <FindingDetailModal finding={selectedFinding} onClose={() => setSelectedFinding(null)} />}
     </Shell>
   );
 }
