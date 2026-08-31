@@ -6,10 +6,11 @@ import { BrandProtectionPanel } from "../components/BrandProtectionPanel";
 import { CategoryBreakdown } from "../components/CategoryBreakdown";
 import { ErrorState } from "../components/ErrorState";
 import { FindingCard } from "../components/FindingCard";
-import { FindingDetailModal } from "../components/FindingDetailModal";
+import { dismissFinding, FindingDetailModal } from "../components/FindingDetailModal";
 import { FindingDiffView } from "../components/FindingDiffView";
 import { FindingsFilterBar, type FindingsFilterState } from "../components/FindingsFilterBar";
 import { GradeBadge } from "../components/GradeBadge";
+import { Modal } from "../components/Modal";
 import { TechHostingPanel } from "../components/TechHostingPanel";
 import { ScanRunDrilldown } from "../components/ScanRunDrilldown";
 import { ScoreTrendChart } from "../components/ScoreTrendChart";
@@ -17,6 +18,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
 import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target, TargetType } from "../lib/types";
+import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
 
@@ -126,6 +128,25 @@ async function downloadFindingsCsv(targetId: string, filters: FindingsFilterStat
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+interface BulkDismissOutcome {
+  findingId: string;
+  ok: boolean;
+}
+
+/**
+ * A product review found triaging a scan with dozens of low-severity/false-positive findings
+ * meant dismissing each one individually through FindingDetailModal, the same one-at-a-time gap
+ * TargetsPage's own bulk-scan/bulk-remove actions already closed for targets. Same
+ * Promise.allSettled-over-N-real-requests pattern as those two - reuses the exact single-finding
+ * dismiss endpoint (see FindingDetailModal's own exported dismissFinding) rather than adding a
+ * dedicated bulk backend endpoint, so one failure (e.g. a finding that resolved itself between
+ * page load and the click) doesn't block the rest from dismissing.
+ */
+export async function triggerBulkDismiss(findingIds: string[]): Promise<BulkDismissOutcome[]> {
+  const results = await Promise.allSettled(findingIds.map((id) => dismissFinding(id)));
+  return results.map((r, i) => ({ findingId: findingIds[i], ok: r.status === "fulfilled" }));
 }
 
 /** A 409 means TargetController's own in-flight check rejected this - a real, expected outcome
@@ -404,6 +425,25 @@ export function TargetDetailPage() {
   const [findingsExpanded, setFindingsExpanded] = useState(false);
   const [sortByScoreImpact, setSortByScoreImpact] = useState(false);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const [selectedFindingIds, setSelectedFindingIds] = useState<Set<string>>(new Set());
+  const [pendingBulkDismiss, setPendingBulkDismiss] = useState<Finding[] | null>(null);
+  const [bulkDismissSummary, setBulkDismissSummary] = useState<{ dismissed: number; failed: number } | null>(null);
+  const { user } = useAuth();
+  // Same ADMIN/ANALYST gate FindingDetailModal's own single-dismiss button already uses -
+  // ROLE_VIEWER can read findings but never mutate them.
+  const canDismissFindings = user?.role === "ADMIN" || user?.role === "ANALYST";
+
+  const bulkDismiss = useMutation({
+    mutationFn: triggerBulkDismiss,
+    onSuccess: (outcomes) => {
+      const dismissed = outcomes.filter((o) => o.ok).length;
+      const failed = outcomes.length - dismissed;
+      setBulkDismissSummary({ dismissed, failed });
+      setPendingBulkDismiss(null);
+      setSelectedFindingIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["findings", targetId] });
+    },
+  });
   // Server-ordered by severity by default; "sort by score impact" answers the
   // actual question this feature exists for - "what should I fix first for the
   // biggest score improvement" - findings that don't affect the score (null/NaN
@@ -644,9 +684,80 @@ export function TargetDetailPage() {
           </p>
         )}
 
+        {bulkDismissSummary && (
+          <p
+            className="mb-3 flex items-center justify-between gap-3 rounded border border-neon-cyan/20 bg-panel/40 px-3 py-2 font-mono text-xs text-neon-cyan"
+            role="status"
+          >
+            <span>
+              Dismissed {bulkDismissSummary.dismissed} finding{bulkDismissSummary.dismissed === 1 ? "" : "s"}
+              {bulkDismissSummary.failed > 0 && (
+                <span className="text-severity-critical"> · {bulkDismissSummary.failed} failed</span>
+              )}
+              .
+            </span>
+            <button onClick={() => setBulkDismissSummary(null)} className="text-slate-500 hover:text-slate-300">
+              ✕
+            </button>
+          </p>
+        )}
+
+        {/* Bulk dismiss only makes sense on the Open view - Resolved/Dismissed findings aren't
+            eligible (dismiss() itself only transitions from OPEN, see FindingRepository's own
+            javadoc), so selection would just be a dead end on those two filter views. */}
+        {canDismissFindings && filters.status === "OPEN" && visibleFindings && visibleFindings.length > 1 && (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/10 bg-panel/40 px-4 py-2">
+            <label className="flex items-center gap-2 font-mono text-xs text-slate-300">
+              <input
+                type="checkbox"
+                className="checkbox-cyber"
+                checked={visibleFindings.every((f) => selectedFindingIds.has(f.id))}
+                onChange={() =>
+                  setSelectedFindingIds((prev) =>
+                    visibleFindings.every((f) => prev.has(f.id)) ? new Set() : new Set(visibleFindings.map((f) => f.id)),
+                  )
+                }
+                aria-label="Select all visible findings"
+              />
+              {selectedFindingIds.size > 0 ? `${selectedFindingIds.size} selected` : "Select all"}
+            </label>
+            {selectedFindingIds.size > 0 && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedFindingIds(new Set())}
+                  className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-slate-200"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() =>
+                    setPendingBulkDismiss(visibleFindings.filter((f) => selectedFindingIds.has(f.id)))
+                  }
+                  className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:border-neon-cyan/50 hover:text-neon-cyan"
+                >
+                  Dismiss {selectedFindingIds.size} selected
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-3">
           {visibleFindings?.map((finding) => (
-            <FindingCard key={finding.id} finding={finding} onSelect={() => setSelectedFinding(finding)} />
+            <FindingCard
+              key={finding.id}
+              finding={finding}
+              onSelect={() => setSelectedFinding(finding)}
+              selectable={canDismissFindings && filters.status === "OPEN"}
+              selected={selectedFindingIds.has(finding.id)}
+              onToggleSelect={() =>
+                setSelectedFindingIds((prev) => {
+                  const next = new Set(prev);
+                  next.has(finding.id) ? next.delete(finding.id) : next.add(finding.id);
+                  return next;
+                })
+              }
+            />
           ))}
         </div>
         {findingsQuery.data && (
@@ -692,6 +803,42 @@ export function TargetDetailPage() {
         />
       </div>
       {selectedFinding && <FindingDetailModal finding={selectedFinding} onClose={() => setSelectedFinding(null)} />}
+      {pendingBulkDismiss && (
+        <Modal title="Dismiss findings" onClose={() => setPendingBulkDismiss(null)}>
+          <p className="mb-3 text-sm text-slate-300">
+            Dismiss these {pendingBulkDismiss.length} findings? Each stays dismissed - hidden from the Open view,
+            skipped by future scan reconciliation - until you reopen it individually, even if a later scan still
+            detects the same issue.
+          </p>
+          <ul className="mb-4 max-h-48 overflow-y-auto rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-300">
+            {pendingBulkDismiss.map((f) => (
+              <li key={f.id} className="truncate py-0.5">
+                {f.title} <span className="text-muted">· {f.affectedAsset}</span>
+              </li>
+            ))}
+          </ul>
+          {bulkDismiss.isError && (
+            <p role="alert" className="mb-3 font-mono text-xs text-severity-critical">
+              Failed to dismiss findings.
+            </p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setPendingBulkDismiss(null)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => bulkDismiss.mutate(pendingBulkDismiss.map((f) => f.id))}
+              disabled={bulkDismiss.isPending}
+              className="rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10 disabled:opacity-40"
+            >
+              {bulkDismiss.isPending ? "Dismissing…" : `Dismiss ${pendingBulkDismiss.length}`}
+            </button>
+          </div>
+        </Modal>
+      )}
     </Shell>
   );
 }

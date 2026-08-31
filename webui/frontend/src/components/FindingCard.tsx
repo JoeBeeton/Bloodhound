@@ -36,13 +36,29 @@ function isCompoundFinding(category: string): boolean {
   return category === "COMPOUND";
 }
 
-/** Clickable finding summary card - shared by the target detail, subdomain detail, and dashboard findings lists. */
-export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect: () => void }) {
-  return (
-    <button
-      onClick={onSelect}
-      className={`w-full rounded-lg border border-l-4 bg-panel/60 p-4 text-left transition hover:bg-panel ${SEVERITY_STYLES[finding.severity]} ${SEVERITY_ACCENT[finding.severity]}`}
-    >
+/**
+ * Clickable finding summary card - shared by the target detail, subdomain detail, and dashboard
+ * findings lists. `selectable` adds a checkbox for TargetDetailPage's own bulk-dismiss action -
+ * an `<input>` can't nest inside the card's own `<button>` (invalid HTML, and ambiguous which
+ * click the browser means), so selectable mode swaps the outer element from a button to a plain
+ * div with the checkbox beside a separate inner button wrapping just the content - the checkbox
+ * click and the "open detail" click stay fully independent either way.
+ */
+export function FindingCard({
+  finding,
+  onSelect,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}: {
+  finding: Finding;
+  onSelect: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
+  const content = (
+    <>
       <div className="mb-1 flex items-center justify-between gap-3">
         <span className={`font-mono text-xs font-bold uppercase tracking-widest ${SEVERITY_STYLES[finding.severity]}`}>
           {finding.severity}
@@ -85,6 +101,31 @@ export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect:
         </p>
         <ScoreImpactBadge impact={finding.scoreImpact} />
       </div>
-    </button>
+    </>
+  );
+
+  const cardClasses = `w-full rounded-lg border border-l-4 bg-panel/60 p-4 text-left transition hover:bg-panel ${SEVERITY_STYLES[finding.severity]} ${SEVERITY_ACCENT[finding.severity]}`;
+
+  if (!selectable) {
+    return (
+      <button onClick={onSelect} className={cardClasses}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`${cardClasses} flex items-start gap-3`}>
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={onToggleSelect}
+        aria-label={`Select ${finding.displayId}`}
+        className="checkbox-cyber mt-1 shrink-0"
+      />
+      <button onClick={onSelect} className="min-w-0 flex-1 text-left">
+        {content}
+      </button>
+    </div>
   );
 }
