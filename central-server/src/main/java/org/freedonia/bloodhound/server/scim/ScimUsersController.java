@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.scim.dto.ScimListResponse;
 import org.freedonia.bloodhound.server.scim.dto.ScimPatchRequest;
 import org.freedonia.bloodhound.server.scim.dto.ScimUserResource;
@@ -46,11 +47,15 @@ public class ScimUsersController {
             Pattern.compile("userName\\s+eq\\s+[\"']([^\"']*)[\"']", Pattern.CASE_INSENSITIVE);
 
     private final ScimUserRepository scimUserRepository;
+    private final AuditLogRepository auditLogRepository;
     private final String spBaseUrl;
 
     public ScimUsersController(
-            ScimUserRepository scimUserRepository, @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
+            ScimUserRepository scimUserRepository,
+            AuditLogRepository auditLogRepository,
+            @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
         this.scimUserRepository = scimUserRepository;
+        this.auditLogRepository = auditLogRepository;
         this.spBaseUrl = spBaseUrl;
     }
 
@@ -82,6 +87,14 @@ public class ScimUsersController {
         try {
             ScimUserRow created = scimUserRepository.insert(
                     principal.organizationId(), request.userName(), displayName, request.activeOrDefault(), request.externalId());
+            // An audit review found this whole controller - the actual execution path an external
+            // IdP uses to provision/deprovision accounts in this org - had no audit trail at all,
+            // a real blind spot: a misconfigured IdP mapping or a compromised SCIM token could
+            // silently create or disable accounts with nothing to show for it in the shared Audit
+            // Log page. actorUserId is null (there's no human behind a SCIM call, see
+            // ScimPrincipal's own fields) - actorEmail carries the token's own label instead, so
+            // an admin reading the log can still tell *which* SCIM integration did this.
+            recordScimAudit(principal, "SCIM_USER_CREATED", created.id(), "userName=" + created.userName());
             return ResponseEntity.status(HttpStatus.CREATED).body(ScimUserResource.from(created, spBaseUrl));
         } catch (DataIntegrityViolationException e) {
             throw scimError(HttpStatus.CONFLICT, "A user with this userName already exists in this organization");
@@ -96,7 +109,7 @@ public class ScimUsersController {
     @PutMapping("/{id}")
     public ScimUserResource replace(
             @AuthenticationPrincipal ScimPrincipal principal, @PathVariable UUID id, @RequestBody ScimUserWriteRequest request) {
-        requireUser(principal, id);
+        ScimUserRow before = requireUser(principal, id);
         requireUserName(request.userName());
         String displayName = ScimUserResource.combineDisplayName(request.name(), request.displayName());
         try {
@@ -105,6 +118,10 @@ public class ScimUsersController {
         } catch (DataIntegrityViolationException e) {
             throw scimError(HttpStatus.CONFLICT, "A user with this userName already exists in this organization");
         }
+        // Only the active flip is audit-worthy here, same restraint the isActive/mcpEnabled fixes
+        // elsewhere in this app already apply - a userName/displayName sync via SCIM is routine
+        // profile upkeep, not a security-relevant state transition.
+        recordScimActiveStatusChange(principal, id, before.active(), request.activeOrDefault());
         return ScimUserResource.from(requireUser(principal, id), spBaseUrl);
     }
 
@@ -126,6 +143,9 @@ public class ScimUsersController {
         } catch (DataIntegrityViolationException e) {
             throw scimError(HttpStatus.CONFLICT, "A user with this userName already exists in this organization");
         }
+        if (plan.active() != null) {
+            recordScimActiveStatusChange(principal, id, current.active(), plan.active());
+        }
         return ScimUserResource.from(requireUser(principal, id), spBaseUrl);
     }
 
@@ -138,9 +158,29 @@ public class ScimUsersController {
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deactivate(@AuthenticationPrincipal ScimPrincipal principal, @PathVariable UUID id) {
-        requireUser(principal, id);
+        ScimUserRow before = requireUser(principal, id);
         scimUserRepository.updateActive(principal.organizationId(), id, false);
+        recordScimActiveStatusChange(principal, id, before.active(), false);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Only records a real transition - a redundant PATCH/PUT/DELETE re-sending the account's current active value produces no entry. */
+    private void recordScimActiveStatusChange(ScimPrincipal principal, UUID userId, boolean before, boolean after) {
+        if (before == after) {
+            return;
+        }
+        recordScimAudit(principal, after ? "SCIM_USER_ACTIVATED" : "SCIM_USER_DEACTIVATED", userId, null);
+    }
+
+    private void recordScimAudit(ScimPrincipal principal, String action, UUID targetUserId, String detail) {
+        auditLogRepository.record(
+                principal.organizationId(),
+                null,
+                "SCIM: " + principal.tokenLabel(),
+                action,
+                "USER",
+                targetUserId.toString(),
+                detail);
     }
 
     private ScimUserRow requireUser(ScimPrincipal principal, UUID id) {

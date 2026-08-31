@@ -86,6 +86,9 @@ const ACTION_LABELS: Record<string, string> = {
   TARGET_AUTHORIZATION_REVOKED: "Target authorization revoked",
   API_KEY_CREATED: "API key created",
   API_KEY_REVOKED: "API key revoked",
+  SCIM_USER_CREATED: "User provisioned (SCIM)",
+  SCIM_USER_ACTIVATED: "User activated (SCIM)",
+  SCIM_USER_DEACTIVATED: "User deactivated (SCIM)",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
@@ -99,6 +102,7 @@ const DESTRUCTIVE_ACTIONS = new Set([
   "SCIM_TOKEN_REVOKED",
   "TARGET_AUTHORIZATION_REVOKED",
   "API_KEY_REVOKED",
+  "SCIM_USER_DEACTIVATED",
 ]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
