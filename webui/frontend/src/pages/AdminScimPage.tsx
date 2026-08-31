@@ -154,6 +154,8 @@ export function AdminScimPage() {
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="e.g. Okta production"
+              // Matches CreateScimTokenRequest's own @Size(max=200).
+              maxLength={200}
               required
               className="min-w-0 flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
             />
