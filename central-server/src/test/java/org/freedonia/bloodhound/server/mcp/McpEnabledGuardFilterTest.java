@@ -40,6 +40,10 @@ class McpEnabledGuardFilterTest {
         return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", "ACTIVE", Instant.now(), mcpEnabled, null);
     }
 
+    private User userWithStatus(String status) {
+        return new User(userId, orgId, "u@example.com", "Name", "hash", "LOCAL", "ANALYST", status, Instant.now(), true, null);
+    }
+
     private Organization org(boolean mcpEnabled) {
         return new Organization(orgId, "Org", "org-slug", Instant.now(), mcpEnabled);
     }
@@ -102,6 +106,27 @@ class McpEnabledGuardFilterTest {
 
         verify(chain, never()).doFilter(request, response);
         assertThat(response.getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    void userDisabledStatus_orgEnabled_mcpEnabledFlagStillTrue_blocksWithForbidden() throws Exception {
+        // The real gap this covers: a refresh_token grant re-derives its principal from the
+        // stored authorization snapshot, not a fresh CustomUserDetailsService lookup, so
+        // disabling a user's account doesn't stop their already-issued MCP refresh token from
+        // minting new access tokens - and mcpEnabled is a separate flag that disabling a user
+        // doesn't also flip. This filter is the actual point that must catch it.
+        authenticateAsJwt(jwtFor(userId, orgId));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(userWithStatus("DISABLED")));
+        when(organizationRepository.findById(orgId)).thenReturn(Optional.of(org(true)));
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, chain);
+
+        verify(chain, never()).doFilter(request, response);
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(response.getContentAsString()).contains("mcp_disabled");
     }
 
     @Test

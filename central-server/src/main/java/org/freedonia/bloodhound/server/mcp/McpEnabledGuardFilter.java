@@ -18,11 +18,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Enforces the org-wide and per-user MCP kill switches (Organization#mcpEnabled,
- * User#mcpEnabled) on every /mcp/** request, checked live against the database rather than
- * trusted from the token's own org_id/user_id claims (see McpTokenCustomizer) - a toggle flipped
- * by an admin takes effect on a client's very next tool call, not just after its current token
- * expires. Runs after the OAuth2 resource-server filter (added via addFilterAfter in
- * McpSecurityConfig) so the validated Jwt is already the Authentication principal.
+ * User#mcpEnabled), and that the user is still ACTIVE, on every /mcp/** request - checked live
+ * against the database rather than trusted from the token's own org_id/user_id claims (see
+ * McpTokenCustomizer) - a toggle flipped by an admin takes effect on a client's very next tool
+ * call, not just after its current token expires. Runs after the OAuth2 resource-server filter
+ * (added via addFilterAfter in McpSecurityConfig) so the validated Jwt is already the
+ * Authentication principal.
+ *
+ * <p>The status check specifically closes a real gap: Spring's refresh_token grant
+ * (McpSecurityConfig's authorization-server chain, {@code /oauth2/token}) re-derives its
+ * principal from the *stored* OAuth2Authorization row - the User snapshotted at the original
+ * authorization_code exchange - rather than calling CustomUserDetailsService#loadUserByUsername
+ * again, so it never re-checks live status the way a fresh login does (see
+ * AuthenticatedUserPrincipal#isEnabled, which does gate a *new* authorization). Confirmed live: an
+ * ACTIVE user connects an MCP client, is later disabled (offboarded, compromise response, etc.),
+ * and - before this fix - their already-issued refresh token kept minting new, working access
+ * tokens indefinitely; their web password stopped working, but their AI agent didn't. mcpEnabled
+ * alone doesn't help here either, since disabling a user's account doesn't also flip that
+ * separate, independent flag. This filter is the actual data-access boundary (every real tool
+ * call passes through it), so gating here closes the access even though the underlying refresh
+ * token itself is untouched - see mcp.McpConnectionsController for revoking that token directly.
  */
 public class McpEnabledGuardFilter extends OncePerRequestFilter {
 
@@ -66,8 +81,9 @@ public class McpEnabledGuardFilter extends OncePerRequestFilter {
         Optional<User> user = userRepository.findById(userId);
         boolean orgAllows = org.map(Organization::mcpEnabled).orElse(false);
         boolean userAllows = user.map(User::mcpEnabled).orElse(false);
+        boolean userActive = user.map(u -> "ACTIVE".equals(u.status())).orElse(false);
 
-        if (!orgAllows || !userAllows) {
+        if (!orgAllows || !userAllows || !userActive) {
             respondDisabled(response);
             return;
         }
