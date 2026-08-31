@@ -10,6 +10,7 @@ import org.freedonia.bloodhound.server.orgs.Organization;
 import org.freedonia.bloodhound.server.orgs.OrganizationRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -58,12 +59,28 @@ public class IdentityProviderController {
                 .orElseGet(() -> unconfiguredTemplate(orgId));
     }
 
+    /** See IdentityProviderConfigRequest's own javadoc for why a real body, not just a thrown reason, is needed here. */
+    public record ErrorMessageResponse(String message) {}
+
     @PutMapping
-    public IdentityProviderConfigResponse put(
+    public ResponseEntity<?> put(
             @PathVariable UUID orgId,
             @Valid @RequestBody IdentityProviderConfigRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
+        // Bean validation above only checks shape (blank/length/URL-shaped) - the cert's actual
+        // parseability was previously never checked until the first real SAML login attempt (see
+        // DbRelyingPartyRegistrationRepository#parseCertificate). Re-parse it now, eagerly, with
+        // that exact method, so a fat-fingered paste is rejected immediately with a message the
+        // admin can act on, instead of silently breaking every login for the org later.
+        try {
+            DbRelyingPartyRegistrationRepository.parseCertificate(request.idpX509Cert());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorMessageResponse(
+                            "Invalid X.509 certificate - paste the full PEM block (including the BEGIN/END lines) "
+                                    + "or raw base64-encoded DER, exactly as your IdP provides it."));
+        }
         Organization org = organizationRepository.findById(orgId).orElseThrow();
         IdentityProvider saved = identityProviderRepository.upsert(
                 orgId,
@@ -88,7 +105,7 @@ public class IdentityProviderController {
                 "ORGANIZATION",
                 orgId.toString(),
                 "enabled=" + saved.enabled());
-        return IdentityProviderConfigResponse.from(saved, spBaseUrl);
+        return ResponseEntity.ok(IdentityProviderConfigResponse.from(saved, spBaseUrl));
     }
 
     private IdentityProviderConfigResponse unconfiguredTemplate(UUID orgId) {

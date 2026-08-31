@@ -36,3 +36,16 @@ export function totalCountFromResponse(res: Response, fallbackCount: number): nu
   const parsed = header ? Number(header) : NaN;
   return Number.isFinite(parsed) ? parsed : fallbackCount;
 }
+
+/**
+ * Reads a specific error message from a failed response's {message} JSON body - the pattern
+ * every controller that needs to tell the caller *why* a request was rejected uses (see
+ * SlackIntegrationController's own ErrorMessageResponse javadoc for why this can't just be a
+ * ResponseStatusException's reason: this app's default error handler never puts that in the
+ * body). Falls back to a generic message for endpoints that don't return one (a bare 500, a
+ * network failure, or a controller that hasn't been given a specific message yet).
+ */
+export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  const body = await res.json().catch(() => undefined);
+  return (body && typeof body.message === "string" && body.message) || fallback;
+}

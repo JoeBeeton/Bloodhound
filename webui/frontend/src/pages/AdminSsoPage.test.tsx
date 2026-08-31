@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
 import { AdminSsoPage } from "./AdminSsoPage";
 
-vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/apiClient")>()),
+  apiFetch: vi.fn(),
+}));
 vi.mock("../components/Shell", () => ({ Shell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("../components/AdminSubNav", () => ({ AdminSubNav: () => <div /> }));
 vi.mock("../lib/useAuth", () => ({ useAuth: () => ({ user: { organizationId: "org-1", role: "ADMIN" } }) }));
