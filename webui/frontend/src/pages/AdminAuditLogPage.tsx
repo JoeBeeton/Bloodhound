@@ -182,7 +182,9 @@ export function AdminAuditLogPage() {
           organization.
         </p>
         {exportCsvMutation.isError && (
-          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export the audit log. Try again.</p>
+          <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
+            Failed to export the audit log. Try again.
+          </p>
         )}
 
         <div className="mb-4 flex flex-col gap-2 rounded-lg border border-neon-cyan/10 bg-panel/40 p-3">

@@ -416,7 +416,7 @@ export function ScansPage() {
             </button>
           </div>
           {cancelMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
               {(cancelMutation.error as Error).message}
             </p>
           )}

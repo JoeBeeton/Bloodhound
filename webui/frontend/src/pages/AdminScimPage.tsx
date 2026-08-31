@@ -183,7 +183,11 @@ export function AdminScimPage() {
             Leave "Expires in" blank for a token that never expires — the right default for an ongoing SCIM sync.
             Set a value if your compliance posture requires bounded-lifetime credentials.
           </p>
-          {createMutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to generate token.</p>}
+          {createMutation.isError && (
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+              Failed to generate token.
+            </p>
+          )}
         </div>
 
         <div className="rounded-lg border border-slate-700 bg-panel/60 p-5">
@@ -266,7 +270,9 @@ export function AdminScimPage() {
             </button>
           </div>
           {revokeMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to revoke token. Try again.</p>
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+              Failed to revoke token. Try again.
+            </p>
           )}
         </Modal>
       )}

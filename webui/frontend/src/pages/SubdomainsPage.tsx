@@ -194,7 +194,9 @@ export function SubdomainsPage() {
           </div>
         </div>
         {exportCsvMutation.isError && (
-          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export subdomains. Try again.</p>
+          <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
+            Failed to export subdomains. Try again.
+          </p>
         )}
 
         {isLoading && <p className="font-mono text-sm text-slate-400">Loading subdomains…</p>}

@@ -116,7 +116,7 @@ export function AdminMcpPage() {
             </button>
           </div>
           {saveMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
               {(saveMutation.error as Error)?.message ?? "Failed to save."}
             </p>
           )}

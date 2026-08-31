@@ -139,7 +139,9 @@ export function FindingsPage() {
           )}
         </div>
         {exportCsvMutation.isError && (
-          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export findings. Try again.</p>
+          <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
+            Failed to export findings. Try again.
+          </p>
         )}
 
         <FindingsFilterBar
