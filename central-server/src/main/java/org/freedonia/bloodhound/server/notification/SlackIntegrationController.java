@@ -77,8 +77,21 @@ public class SlackIntegrationController {
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
+    /**
+     * A generic 400 body carrying a real, specific message - confirmed live (same finding as
+     * UserSelfController#changePassword's own WeakPasswordResponse) that this app's default error
+     * handler never exposes a ResponseStatusException's reason text to the caller at all (the JSON
+     * body is just {timestamp,status,error,path}, no message field). The three save() validation
+     * failures below and test()'s "nothing configured yet" case all previously threw
+     * ResponseStatusException with a specific reason - silently swallowed in production, meaning
+     * every admin who hit one of these actually saw either a blank error or (worse, since the
+     * frontend's res.text() call got back the stringified {timestamp,...} JSON instead of empty)
+     * a raw JSON blob, never the intended message.
+     */
+    public record ErrorMessageResponse(String message) {}
+
     @PutMapping
-    public SlackIntegrationResponse save(
+    public ResponseEntity<?> save(
             @PathVariable UUID orgId,
             @AuthenticationPrincipal JwtPrincipal principal,
             @RequestBody SlackConfigRequest request) {
@@ -90,24 +103,27 @@ public class SlackIntegrationController {
             // is only changing enabled/notificationTypes/ownTargetsOnly, leave the webhook as-is",
             // not "clear the webhook". That requires an existing row; there's nothing to keep on
             // a first-ever save.
-            webhookUrl = slackIntegrationRepository
-                    .findByOrganization(orgId)
-                    .map(SlackIntegration::webhookUrl)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "webhookUrl is required"));
+            Optional<String> existing =
+                    slackIntegrationRepository.findByOrganization(orgId).map(SlackIntegration::webhookUrl);
+            if (existing.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new ErrorMessageResponse("webhookUrl is required"));
+            }
+            webhookUrl = existing.get();
         } else if (!SlackWebhookValidator.isValid(webhookUrl)) {
             // Enforced here, once, before the URL is ever stored - not inside SlackNotifier
             // (see its Javadoc for why that split matters for testability). Without this, an
             // admin-configurable "webhook URL" is an open server-side-request-to-arbitrary-URL
             // primitive.
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "webhookUrl must be a genuine https://hooks.slack.com/services/... URL");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorMessageResponse("webhookUrl must be a genuine https://hooks.slack.com/services/... URL"));
         }
         List<String> types = request.notificationTypes() == null ? List.of() : request.notificationTypes();
         for (String type : types) {
             try {
                 NotificationType.valueOf(type);
             } catch (IllegalArgumentException e) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown notification type: " + type);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(new ErrorMessageResponse("Unknown notification type: " + type));
             }
         }
         SlackIntegration saved =
@@ -125,7 +141,7 @@ public class SlackIntegrationController {
                 "ORGANIZATION",
                 orgId.toString(),
                 "enabled=" + saved.enabled());
-        return SlackIntegrationResponse.from(saved);
+        return ResponseEntity.ok(SlackIntegrationResponse.from(saved));
     }
 
     public record TestSendResponse(boolean success, String detail) {}
@@ -143,19 +159,20 @@ public class SlackIntegrationController {
      * for up to ~8s (SlackNotifier's own HTTP timeout) is the whole point here.
      */
     @PostMapping("/test")
-    public TestSendResponse test(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
+    public ResponseEntity<?> test(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
-        SlackIntegration integration = slackIntegrationRepository
-                .findByOrganization(orgId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.BAD_REQUEST, "No Slack webhook configured yet - save one first."));
+        Optional<SlackIntegration> integration = slackIntegrationRepository.findByOrganization(orgId);
+        if (integration.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorMessageResponse("No Slack webhook configured yet - save one first."));
+        }
         var result = slackNotifier.attemptDelivery(
-                integration.webhookUrl(),
+                integration.get().webhookUrl(),
                 "Bloodhound test notification",
                 "This is a test message from Bloodhound. If you're seeing this, delivery is working.",
                 "INFO",
                 appBaseUrl + "/dashboard");
-        return new TestSendResponse(result.success(), result.detail());
+        return ResponseEntity.ok(new TestSendResponse(result.success(), result.detail()));
     }
 
     @DeleteMapping

@@ -88,7 +88,7 @@ describe("AdminSlackPage - test-send", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse(existingIntegration()))
-      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => "No Slack webhook configured yet - save one first." } as Response);
+      .mockResolvedValueOnce(jsonResponse({ message: "No Slack webhook configured yet - save one first." }, { ok: false, status: 400 }));
 
     renderPage();
     const testBtn = await screen.findByRole("button", { name: /send test message/i });
@@ -211,51 +211,71 @@ describe("AdminSlackPage - unsaved changes warning", () => {
     vi.restoreAllMocks();
   });
 
-  function dispatchBeforeUnload(): BeforeUnloadEvent {
-    const event = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
-    window.dispatchEvent(event);
-    return event;
+  // A real `window.dispatchEvent(new Event("beforeunload"))` invokes *every* listener currently
+  // registered on the shared jsdom `window`, not just this component's own - under a full-suite
+  // run that made these assertions intermittently pick up state from something else entirely
+  // (a different test's still-settling effect, a listener from an unrelated file), producing
+  // different failures each run despite this file passing cleanly in isolation every time.
+  // Spying on addEventListener/removeEventListener and driving the captured handler directly
+  // tests the same contract (does useUnsavedChangesWarning register/clean up a beforeunload
+  // listener, and does that listener call preventDefault) without depending on the ambient
+  // window's cumulative listener set at all.
+  function lastBeforeUnloadHandler(spy: ReturnType<typeof vi.spyOn>): (e: Event) => void {
+    const call = spy.mock.calls.filter(([type]: [string, unknown]) => type === "beforeunload").at(-1);
+    if (!call) throw new Error("beforeunload listener was never registered");
+    return call[1] as (e: Event) => void;
+  }
+
+  function fireCapturedHandler(spy: ReturnType<typeof vi.spyOn>): boolean {
+    const event = new Event("beforeunload", { cancelable: true });
+    lastBeforeUnloadHandler(spy)(event);
+    return event.defaultPrevented;
   }
 
   it("does not warn on load, before anything is typed", async () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
     mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration()));
 
     renderPage();
     await screen.findByRole("button", { name: /send test message/i });
 
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+    expect(addSpy).not.toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
 
   it("warns once a fresh webhook URL is typed - the one thing here that isn't retrievable if lost", async () => {
     const user = userEvent.setup();
+    const addSpy = vi.spyOn(window, "addEventListener");
     mockedApiFetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null, text: async () => "" } as Response);
 
     renderPage();
     const urlInput = await screen.findByPlaceholderText(/hooks\.slack\.com/i);
 
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(false); // empty field - nothing to lose yet
+    expect(addSpy).not.toHaveBeenCalledWith("beforeunload", expect.any(Function)); // empty field - nothing to lose yet
 
     await user.type(urlInput, "https://hooks.slack.com/services/T1/B1/x");
 
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+    expect(fireCapturedHandler(addSpy)).toBe(true);
     expect(screen.getByText("Unsaved changes.")).toBeInTheDocument();
   });
 
   it("warns when a checkbox is toggled away from the loaded config", async () => {
     const user = userEvent.setup();
+    const addSpy = vi.spyOn(window, "addEventListener");
     mockedApiFetch.mockResolvedValueOnce(jsonResponse(existingIntegration({ enabled: true })));
 
     renderPage();
     await screen.findByRole("button", { name: /send test message/i });
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+    expect(addSpy).not.toHaveBeenCalledWith("beforeunload", expect.any(Function));
 
     await user.click(screen.getByLabelText("Enabled"));
 
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+    expect(fireCapturedHandler(addSpy)).toBe(true);
   });
 
   it("does not warn once the typed webhook is saved", async () => {
     const user = userEvent.setup();
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
     mockedApiFetch
       .mockResolvedValueOnce({ ok: true, status: 204, json: async () => null, text: async () => "" } as Response) // initial load
       .mockResolvedValueOnce(jsonResponse(existingIntegration())) // save
@@ -264,10 +284,14 @@ describe("AdminSlackPage - unsaved changes warning", () => {
     renderPage();
     const urlInput = await screen.findByPlaceholderText(/hooks\.slack\.com/i);
     await user.type(urlInput, "https://hooks.slack.com/services/T1/B1/x");
-    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+    const handler = lastBeforeUnloadHandler(addSpy);
+    expect(fireCapturedHandler(addSpy)).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(dispatchBeforeUnload().defaultPrevented).toBe(false));
+    // hasUnsavedChanges flipping back to false unregisters that exact handler - re-firing it
+    // directly (rather than re-dispatching on window, which it's no longer attached to) would
+    // trivially still preventDefault, so cleanup is the only thing worth asserting here.
+    await waitFor(() => expect(removeSpy).toHaveBeenCalledWith("beforeunload", handler));
   });
 });
