@@ -194,7 +194,15 @@ export function AdminScimPage() {
             <p className="font-mono text-sm text-slate-500">No SCIM tokens yet — generate one above to get started.</p>
           )}
           {tokensQuery.data && tokensQuery.data.tokens.length > 0 && (
-            <table className="w-full text-left font-mono text-xs">
+            // overflow-x-auto + min-w on the table itself, not the page - the same fix
+            // ApiKeysPage's own table already got (see its comment: "a real 375px check
+            // overflowed the whole page by 105px"). This table never got the equivalent
+            // treatment despite the exact same shape (a free-text Label column plus a
+            // full-locale-datetime column can't shrink below their content width) - a security/
+            // UX review found this was the one table left dragging the whole page sideways on a
+            // narrow viewport instead of scrolling on its own.
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left font-mono text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-slate-500">
                   <th className="pb-2">Label</th>
@@ -230,6 +238,7 @@ export function AdminScimPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>
