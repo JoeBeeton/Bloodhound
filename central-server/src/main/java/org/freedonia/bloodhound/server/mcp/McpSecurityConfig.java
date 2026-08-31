@@ -60,7 +60,14 @@ public class McpSecurityConfig {
     public SecurityFilterChain mcpAuthorizationServerFilterChain(
             HttpSecurity http, LoginAttemptLimiter loginAttemptLimiter) throws Exception {
         http.securityMatcher("/oauth2/**", "/.well-known/**", "/login", "/login/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                // formLogin's own automatic permitAll-for-the-login-page only fires for its
+                // auto-generated default page - setting loginPage("/login") below to
+                // McpLoginConsentPageController's branded one turned that off (confirmed live: an
+                // unauthenticated GET /login started 302-redirecting to itself instead of
+                // rendering). Permitting it explicitly here is the documented Spring Security
+                // approach for a custom login page and doesn't depend on that automatic behavior.
+                .authorizeHttpRequests(
+                        auth -> auth.requestMatchers("/login", "/login/**").permitAll().anyRequest().authenticated())
                 // Dynamic Client Registration (RFC 7591) - lets an MCP client (e.g. claude.ai's
                 // connector UI) self-register a client_id/secret without an admin pre-creating one.
                 // Reachable with zero authentication by design (see DcrRateLimiter's javadoc for
@@ -73,7 +80,14 @@ public class McpSecurityConfig {
                 // registered order" - McpAuthorizationServerConfigurer only registers it during
                 // its own later configure() phase).
                 .with(
-                        McpAuthorizationServerConfigurer.mcpAuthorizationServer().dynamicClientRegistration(true),
+                        McpAuthorizationServerConfigurer.mcpAuthorizationServer()
+                                .dynamicClientRegistration(true)
+                                // Branded replacements for Spring's plain default consent page -
+                                // see McpLoginConsentPageController's own javadoc for why this
+                                // stopped being a reasonable scope cut once self-registered
+                                // clients could actually reach it (ConsentRequiringRegisteredClientRepository).
+                                .authorizationServer(authServer -> authServer.authorizationEndpoint(
+                                        endpoint -> endpoint.consentPage("/oauth2/consent"))),
                         withDefaults())
                 // A security review found this formLogin() authenticates straight against the
                 // shared authenticationManager bean, bypassing AuthenticationService#login
@@ -85,7 +99,10 @@ public class McpSecurityConfig {
                 // recordSuccess split AuthenticationService#login uses. Explicit handler instances
                 // (not withDefaults()) so the record* calls can be added while keeping the exact
                 // same redirect behavior formLogin's own defaults would otherwise provide.
-                .formLogin(form -> form.successHandler((request, response, authentication) -> {
+                // loginPage("/login") points at McpLoginConsentPageController's own branded page -
+                // see its javadoc - rather than Spring's auto-generated default.
+                .formLogin(form -> form.loginPage("/login")
+                        .successHandler((request, response, authentication) -> {
                             loginAttemptLimiter.recordSuccess(authentication.getName());
                             new SavedRequestAwareAuthenticationSuccessHandler()
                                     .onAuthenticationSuccess(request, response, authentication);
