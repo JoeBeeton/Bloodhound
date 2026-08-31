@@ -262,7 +262,7 @@ export interface Finding {
   evidence: Record<string, unknown>;
   affectedAsset: string;
   firstDetectedScanRunId: string;
-  status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK";
+  status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK" | "DISMISSED";
   resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -315,7 +315,7 @@ export interface OrgFinding {
   description: string;
   evidence: Record<string, unknown>;
   affectedAsset: string;
-  status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK";
+  status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK" | "DISMISSED";
   resolvedAt: string | null;
   createdAt: string;
   firstSeenAt: string | null;

@@ -1,6 +1,27 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, readErrorMessage } from "../lib/apiClient";
+import { useAuth } from "../lib/useAuth";
 import { Modal } from "./Modal";
 import { ScoreImpactBadge } from "./ScoreImpactBadge";
 import type { Finding, OrgFinding, Severity } from "../lib/types";
+
+/**
+ * A product review found FindingReconciler's automatic OPEN->RESOLVED transition (fires only
+ * once a scan no longer detects an issue) was the only way a finding's status ever changed - a
+ * false positive or an accepted-risk finding just sat as OPEN indefinitely, with no way for an
+ * analyst to say "reviewed, doesn't need action". Dismiss is a sticky override, honored by
+ * FindingReconciler forever until a human explicitly reopens it (see
+ * V48__findings_dismissed_status.sql's own comment).
+ */
+async function dismissFinding(id: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/findings/${id}/dismiss`, { method: "POST" });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to dismiss finding."));
+}
+
+async function reopenFinding(id: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/findings/${id}/reopen`, { method: "POST" });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to reopen finding."));
+}
 
 const SEVERITY_TEXT: Record<Severity, string> = {
   CRITICAL: "text-severity-critical",
@@ -31,6 +52,39 @@ function formatDate(value: string | null): string {
  * is otherwise identical) so one component works everywhere findings are rendered.
  */
 export function FindingDetailModal({ finding, onClose }: { finding: Finding | OrgFinding; onClose: () => void }) {
+  const { user } = useAuth();
+  const canDismiss = user?.role === "ADMIN" || user?.role === "ANALYST";
+  const queryClient = useQueryClient();
+
+  // Findings are shown from 5+ different pages (target detail, subdomain detail, dashboard,
+  // the org-wide Findings page, scan detail) each with their own query key prefix - a broad
+  // predicate match rather than enumerating every one keeps this working regardless of which
+  // page opened this modal, and doesn't need updating if a future page adds it too.
+  function invalidateAnyFindingsQuery() {
+    queryClient.invalidateQueries({
+      predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].toLowerCase().includes("finding"),
+    });
+  }
+
+  const dismissMutation = useMutation({
+    mutationFn: () => dismissFinding(finding.id),
+    onSuccess: () => {
+      invalidateAnyFindingsQuery();
+      onClose(); // the finding prop is a snapshot passed in by the caller - it won't reflect the
+      // new status on its own, and this modal has no live subscription of its own to refresh it in
+      // place, so closing (onto the now-invalidated, refetching list behind it) is the simplest
+      // way to avoid showing a stale status label.
+    },
+  });
+
+  const reopenMutation = useMutation({
+    mutationFn: () => reopenFinding(finding.id),
+    onSuccess: () => {
+      invalidateAnyFindingsQuery();
+      onClose();
+    },
+  });
+
   const evidenceEntries = Object.entries(finding.evidence ?? {}).filter(
     ([key]) => key !== "contributingFindings" && key !== "cveDetails",
   );
@@ -63,7 +117,30 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
           </span>
         )}
         <ScoreImpactBadge impact={finding.scoreImpact} />
+        {canDismiss && finding.status === "OPEN" && (
+          <button
+            onClick={() => dismissMutation.mutate()}
+            disabled={dismissMutation.isPending}
+            className="ml-auto rounded border border-slate-700 px-3 py-1 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:opacity-50"
+          >
+            {dismissMutation.isPending ? "Dismissing…" : "Dismiss"}
+          </button>
+        )}
+        {canDismiss && finding.status === "DISMISSED" && (
+          <button
+            onClick={() => reopenMutation.mutate()}
+            disabled={reopenMutation.isPending}
+            className="ml-auto rounded border border-slate-700 px-3 py-1 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:opacity-50"
+          >
+            {reopenMutation.isPending ? "Reopening…" : "Reopen"}
+          </button>
+        )}
       </div>
+      {(dismissMutation.isError || reopenMutation.isError) && (
+        <p role="alert" className="mb-4 font-mono text-xs text-severity-critical">
+          {((dismissMutation.error ?? reopenMutation.error) as Error)?.message ?? "Failed to update finding status."}
+        </p>
+      )}
 
       <p className="mb-4 text-sm leading-relaxed text-slate-300">{finding.description}</p>
 

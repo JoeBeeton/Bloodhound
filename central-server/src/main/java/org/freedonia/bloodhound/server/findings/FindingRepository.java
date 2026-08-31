@@ -5,6 +5,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -117,6 +118,28 @@ public class FindingRepository {
         for (UUID id : ids) {
             jdbc.update("UPDATE findings SET status = 'RESOLVED', resolved_at = now(), updated_at = now() WHERE id = ?", id);
         }
+    }
+
+    /** Used by FindingController's dismiss/reopen actions to look up the finding and verify its target before mutating - no other caller needs a single finding by id today. */
+    public Optional<Finding> findById(UUID id) {
+        return jdbc.query("SELECT * FROM findings WHERE id = ?", ROW_MAPPER, id).stream().findFirst();
+    }
+
+    /**
+     * Only transitions from OPEN, not RESOLVED/ACCEPTED_RISK/already-DISMISSED - see
+     * V48__findings_dismissed_status.sql's own comment for why DISMISSED is a sticky human
+     * override on an otherwise-open finding specifically, not a general-purpose status field.
+     * Returns the row count so the controller can tell "nothing happened because it wasn't OPEN"
+     * apart from "the id doesn't exist" (already handled by the controller's own findById check
+     * before this is ever called).
+     */
+    public int dismiss(UUID id) {
+        return jdbc.update("UPDATE findings SET status = 'DISMISSED', updated_at = now() WHERE id = ? AND status = 'OPEN'", id);
+    }
+
+    /** The only way a DISMISSED finding ever leaves that state - see dismiss()'s own comment. Only transitions from DISMISSED, back to OPEN (not RESOLVED - a dismissed finding was, by definition, still actually open when it was dismissed). */
+    public int reopen(UUID id) {
+        return jdbc.update("UPDATE findings SET status = 'OPEN', updated_at = now() WHERE id = ? AND status = 'DISMISSED'", id);
     }
 
     private static final RowMapper<Finding> SCORING_ROW_MAPPER = (rs, rowNum) -> new Finding(

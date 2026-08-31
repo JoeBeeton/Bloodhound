@@ -29,7 +29,7 @@ export interface FindingsFilterState {
   severities: Severity[];
   categories: FindingCategory[];
   /** Omitted/undefined means OPEN, matching the server's own default - see FindingRepository#findByTargetDetailed. */
-  status?: "OPEN" | "RESOLVED";
+  status?: "OPEN" | "RESOLVED" | "DISMISSED";
   /** Case-insensitive substring match against title OR description (server-side, see FindingRepository#appendSearchClause) - omitted/blank means no search filter. */
   search?: string;
 }
@@ -93,7 +93,7 @@ export function FindingsFilterBar({
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Status</span>
-        {(["OPEN", "RESOLVED"] as const).map((s) => (
+        {(["OPEN", "RESOLVED", "DISMISSED"] as const).map((s) => (
           <button
             key={s}
             aria-pressed={status === s}
@@ -102,7 +102,7 @@ export function FindingsFilterBar({
               status === s ? "border-neon-cyan bg-neon-cyan/15 text-neon-cyan" : INACTIVE_TOGGLE
             }`}
           >
-            {s === "OPEN" ? "Open" : "Resolved"}
+            {s === "OPEN" ? "Open" : s === "RESOLVED" ? "Resolved" : "Dismissed"}
           </button>
         ))}
       </div>
