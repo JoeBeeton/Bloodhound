@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,11 +31,15 @@ public class TargetAuthorizationController {
 
     private final TargetRepository targetRepository;
     private final TargetAuthorizationRepository authorizationRepository;
+    private final AuditLogRepository auditLogRepository;
 
     public TargetAuthorizationController(
-            TargetRepository targetRepository, TargetAuthorizationRepository authorizationRepository) {
+            TargetRepository targetRepository,
+            TargetAuthorizationRepository authorizationRepository,
+            AuditLogRepository auditLogRepository) {
         this.targetRepository = targetRepository;
         this.authorizationRepository = authorizationRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     @GetMapping
@@ -50,8 +55,21 @@ public class TargetAuthorizationController {
             @jakarta.validation.Valid @RequestBody AuthorizeRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
-        requireOwnedTarget(id, principal);
+        Target target = requireOwnedTarget(id, principal);
         authorizationRepository.authorize(id, principal.userId(), request.attestationText());
+        // This flow already keeps its own detailed history (target_authorizations, surfaced via
+        // GET above) - a security review found it wasn't also visible from the org-wide Audit Log
+        // page though, the one place an admin reviewing "everything sensitive that happened here"
+        // would actually look, same gap TargetController's own remove/restore had before this
+        // session's earlier fix. Cross-posted here, not a replacement for the detailed history.
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "TARGET_AUTHORIZED",
+                "TARGET",
+                id.toString(),
+                "hostname=" + target.hostname());
         Target updated = targetRepository.findById(id).orElseThrow();
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(AuthorizationStatusResponse.of(updated.authorizationStatus(), authorizationRepository.findHistory(id)));
@@ -60,8 +78,16 @@ public class TargetAuthorizationController {
     @DeleteMapping
     public AuthorizationStatusResponse revoke(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
-        requireOwnedTarget(id, principal);
+        Target target = requireOwnedTarget(id, principal);
         authorizationRepository.revokeCurrent(id, principal.userId());
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "TARGET_AUTHORIZATION_REVOKED",
+                "TARGET",
+                id.toString(),
+                "hostname=" + target.hostname());
         Target updated = targetRepository.findById(id).orElseThrow();
         return AuthorizationStatusResponse.of(updated.authorizationStatus(), authorizationRepository.findHistory(id));
     }

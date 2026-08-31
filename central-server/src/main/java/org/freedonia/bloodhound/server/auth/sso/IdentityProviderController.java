@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.auth.sso;
 
 import jakarta.validation.Valid;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.sso.dto.IdentityProviderConfigRequest;
 import org.freedonia.bloodhound.server.auth.sso.dto.IdentityProviderConfigResponse;
@@ -34,14 +35,17 @@ public class IdentityProviderController {
 
     private final IdentityProviderRepository identityProviderRepository;
     private final OrganizationRepository organizationRepository;
+    private final AuditLogRepository auditLogRepository;
     private final String spBaseUrl;
 
     public IdentityProviderController(
             IdentityProviderRepository identityProviderRepository,
             OrganizationRepository organizationRepository,
+            AuditLogRepository auditLogRepository,
             @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
         this.identityProviderRepository = identityProviderRepository;
         this.organizationRepository = organizationRepository;
+        this.auditLogRepository = auditLogRepository;
         this.spBaseUrl = spBaseUrl;
     }
 
@@ -70,6 +74,20 @@ public class IdentityProviderController {
                 request.emailAttributeName(),
                 request.displayNameAttributeName(),
                 request.enabled());
+        // An audit review found this - the config that controls how every user in an org
+        // authenticates, once SAML SSO is enabled - had no audit trail at all, despite being the
+        // single most security-sensitive unaudited write in the app. Never logs the IdP entity
+        // ID/SSO URL/X.509 cert values themselves (large, and not secrets an audit trail needs to
+        // reproduce - the existing config GET already shows an admin the current values), just
+        // that a save happened and the resulting enabled state.
+        auditLogRepository.record(
+                orgId,
+                principal.userId(),
+                principal.email(),
+                "SSO_CONFIG_SAVED",
+                "ORGANIZATION",
+                orgId.toString(),
+                "enabled=" + saved.enabled());
         return IdentityProviderConfigResponse.from(saved, spBaseUrl);
     }
 
