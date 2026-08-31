@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.config;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.freedonia.bloodhound.server.apikey.ApiKeyAuthFilter;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRateLimiter;
 import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.auth.CustomUserDetailsService;
 import org.freedonia.bloodhound.server.auth.JwtAuthenticationFilter;
@@ -102,7 +103,8 @@ public class SecurityConfig {
             JwtService jwtService,
             WorkerCredentialRepository workerCredentialRepository,
             ScimTokenRepository scimTokenRepository,
-            ApiKeyRepository apiKeyRepository)
+            ApiKeyRepository apiKeyRepository,
+            ApiKeyRateLimiter apiKeyRateLimiter)
             throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -174,7 +176,9 @@ public class SecurityConfig {
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new ScimTokenAuthFilter(scimTokenRepository), UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(new ApiKeyAuthFilter(apiKeyRepository), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(
+                        new ApiKeyAuthFilter(apiKeyRepository, apiKeyRateLimiter),
+                        UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

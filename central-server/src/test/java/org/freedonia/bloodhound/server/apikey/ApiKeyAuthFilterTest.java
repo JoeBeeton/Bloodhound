@@ -24,7 +24,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 class ApiKeyAuthFilterTest {
 
     private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
-    private final ApiKeyAuthFilter filter = new ApiKeyAuthFilter(apiKeyRepository);
+    private final ApiKeyRateLimiter apiKeyRateLimiter = new ApiKeyRateLimiter();
+    private final ApiKeyAuthFilter filter = new ApiKeyAuthFilter(apiKeyRepository, apiKeyRateLimiter);
     private final HttpServletResponse response = mock(HttpServletResponse.class);
     private final FilterChain filterChain = mock(FilterChain.class);
 
@@ -127,5 +128,48 @@ class ApiKeyAuthFilterTest {
         filter.doFilterInternal(request, response, filterChain);
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void keyOverItsRateLimit_returns429_neverAuthenticates_neverReachesTheChain() throws Exception {
+        // A security review found this filter had no rate limiting at all - once authenticated, a
+        // caller could hit any allowlisted GET/export endpoint at unlimited request rate.
+        String token = "bhk_realtoken";
+        ApiKey key = activeKey(UUID.randomUUID(), UUID.randomUUID());
+        when(apiKeyRepository.findByKeyHash(HashUtil.sha256Hex(token))).thenReturn(Optional.of(key));
+        for (int i = 0; i < 120; i++) {
+            apiKeyRateLimiter.recordRequest(key.id());
+        }
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getHeader("Authorization")).thenReturn("Bearer " + token);
+        org.springframework.mock.web.MockHttpServletResponse realResponse =
+                new org.springframework.mock.web.MockHttpServletResponse();
+
+        filter.doFilterInternal(request, realResponse, filterChain);
+
+        assertThat(realResponse.getStatus()).isEqualTo(429);
+        assertThat(realResponse.getHeader("Retry-After")).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(apiKeyRepository, never()).touchLastUsed(any());
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
+    @Test
+    void keyUnderItsRateLimit_stillAuthenticatesNormally() throws Exception {
+        String token = "bhk_realtoken";
+        ApiKey key = activeKey(UUID.randomUUID(), UUID.randomUUID());
+        when(apiKeyRepository.findByKeyHash(HashUtil.sha256Hex(token))).thenReturn(Optional.of(key));
+        for (int i = 0; i < 119; i++) {
+            apiKeyRateLimiter.recordRequest(key.id());
+        }
+
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getHeader("Authorization")).thenReturn("Bearer " + token);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        verify(filterChain).doFilter(request, response);
     }
 }
