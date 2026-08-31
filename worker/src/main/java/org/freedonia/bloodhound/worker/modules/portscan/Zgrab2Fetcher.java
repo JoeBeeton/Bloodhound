@@ -1,12 +1,15 @@
 package org.freedonia.bloodhound.worker.modules.portscan;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
@@ -34,6 +37,27 @@ import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 public class Zgrab2Fetcher {
 
     private static final long HARD_TIMEOUT_SECONDS = 15;
+
+    /**
+     * A security review found this had two bugs, the same class already fixed elsewhere this
+     * session: readAll() had no size cap at all (unbounded, the exact shape SafeHttpGet was
+     * introduced to fix for HTTP responses), AND it ran BEFORE process.waitFor(HARD_TIMEOUT_SECONDS)
+     * - meaning a zgrab2 child process that hangs without closing stdout (a target trickling a
+     * slow-but-nonzero response, the same class of attack FtpAnonymousChecker's own fix already
+     * covers for raw sockets) blocked forever reading stdout, and the "hard timeout" below never
+     * even got a chance to run, since the blocking read came first. Fixed with the same watchdog
+     * pattern FtpAnonymousChecker uses: a shared daemon-threaded ScheduledExecutorService
+     * force-destroys the process after the deadline - unlike Thread.interrupt() (which has no
+     * effect on a thread blocked in a classic blocking read), destroying the process closes its
+     * stdout pipe from another thread, which does reliably unblock the read.
+     */
+    private static final int MAX_OUTPUT_BYTES = 1_000_000;
+
+    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "zgrab2-watchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     /**
      * zgrab2 refuses to start without a blocklist file and otherwise looks
@@ -90,10 +114,26 @@ public class Zgrab2Fetcher {
             stdinWriter.setDaemon(true);
             stdinWriter.start();
 
-            String output = readAll(process.getInputStream());
-            boolean finished = process.waitFor(HARD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
+            AtomicBoolean timedOut = new AtomicBoolean(false);
+            ScheduledFuture<?> deadline = WATCHDOG.schedule(
+                    () -> {
+                        timedOut.set(true);
+                        started.destroyForcibly();
+                    },
+                    HARD_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS);
+            String output;
+            try {
+                output = SafeHttpGet.readCappedUtf8(process.getInputStream(), MAX_OUTPUT_BYTES);
+            } finally {
+                deadline.cancel(false);
+            }
+            // Reap only - by this point the process has either finished naturally (readCappedUtf8
+            // returned via real EOF) or been force-destroyed by the watchdog above, so this should
+            // return near-instantly either way; the outer finally block below still catches the
+            // rare case where it somehow hasn't.
+            process.waitFor(2, TimeUnit.SECONDS);
+            if (timedOut.get()) {
                 throw new ScanModuleException(
                         "zgrab2 call against " + ip + " exceeded the hard " + HARD_TIMEOUT_SECONDS + "s timeout");
             }
@@ -108,11 +148,5 @@ public class Zgrab2Fetcher {
                 process.destroyForcibly();
             }
         }
-    }
-
-    private String readAll(InputStream in) throws java.io.IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        in.transferTo(out);
-        return out.toString(StandardCharsets.UTF_8);
     }
 }

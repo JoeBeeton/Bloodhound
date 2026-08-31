@@ -1,11 +1,13 @@
 package org.freedonia.bloodhound.worker.modules.nuclei;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
@@ -52,6 +54,25 @@ public class NucleiFetcher {
     // observed case rather than being tuned tight to it.
     private static final long HARD_TIMEOUT_SECONDS = 1200; // 20 minutes
     private static final String TEMPLATES_DIR = "/opt/nuclei-templates";
+
+    /**
+     * A security review found this had the same two bugs already fixed in Zgrab2Fetcher this
+     * session: readAll() had no size cap at all, AND it ran BEFORE
+     * process.waitFor(HARD_TIMEOUT_SECONDS) - a nuclei child process hung without closing stdout
+     * blocked this forever, and the "hard timeout" never got a chance to run. Same watchdog fix:
+     * a shared daemon ScheduledExecutorService force-destroys the process after the deadline,
+     * which (unlike Thread.interrupt()) reliably unblocks a thread stuck reading its stdout pipe.
+     * Generous relative to Zgrab2Fetcher's own 1MB cap - a full-corpus template scan producing
+     * many real findings (each a JSONL line) can legitimately be larger than one zgrab2 probe's
+     * single-target banner/header capture.
+     */
+    private static final int MAX_OUTPUT_BYTES = 10_000_000;
+
+    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "nuclei-watchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public String scanJsonLines(String hostname) throws ScanModuleException {
         // hostname reaches here as "-target", hostname in argv below - ProcessBuilder(List<String>)
@@ -102,10 +123,24 @@ public class NucleiFetcher {
             });
             stderrDrain.setDaemon(true);
             stderrDrain.start();
-            String output = readAll(process.getInputStream());
-            boolean finished = process.waitFor(HARD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
+            AtomicBoolean timedOut = new AtomicBoolean(false);
+            ScheduledFuture<?> deadline = WATCHDOG.schedule(
+                    () -> {
+                        timedOut.set(true);
+                        started.destroyForcibly();
+                    },
+                    HARD_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS);
+            String output;
+            try {
+                output = SafeHttpGet.readCappedUtf8(process.getInputStream(), MAX_OUTPUT_BYTES);
+            } finally {
+                deadline.cancel(false);
+            }
+            // Reap only - see Zgrab2Fetcher's identical comment for why this should return near-
+            // instantly regardless of which path got here.
+            process.waitFor(2, TimeUnit.SECONDS);
+            if (timedOut.get()) {
                 throw new ScanModuleException(
                         "nuclei scan of " + hostname + " exceeded the hard " + HARD_TIMEOUT_SECONDS + "s timeout");
             }
@@ -120,11 +155,5 @@ public class NucleiFetcher {
                 process.destroyForcibly();
             }
         }
-    }
-
-    private String readAll(InputStream in) throws java.io.IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        in.transferTo(out);
-        return out.toString(StandardCharsets.UTF_8);
     }
 }
