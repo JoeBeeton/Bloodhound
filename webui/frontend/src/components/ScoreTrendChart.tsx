@@ -2,6 +2,25 @@ import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Too
 import { GRADE_BANDS } from "../lib/gradeBands";
 import type { ScoreSnapshot } from "../lib/types";
 
+/**
+ * A product/AppSec review found this chart - like every Recharts-based chart in the app - had
+ * no accessible summary at all: a screen-reader user got either silence or a confusing read-out
+ * of individual SVG path/tick elements, never the actual "what does this trend show" a sighted
+ * user gets at a glance. Mirrors HealthGauge's own role="img" + summarizing aria-label pattern,
+ * which every other chart in the app was missing.
+ */
+export function summarizeTrend(history: ScoreSnapshot[]): string {
+  const latest = history[history.length - 1];
+  const scores = history.map((h) => h.overallScore);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const latestPart = `latest score ${latest.overallScore.toFixed(0)} (grade ${latest.grade})`;
+  if (history.length === 1) {
+    return `Score trend: one scan so far, ${latestPart}.`;
+  }
+  return `Score trend over ${history.length} scans: ${latestPart}, ranging from ${min.toFixed(0)} to ${max.toFixed(0)}.`;
+}
+
 /** `compact`: no axes/grid/border, smaller height - for the dashboard hero sparkline, which just needs "shape of the trend", not a fully readable chart (the full one is one click away on the target detail page). */
 export function ScoreTrendChart({
   history,
@@ -23,10 +42,11 @@ export function ScoreTrendChart({
     label: new Date(snapshot.computedAt).toLocaleDateString(),
     overallScore: snapshot.overallScore,
   }));
+  const summary = summarizeTrend(history);
 
   if (compact) {
     return (
-      <div className="h-16 w-full">
+      <div className="h-16 w-full" role="img" aria-label={summary}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
             <YAxis domain={[0, 100]} hide />
@@ -45,7 +65,7 @@ export function ScoreTrendChart({
   }
 
   return (
-    <div className="h-56 w-full rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
+    <div className="h-56 w-full rounded-lg border border-neon-cyan/20 bg-panel/60 p-4" role="img" aria-label={summary}>
       <ResponsiveContainer width="100%" height="100%">
         {/* left:0 + wider YAxis: a negative left margin + narrow axis width clips the
             leading digit(s) of 2-3 digit tick labels ("100" -> "0") - same fix as
