@@ -91,6 +91,18 @@ const ACTION_LABELS: Record<string, string> = {
   SCIM_USER_DEACTIVATED: "User deactivated (SCIM)",
   USER_PASSWORD_CHANGED: "Password changed (self-service)",
   USER_LOGGED_OUT_OTHER_SESSIONS: "Logged out other sessions",
+  // A review found these 4 actions - each added by a real backend feature shipped earlier this
+  // session (finding dismiss/reopen, bulk target creation, the Active Sessions page) - were never
+  // added here. The renderer's own ACTION_LABELS[entry.action] ?? entry.action fallback means an
+  // existing row never crashed or went blank, just showed the raw enum string instead of a label
+  // like every other action gets - but ACTION_VALUES below (which drives the filter-by-action
+  // dropdown) is derived from this map's own keys, so the real, user-facing gap was that none of
+  // these 4 could be filtered for at all. Same "new backend enum value, frontend map never
+  // updated" bug shape as the Dismissed-filter bug fixed last round, just in this file instead.
+  FINDING_DISMISSED: "Finding dismissed",
+  FINDING_REOPENED: "Finding reopened",
+  TARGETS_BULK_CREATED: "Targets bulk-created",
+  USER_SESSION_REVOKED: "Session revoked",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
@@ -105,6 +117,10 @@ const DESTRUCTIVE_ACTIONS = new Set([
   "TARGET_AUTHORIZATION_REVOKED",
   "API_KEY_REVOKED",
   "SCIM_USER_DEACTIVATED",
+  // Ends a live session out from under whoever was using it - same "irreversible/consequential"
+  // category as SCIM_USER_DEACTIVATED and API_KEY_REVOKED just above, not a routine/reversible
+  // action like TARGET_RESTORED.
+  "USER_SESSION_REVOKED",
 ]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
