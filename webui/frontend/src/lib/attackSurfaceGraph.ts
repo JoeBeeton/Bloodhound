@@ -292,12 +292,23 @@ export function selectNonOverlappingSubdomainLabels(nodes: GraphNode[]): Set<str
  * violet/status palette (see colorForNode), not just position.
  */
 export function layoutGraph(data: GraphData, width: number, height: number): GraphData {
+  // A proper 2x2 grid, not 3 target corners plus platform wedged into whatever room was left -
+  // a bug report found the WATCHLIST cluster (bottom-center, y=0.85) sharing almost the same
+  // horizontal band as the platform cluster (was bottom-left, y=0.78, only 0.07*height apart)
+  // with 0.36*width of separation as the only thing keeping them apart on-screen. A WATCHLIST
+  // target with enough of its own subdomain nodes (mutual repulsion - forceManyBody below - pushes
+  // a cluster's own members outward, and the per-cluster pull back to center is weak, 0.06) could
+  // spread far enough along that shared band to visually sit on top of the platform nodes
+  // (confirmed: exactly this happened live with a watchlist target's cluster overlapping
+  // central-server/postgres/webui). Every cluster now differs from every other on BOTH axes, not
+  // just one, so no pair of clusters shares a band a wide horizontal (or vertical) spread could
+  // bridge.
   const clusterCenters: Record<TargetType, [number, number]> = {
-    OWN: [width * 0.32, height * 0.28],
-    COMPETITOR: [width * 0.78, height * 0.34],
-    WATCHLIST: [width * 0.5, height * 0.85],
+    OWN: [width * 0.26, height * 0.24],
+    COMPETITOR: [width * 0.78, height * 0.24],
+    WATCHLIST: [width * 0.78, height * 0.82],
   };
-  const platformCenter: [number, number] = [width * 0.14, height * 0.78];
+  const platformCenter: [number, number] = [width * 0.22, height * 0.82];
 
   function clusterFor(d: GraphNode): [number, number] {
     if (d.kind === "database" || d.kind === "webui" || d.kind === "worker") return platformCenter;
