@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.mcp;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 
+import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
 import org.freedonia.bloodhound.server.orgs.OrganizationRepository;
 import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.springaicommunity.mcp.security.authorizationserver.config.McpAuthorizationServerConfigurer;
@@ -14,6 +15,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler;
+import org.springframework.security.web.authentication.SimpleUrlAuthenticationFailureHandler;
 
 /**
  * Two new filter chains for the OAuth2-authenticated MCP server, added on top of the existing
@@ -51,7 +55,8 @@ public class McpSecurityConfig {
      */
     @Bean
     @Order(-10)
-    public SecurityFilterChain mcpAuthorizationServerFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain mcpAuthorizationServerFilterChain(
+            HttpSecurity http, LoginAttemptLimiter loginAttemptLimiter) throws Exception {
         http.securityMatcher("/oauth2/**", "/.well-known/**", "/login", "/login/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 // Dynamic Client Registration (RFC 7591) - lets an MCP client (e.g. claude.ai's
@@ -59,7 +64,28 @@ public class McpSecurityConfig {
                 .with(
                         McpAuthorizationServerConfigurer.mcpAuthorizationServer().dynamicClientRegistration(true),
                         withDefaults())
-                .formLogin(withDefaults());
+                // A security review found this formLogin() authenticates straight against the
+                // shared authenticationManager bean, bypassing AuthenticationService#login
+                // entirely - meaning LoginAttemptLimiter's brute-force lockout (10 failures/15min,
+                // see its own javadoc) never applied to this second password-entry point at all.
+                // McpLoginRateLimitFilter below does the pre-check (rejecting an already
+                // locked-out email before a single BCrypt comparison runs); these handlers record
+                // each attempt against the same limiter, the same checkAllowed+recordFailure/
+                // recordSuccess split AuthenticationService#login uses. Explicit handler instances
+                // (not withDefaults()) so the record* calls can be added while keeping the exact
+                // same redirect behavior formLogin's own defaults would otherwise provide.
+                .formLogin(form -> form.successHandler((request, response, authentication) -> {
+                            loginAttemptLimiter.recordSuccess(authentication.getName());
+                            new SavedRequestAwareAuthenticationSuccessHandler()
+                                    .onAuthenticationSuccess(request, response, authentication);
+                        })
+                        .failureHandler((request, response, exception) -> {
+                            loginAttemptLimiter.recordFailure(request.getParameter("username"));
+                            new SimpleUrlAuthenticationFailureHandler("/login?error")
+                                    .onAuthenticationFailure(request, response, exception);
+                        }))
+                .addFilterBefore(
+                        new McpLoginRateLimitFilter(loginAttemptLimiter), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
