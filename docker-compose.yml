@@ -46,6 +46,13 @@ networks:
   idp_net:
 
 services:
+  # Deliberately no deploy.resources.limits here, unlike every service below - see central-
+  # server's own comment for why the others got one. postgres never processes untrusted external
+  # scan-target content (the actual threat model this fix addresses), and an OOM-killed database
+  # is a correctness/availability risk the other services' OOM-kills aren't (a killed worker just
+  # loses one in-flight scan; a killed postgres mid-write is a much worse failure mode) - capping
+  # it isn't obviously the right tradeoff without real production capacity planning this dev/demo
+  # stack doesn't have the data for.
   postgres:
     image: postgres:16
     environment:
@@ -112,6 +119,20 @@ services:
     networks:
       - db_net
       - app_net
+    # A container-hardening review found no service in this file had a memory/CPU ceiling at all -
+    # `docker stats` confirmed every container showed the *host's* full memory as its limit column,
+    # meaning a single runaway service could starve every sibling container on the same host,
+    # postgres included. 1G/1.0 is generous headroom over this service's own observed live usage
+    # (~420MB at the time of this review) - GraalVM/JDK 21 is container-aware (detects the cgroup
+    # limit and sizes its heap as a percentage of it automatically), so no extra -Xmx flag is
+    # needed alongside this. Compose v2+ (confirmed: this stack runs Compose 5.4.0) applies
+    # deploy.resources.limits on a plain `docker compose up` without Swarm mode, same as
+    # deploy.replicas already relied on below for worker.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
 
   worker:
     build:
@@ -152,8 +173,20 @@ services:
     # 3 by default - modern `docker compose` (v2+) honors deploy.replicas on
     # a plain `docker compose up` without swarm mode, so this doesn't need
     # --scale. Override ad hoc with: docker compose up --scale worker=N
+    #
+    # resources.limits: the highest-value target for this - see central-server's own comment for
+    # the general finding. worker specifically spawns nuclei/zgrab2/naabu/subfinder against real,
+    # untrusted external hosts (a slow/pathological response, or a nuclei template matching badly,
+    # has no ceiling on the JVM+subprocess tree's combined memory/CPU otherwise) - each of the 3
+    # replicas gets its own limit, not one shared across all three. 2G/1.5 is generous headroom
+    # over live-observed usage (300-650MB per replica at idle/light load) to avoid OOM-killing a
+    # real deep scan (many nuclei templates, a wide naabu port range) mid-run.
     deploy:
       replicas: 3
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.5"
     networks:
       - app_net
       - scan_net
@@ -183,6 +216,18 @@ services:
     networks:
       - scan_net
       - targets_net
+    # See central-server's own comment for the general finding this fixes. zap is the most
+    # memory-hungry service in this whole stack by a wide margin (a live `docker stats` check
+    # found it already at ~7.7GB after 42h uptime and multiple active scans, vs. low hundreds of
+    # MB for every other service) - a pre-built third-party image, so no Dockerfile-level -Xmx
+    # tuning available here. 12G is a real ceiling well above that observed baseline, not a tight
+    # one - bounding runaway growth while avoiding OOM-killing a real active scan mid-run, which
+    # would be a worse outcome than the unbounded status quo for this specific service.
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "2.0"
 
   # Headless-Chromium screenshot service (browserless/chromium, MIT) for
   # TYPOSQUAT_MONITOR's visual-similarity check - internal network only, no
@@ -201,6 +246,15 @@ services:
       TOKEN: ${SCREENSHOTTER_API_KEY}
     networks:
       - scan_net
+    # See central-server's own comment for the general finding. Headless Chrome rendering a real
+    # (or candidate-typosquat) external page has its own pathological-content risk (a page that
+    # never finishes loading, an intentionally huge one) - 1G is generous over the ~550MB observed
+    # live, well below zap's own ceiling above since this only ever renders one page at a time.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
 
   # Deliberately-vulnerable practice target (github.com/juice-shop/juice-shop)
   # for exercising Tier 2 active scanning safely - never point ZAP_ACTIVE_SCAN
@@ -293,6 +347,14 @@ services:
       - "8090:8080"
     networks:
       - app_net
+    # See central-server's own comment for the general finding. 512M/0.5 - the smallest of the 3
+    # owned JVM services' limits, matching its own smaller footprint (a static-file server plus a
+    # thin API proxy, ~230MB observed live, no scanning workload of its own).
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
 volumes:
   pgdata:
