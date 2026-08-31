@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
@@ -253,5 +254,47 @@ class UserSelfControllerTest {
         verify(auditLogRepository).record(
                 principal.organizationId(), userId, principal.email(), "USER_LOGGED_OUT_OTHER_SESSIONS", "USER",
                 userId.toString(), "email=" + principal.email());
+    }
+
+    private org.freedonia.bloodhound.server.auth.RefreshToken token(Instant sessionStartedAt) {
+        return new org.freedonia.bloodhound.server.auth.RefreshToken(
+                UUID.randomUUID(), userId, "hash", Instant.now().plusSeconds(3600), null, Instant.now(), sessionStartedAt);
+    }
+
+    @Test
+    void listSessions_mapsRepositoryRowsToSummaries_neverExposingTheTokenHash() {
+        Instant started = Instant.parse("2026-01-01T00:00:00Z");
+        when(refreshTokenRepository.listActiveForUser(userId)).thenReturn(List.of(token(started)));
+
+        List<UserSelfController.SessionSummary> result = controller.listSessions(principal);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).sessionStartedAt()).isEqualTo(started);
+    }
+
+    @Test
+    void revokeSession_ownedSession_revokesAndRecordsAudit() {
+        UUID sessionId = UUID.randomUUID();
+        when(refreshTokenRepository.revokeOwnedByUser(sessionId, userId)).thenReturn(1);
+
+        ResponseEntity<Void> response = controller.revokeSession(sessionId, principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(auditLogRepository).record(
+                principal.organizationId(), userId, principal.email(), "USER_SESSION_REVOKED", "USER", userId.toString(),
+                "sessionId=" + sessionId);
+    }
+
+    @Test
+    void revokeSession_notOwnedOrAlreadyGone_notFound_neverRecordsAudit() {
+        // The security point of this test: revokeOwnedByUser's own WHERE clause (id AND user_id)
+        // is what makes this safe to expose behind a bare path-variable UUID at all - without it,
+        // any authenticated user could revoke any other user's session by guessing an id.
+        UUID sessionId = UUID.randomUUID();
+        when(refreshTokenRepository.revokeOwnedByUser(sessionId, userId)).thenReturn(0);
+
+        assertThatThrownBy(() -> controller.revokeSession(sessionId, principal)).isInstanceOf(ResponseStatusException.class);
+
+        verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
     }
 }

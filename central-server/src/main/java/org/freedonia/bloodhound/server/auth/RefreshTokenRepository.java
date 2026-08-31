@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.server.auth;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -100,6 +101,40 @@ public class RefreshTokenRepository {
                 Integer.class,
                 userId);
         return count != null ? count : 0;
+    }
+
+    /**
+     * One row here is one currently-valid session: rotation on every refresh revokes the old row
+     * and inserts a fresh one (see AuthenticationService#refresh), so at any moment there's
+     * exactly one active row per device/browser that's still logged in, not one per historical
+     * token. Ordered by sessionStartedAt (when the lineage truly began, fixed across rotations),
+     * not createdAt (which only reflects the most recent rotation) - a user scanning this list is
+     * asking "when did I originally sign in on this device", not "when did it last silently
+     * refresh". See UserSelfController#listSessions for why there's no per-row device/IP info to
+     * show yet - refresh_tokens doesn't capture either today.
+     */
+    public List<RefreshToken> listActiveForUser(UUID userId) {
+        return jdbc.query(
+                "SELECT * FROM refresh_tokens WHERE user_id = ? AND revoked_at IS NULL AND expires_at > now() "
+                        + "ORDER BY session_started_at DESC",
+                ROW_MAPPER,
+                userId);
+    }
+
+    /**
+     * Ownership-scoped revoke for the self-service "end this one session" action
+     * (UserSelfController#revokeSession) - same shape as ApiKeyRepository#revokeOwnedByUser.
+     * Deliberately a NEW method rather than reusing the existing unscoped {@link #revoke(UUID)}:
+     * that one has no ownership check at all (fine for its current callers, which only ever
+     * revoke a token after already establishing ownership another way), but exposing it directly
+     * behind a user-supplied path variable without one would let any authenticated user revoke
+     * any other user's session by guessing a UUID.
+     */
+    public int revokeOwnedByUser(UUID id, UUID userId) {
+        return jdbc.update(
+                "UPDATE refresh_tokens SET revoked_at = now() WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+                id,
+                userId);
     }
 
     /**
