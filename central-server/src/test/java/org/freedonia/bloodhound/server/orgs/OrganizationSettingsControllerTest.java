@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.mcp.McpSigningKeyMetadata;
 import org.freedonia.bloodhound.server.orgs.OrganizationSettingsController.OrgSettingsResponse;
 import org.freedonia.bloodhound.server.orgs.OrganizationSettingsController.UpdateOrgSettingsRequest;
 import org.junit.jupiter.api.Test;
@@ -20,8 +21,9 @@ class OrganizationSettingsControllerTest {
 
     private final OrganizationRepository organizationRepository = mock(OrganizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final McpSigningKeyMetadata mcpSigningKeyMetadata = new McpSigningKeyMetadata();
     private final OrganizationSettingsController controller =
-            new OrganizationSettingsController(organizationRepository, auditLogRepository);
+            new OrganizationSettingsController(organizationRepository, auditLogRepository, mcpSigningKeyMetadata);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();
@@ -43,6 +45,7 @@ class OrganizationSettingsControllerTest {
         OrgSettingsResponse result = controller.get(orgId, admin);
 
         assertThat(result.mcpEnabled()).isTrue();
+        assertThat(result.mcpSigningKeyGeneratedAt()).isEqualTo(mcpSigningKeyMetadata.generatedAt());
     }
 
     @Test

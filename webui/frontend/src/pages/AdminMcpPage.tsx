@@ -9,6 +9,7 @@ import { usePageTitle } from "../lib/usePageTitle";
 
 interface OrgSettings {
   mcpEnabled: boolean;
+  mcpSigningKeyGeneratedAt: string;
 }
 
 async function fetchSettings(orgId: string): Promise<OrgSettings> {
@@ -17,7 +18,7 @@ async function fetchSettings(orgId: string): Promise<OrgSettings> {
   return res.json();
 }
 
-async function saveSettings(orgId: string, body: OrgSettings): Promise<OrgSettings> {
+async function saveSettings(orgId: string, body: { mcpEnabled: boolean }): Promise<OrgSettings> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -86,6 +87,14 @@ export function AdminMcpPage() {
             <span className="text-neon-cyan">Users</span> page — both must be enabled for that user's MCP access
             to work.
           </p>
+          {query.data && (
+            <p className="mb-3 rounded border border-neon-amber/20 bg-neon-amber/5 px-3 py-2 font-mono text-xs text-slate-400">
+              MCP signing key generated {new Date(query.data.mcpSigningKeyGeneratedAt).toLocaleString()} — every
+              central-server restart generates a new one, which immediately invalidates every previously-issued MCP
+              session. If a connected agent (e.g. Claude Desktop) suddenly needs to re-authenticate, this is why —
+              it isn't specific to this org and nothing here needs fixing.
+            </p>
+          )}
 
           <label className="mt-3 flex items-center gap-2 font-mono text-xs text-slate-300">
             <input

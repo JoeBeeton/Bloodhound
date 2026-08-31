@@ -1,8 +1,10 @@
 package org.freedonia.bloodhound.server.orgs;
 
+import java.time.Instant;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.mcp.McpSigningKeyMetadata;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,16 +28,28 @@ public class OrganizationSettingsController {
 
     private final OrganizationRepository organizationRepository;
     private final AuditLogRepository auditLogRepository;
+    private final McpSigningKeyMetadata mcpSigningKeyMetadata;
 
     public OrganizationSettingsController(
-            OrganizationRepository organizationRepository, AuditLogRepository auditLogRepository) {
+            OrganizationRepository organizationRepository,
+            AuditLogRepository auditLogRepository,
+            McpSigningKeyMetadata mcpSigningKeyMetadata) {
         this.organizationRepository = organizationRepository;
         this.auditLogRepository = auditLogRepository;
+        this.mcpSigningKeyMetadata = mcpSigningKeyMetadata;
     }
 
-    public record OrgSettingsResponse(boolean mcpEnabled) {
-        static OrgSettingsResponse from(Organization org) {
-            return new OrgSettingsResponse(org.mcpEnabled());
+    /**
+     * mcpSigningKeyGeneratedAt is JVM-wide (the same ephemeral keypair signs every org's MCP
+     * tokens), not actually per-org data - included here anyway rather than adding a whole new
+     * endpoint for one timestamp, since this is already the settings response every org admin
+     * loading the MCP page fetches. See McpSigningKeyMetadata for why this equals the last
+     * central-server restart, and AdminMcpPage.tsx for where it explains a client needing to
+     * reconnect.
+     */
+    public record OrgSettingsResponse(boolean mcpEnabled, Instant mcpSigningKeyGeneratedAt) {
+        static OrgSettingsResponse from(Organization org, Instant mcpSigningKeyGeneratedAt) {
+            return new OrgSettingsResponse(org.mcpEnabled(), mcpSigningKeyGeneratedAt);
         }
     }
 
@@ -44,7 +58,7 @@ public class OrganizationSettingsController {
     @GetMapping
     public OrgSettingsResponse get(@PathVariable UUID orgId, @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
-        return OrgSettingsResponse.from(requireOrg(orgId));
+        return OrgSettingsResponse.from(requireOrg(orgId), mcpSigningKeyMetadata.generatedAt());
     }
 
     @PutMapping
@@ -69,7 +83,7 @@ public class OrganizationSettingsController {
                     orgId.toString(),
                     null);
         }
-        return OrgSettingsResponse.from(requireOrg(orgId));
+        return OrgSettingsResponse.from(requireOrg(orgId), mcpSigningKeyMetadata.generatedAt());
     }
 
     private Organization requireOrg(UUID orgId) {
