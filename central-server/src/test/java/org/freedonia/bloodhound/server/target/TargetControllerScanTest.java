@@ -39,7 +39,7 @@ class TargetControllerScanTest {
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final TargetController controller = new TargetController(
             targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository, auditLogRepository,
-            100);
+            new TargetBulkCreateRateLimiter(), 100);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

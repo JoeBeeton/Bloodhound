@@ -33,6 +33,11 @@ class TargetControllerTest {
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    // Real, not mocked - same reasoning ApiKeyRateLimiterTest/ApiKeyAuthFilterTest use for their
+    // own sibling limiter: a simple, deterministic, no-dependency component. JUnit 5's default
+    // per-method test instance lifecycle gives every @Test its own fresh instance (same as admin's
+    // own random UUID below), so this never accumulates state across tests.
+    private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter = new TargetBulkCreateRateLimiter();
 
     private TargetController controller(int maxTargetsPerOrg) {
         return new TargetController(
@@ -42,6 +47,7 @@ class TargetControllerTest {
                 scanRunRepository,
                 scanJobRepository,
                 auditLogRepository,
+                targetBulkCreateRateLimiter,
                 maxTargetsPerOrg);
     }
 
@@ -83,14 +89,16 @@ class TargetControllerTest {
                 .thenReturn(target(UUID.randomUUID(), "good.example.com"));
         when(targetRepository.insert(orgId, "dupe.example.com", "OWN")).thenThrow(new DataIntegrityViolationException("dup"));
 
-        ResponseEntity<List<TargetController.BulkCreateTargetResult>> response = controller.createBulk(
+        ResponseEntity<?> response = controller.createBulk(
                 new BulkCreateTargetsRequest(
                         List.of("good.example.com", "dupe.example.com", "not a valid hostname", "127.0.0.1", "  "),
                         "OWN"),
                 admin);
 
         assertThat(response.getStatusCode().value()).isEqualTo(201);
-        List<TargetController.BulkCreateTargetResult> results = response.getBody();
+        @SuppressWarnings("unchecked")
+        List<TargetController.BulkCreateTargetResult> results =
+                (List<TargetController.BulkCreateTargetResult>) response.getBody();
         // The blank line is silently dropped, not reported as a failure - not a hostname a caller
         // pasted intending to track, just whitespace between real lines.
         assertThat(results).hasSize(4);
@@ -122,10 +130,12 @@ class TargetControllerTest {
         when(targetRepository.insert(any(), anyString(), anyString()))
                 .thenAnswer(inv -> target(UUID.randomUUID(), inv.getArgument(1)));
 
-        ResponseEntity<List<TargetController.BulkCreateTargetResult>> response = controller.createBulk(
+        ResponseEntity<?> response = controller.createBulk(
                 new BulkCreateTargetsRequest(List.of("a.example.com", "b.example.com", "c.example.com"), "OWN"), admin);
 
-        List<TargetController.BulkCreateTargetResult> results = response.getBody();
+        @SuppressWarnings("unchecked")
+        List<TargetController.BulkCreateTargetResult> results =
+                (List<TargetController.BulkCreateTargetResult>) response.getBody();
         assertThat(results.get(0).created()).isTrue();
         assertThat(results.get(1).created()).isTrue();
         assertThat(results.get(2).created()).isFalse();
@@ -154,5 +164,40 @@ class TargetControllerTest {
         controller.createBulk(new BulkCreateTargetsRequest(List.of("not a valid hostname"), "OWN"), admin);
 
         verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createBulk_callerOverItsRateLimit_returns429_neverTouchesTheRepository() {
+        // A security review found this endpoint had no limit on how often it could be called at
+        // all - each call runs a real synchronous DNS lookup per hostname, up to 100 per request,
+        // so unbounded repeated calls meant unbounded outbound DNS traffic at zero cost to the
+        // caller.
+        TargetController controller = controller(100);
+        for (int i = 0; i < 10; i++) {
+            targetBulkCreateRateLimiter.recordRequest(admin.userId());
+        }
+
+        ResponseEntity<?> response =
+                controller.createBulk(new BulkCreateTargetsRequest(List.of("example.com"), "OWN"), admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(429);
+        assertThat(response.getHeaders().getFirst("Retry-After")).isNotNull();
+        verify(targetRepository, never()).countActiveByOrganization(any());
+        verify(targetRepository, never()).insert(any(), anyString(), anyString());
+    }
+
+    @Test
+    void createBulk_callerUnderItsRateLimit_stillProcessesNormally() {
+        TargetController controller = controller(100);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(0);
+        when(targetRepository.insert(orgId, "example.com", "OWN")).thenReturn(target(UUID.randomUUID(), "example.com"));
+        for (int i = 0; i < 9; i++) {
+            targetBulkCreateRateLimiter.recordRequest(admin.userId());
+        }
+
+        ResponseEntity<?> response =
+                controller.createBulk(new BulkCreateTargetsRequest(List.of("example.com"), "OWN"), admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
     }
 }

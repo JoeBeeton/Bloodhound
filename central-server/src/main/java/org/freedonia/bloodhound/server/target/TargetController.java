@@ -17,12 +17,14 @@ import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.target.TargetBulkCreateRateLimiter.TargetBulkCreateRateLimitedException;
 import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
 import org.freedonia.bloodhound.server.target.dto.TargetSummary;
 import org.freedonia.bloodhound.server.target.dto.UpdateTargetRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -51,6 +53,7 @@ public class TargetController {
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
     private final AuditLogRepository auditLogRepository;
+    private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter;
     private final int maxTargetsPerOrg;
 
     public TargetController(
@@ -60,6 +63,7 @@ public class TargetController {
             ScanRunRepository scanRunRepository,
             ScanJobRepository scanJobRepository,
             AuditLogRepository auditLogRepository,
+            TargetBulkCreateRateLimiter targetBulkCreateRateLimiter,
             @Value("${bloodhound.targets.max-per-org:100}") int maxTargetsPerOrg) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
@@ -67,6 +71,7 @@ public class TargetController {
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
         this.auditLogRepository = auditLogRepository;
+        this.targetBulkCreateRateLimiter = targetBulkCreateRateLimiter;
         this.maxTargetsPerOrg = maxTargetsPerOrg;
     }
 
@@ -163,11 +168,27 @@ public class TargetController {
      * good batch becomes one failed result alongside the rest of the batch's successes, not a
      * whole-request 400 - the point of a bulk endpoint over N individual POSTs is exactly that
      * partial-success tolerance.
+     *
+     * <p>Rate-limited (TargetBulkCreateRateLimiter, keyed by user id) on top of the per-hostname
+     * validation above - a security review found this had no limit on how often it could be
+     * called at all: each call runs a real synchronous DNS lookup per hostname
+     * (SafeAddressValidator#requireSafeIfResolvable), up to 100 per request, so unbounded repeated
+     * calls meant unbounded outbound DNS traffic at zero cost to the caller. The per-org cap above
+     * bounds what actually gets persisted but does nothing to bound the lookup cost of repeatedly
+     * submitting batches that mostly fail it.
      */
     @PostMapping("/bulk")
-    public ResponseEntity<List<BulkCreateTargetResult>> createBulk(
+    public ResponseEntity<?> createBulk(
             @Valid @RequestBody BulkCreateTargetsRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
+        try {
+            targetBulkCreateRateLimiter.checkAllowed(principal.userId());
+        } catch (TargetBulkCreateRateLimitedException e) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()))
+                    .build();
+        }
+        targetBulkCreateRateLimiter.recordRequest(principal.userId());
         int remainingCapacity = maxTargetsPerOrg - targetRepository.countActiveByOrganization(principal.organizationId());
         List<BulkCreateTargetResult> results = new ArrayList<>();
         for (String rawHostname : request.hostnames()) {

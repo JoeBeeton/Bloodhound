@@ -429,6 +429,26 @@ describe("TargetsPage - bulk add targets", () => {
     expect(await screen.findByText("Failed to add targets.", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByLabelText("Hostnames (one per line)")).toHaveValue("example.com");
   });
+
+  it("a 429 (TargetBulkCreateRateLimiter) shows a specific wait message using Retry-After, not the generic fallback", async () => {
+    const user = userEvent.setup();
+    const rateLimited = {
+      ok: false,
+      status: 429,
+      headers: { get: (name: string) => (name === "Retry-After" ? "90" : null) },
+      json: async () => null,
+    } as unknown as Response;
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(rateLimited);
+
+    renderPage();
+    await screen.findByLabelText("Hostname", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Bulk add multiple →" }));
+    await user.type(screen.getByLabelText("Hostnames (one per line)"), "example.com");
+    await user.click(screen.getByRole("button", { name: "Add 1 target" }));
+
+    expect(await screen.findByText("Too many requests. Try again in 2 minutes.", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
 });
 
 describe("TargetsPage - single remove/restore failure surfacing", () => {
