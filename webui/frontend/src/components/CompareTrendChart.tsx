@@ -7,6 +7,24 @@ const LINE_COLORS = ["#00f0ff", "#ff2e97", "#ffb800", "#7c3aed", "#34d399", "#f4
 
 export type CompareScoreMode = "tier1" | "full";
 
+/** Same reasoning as ScoreTrendChart's own summarizeTrend - a screen-reader user needs the "our
+ * score vs. competitors" comparison this chart exists for spelled out as text, not left to guess
+ * from an unlabeled multi-line SVG. One clause per target with any history; targets with none yet
+ * are silently skipped here the same way their Line simply never renders a series. */
+export function summarizeComparison(series: CompareSeries[], mode: CompareScoreMode): string {
+  const clauses = series
+    .filter((s) => s.history.length > 0)
+    .map((s) => {
+      const latest = s.history[s.history.length - 1];
+      const score = mode === "tier1" ? (latest.tier1OverallScore ?? latest.overallScore) : latest.overallScore;
+      return `${s.hostname} at ${score.toFixed(0)}`;
+    });
+  if (clauses.length === 0) {
+    return "Score comparison: no scan history yet for the selected targets.";
+  }
+  return `Score comparison (${mode === "tier1" ? "fair comparison" : "full picture"}): ${clauses.join(", ")}.`;
+}
+
 /**
  * The headline "our score vs. competitors over time" chart. Each target
  * scans on its own schedule, so timestamps rarely align across series —
@@ -35,7 +53,11 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
   }
 
   return (
-    <div className="h-80 w-full rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
+    <div
+      className="h-80 w-full rounded-lg border border-neon-cyan/20 bg-panel/60 p-4"
+      role="img"
+      aria-label={summarizeComparison(series, mode)}
+    >
       <ResponsiveContainer width="100%" height="100%">
         {/* left:0 (not a negative margin) + a wider YAxis: a negative left margin combined
             with a narrow axis width clips the leading digit(s) of 2-3 digit tick labels
