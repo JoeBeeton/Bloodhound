@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.worker.modules.subdomain;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -10,6 +11,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.TreeSet;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +29,23 @@ import org.springframework.stereotype.Component;
 public class CrtShSource implements SubdomainSource {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /**
+     * A security review found this was still using {@code BodyHandlers.ofString()}, which
+     * buffers the ENTIRE response into memory with no size limit at all - the exact issue
+     * {@link SafeHttpGet#readCappedUtf8} was introduced to fix elsewhere (TechFetcher,
+     * DocumentFetcher, etc.), just missed here. crt.sh is a fixed, trusted host (not the scanned
+     * target itself, so no redirect/SSRF exposure the way a target-controlled fetch would have),
+     * but it's still an external service outside this app's control that's documented to return
+     * very large JSON for heavily-certificated domains - a slow/misbehaving/compromised crt.sh
+     * response could otherwise exhaust the shared worker JVM's heap, affecting every other org's
+     * queued scans on that worker. Generous relative to TechFetcher/DocumentFetcher's own
+     * 300,000-char page caps since a real large domain's certificate history is legitimately much
+     * bigger than one HTML page (confirmed live: 1,075 discovered subdomains for one real target
+     * in this deployment, and crt.sh returns one JSON row per certificate, not per deduped
+     * hostname, so the raw response is a multiple of that).
+     */
+    private static final int BODY_CHAR_CAP = 5_000_000;
 
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -51,11 +70,12 @@ public class CrtShSource implements SubdomainSource {
                 .header("User-Agent", ScanUserAgent.VALUE)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() / 100 != 2) {
+            response.body().close();
             throw new IOException("crt.sh returned HTTP " + response.statusCode() + " for " + rootDomain);
         }
-        return response.body();
+        return SafeHttpGet.readCappedUtf8(response.body(), BODY_CHAR_CAP);
     }
 
     /**
