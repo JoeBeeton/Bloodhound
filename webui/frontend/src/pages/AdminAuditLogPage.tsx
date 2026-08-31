@@ -103,6 +103,7 @@ const ACTION_LABELS: Record<string, string> = {
   FINDING_REOPENED: "Finding reopened",
   TARGETS_BULK_CREATED: "Targets bulk-created",
   USER_SESSION_REVOKED: "Session revoked",
+  MCP_CONNECTION_REVOKED: "MCP connection revoked",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
@@ -121,6 +122,9 @@ const DESTRUCTIVE_ACTIONS = new Set([
   // category as SCIM_USER_DEACTIVATED and API_KEY_REVOKED just above, not a routine/reversible
   // action like TARGET_RESTORED.
   "USER_SESSION_REVOKED",
+  // Same shape again: cuts off a live AI-agent client's access, same category as the two revokes
+  // just above it.
+  "MCP_CONNECTION_REVOKED",
 ]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
