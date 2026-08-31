@@ -46,16 +46,24 @@ async function fetchIntegration(orgId: string): Promise<SlackIntegration | null>
   return res.json();
 }
 
+/**
+ * The server returns a real {message} JSON body on a 400 (see SlackIntegrationController's own
+ * ErrorMessageResponse javadoc) - a plain res.text() read here would previously have picked up
+ * the framework's generic {timestamp,status,error,path} error body instead, showing the admin a
+ * raw JSON blob rather than the specific reason their save was rejected.
+ */
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  const body = await res.json().catch(() => undefined);
+  return (body && typeof body.message === "string" && body.message) || fallback;
+}
+
 async function saveIntegration(orgId: string, body: SaveSlackIntegrationInput): Promise<SlackIntegration> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/slack-integration`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || "Failed to save Slack integration.");
-  }
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to save Slack integration."));
   return res.json();
 }
 
@@ -80,10 +88,7 @@ interface TestSendResult {
  */
 async function sendTestMessage(orgId: string): Promise<TestSendResult> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/slack-integration/test`, { method: "POST" });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || "Failed to send test message.");
-  }
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to send test message."));
   return res.json();
 }
 
@@ -104,6 +109,11 @@ export function AdminSlackPage() {
   const [enabled, setEnabled] = useState(true);
   const [types, setTypes] = useState<string[]>(["NEW_FINDINGS", "SCAN_FAILED"]);
   const [ownTargetsOnly, setOwnTargetsOnly] = useState(false);
+  // Which query.data snapshot enabled/types/ownTargetsOnly were last synced from - see
+  // hasUnsavedChanges's own comment below for why this matters. Deliberately a plain reference
+  // (not a boolean "hydrated" flag): query.data changing again later (e.g. a save's refetch)
+  // needs to invalidate this the same way the very first load does.
+  const [hydratedFrom, setHydratedFrom] = useState<SlackIntegration | null | undefined>(undefined);
   // The webhook URL is never sent back to the browser once saved (see SlackIntegration's own
   // comment) - removing the integration means re-generating and re-pasting a brand new one from
   // Slack's own admin UI to restore it, not just re-toggling a switch. A security/AppSec review
@@ -128,6 +138,7 @@ export function AdminSlackPage() {
     } else if (query.data === null) {
       setIsEditingWebhook(true);
     }
+    setHydratedFrom(query.data);
   }, [query.data]);
 
   // A freshly-typed webhook URL is the one thing here that's genuinely painful to lose - unlike
@@ -138,9 +149,21 @@ export function AdminSlackPage() {
   // already warns about. Compares against the last-loaded config for the other fields, same
   // convention AdminSsoPage's own warning uses - naturally re-syncs to false once a save succeeds
   // and query.data updates.
+  //
+  // hydratedFrom === query.data gates the second half - without it, there's a real one-render
+  // window, right after query.data first resolves (or changes again after a save), where this
+  // render already sees the new query.data but enabled/types/ownTargetsOnly above still hold
+  // their pre-sync values (the useEffect that copies them across hasn't run yet, since effects
+  // always fire after the render that scheduled them, not during it). types in particular starts
+  // out seeded with a "sensible default for a brand new integration" that a real loaded one won't
+  // match, so that window reliably evaluated this to a false "unsaved changes" for one frame -
+  // caught via a spied addEventListener("beforeunload", ...) call in AdminSlackPage.test.tsx that
+  // fired and cleaned up again within that same frame, invisible to a user but not to a test
+  // watching for it under a slow/contended CI run.
   const hasUnsavedChanges =
     (isEditingWebhook && webhookUrl.trim() !== "") ||
-    (query.data != null &&
+    (hydratedFrom === query.data &&
+      query.data != null &&
       (enabled !== query.data.enabled ||
         ownTargetsOnly !== query.data.ownTargetsOnly ||
         JSON.stringify([...types].sort()) !== JSON.stringify([...query.data.notificationTypes].sort())));

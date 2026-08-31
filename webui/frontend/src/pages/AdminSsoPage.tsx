@@ -62,6 +62,10 @@ export function AdminSsoPage() {
   const [displayNameAttributeName, setDisplayNameAttributeName] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Which configQuery.data snapshot the fields above were last synced from - see
+  // hasUnsavedChanges's own comment for why this matters (same fix as AdminSlackPage's identical
+  // gap - a real, if very narrow, production race, not just test flakiness).
+  const [hydratedFrom, setHydratedFrom] = useState<SsoConfig | undefined>(undefined);
 
   useEffect(() => {
     if (configQuery.data) {
@@ -72,12 +76,21 @@ export function AdminSsoPage() {
       setDisplayNameAttributeName(configQuery.data.displayNameAttributeName ?? "");
       setEnabled(configQuery.data.enabled);
     }
+    setHydratedFrom(configQuery.data);
   }, [configQuery.data]);
 
   // Compares against the last-loaded/last-saved config, not a separate "dirty" flag to keep in
   // sync by hand - the moment a save succeeds, configQuery.data itself updates (see the
   // mutation's own onSuccess) and this naturally re-syncs to false along with it.
+  //
+  // hydratedFrom === configQuery.data gates this - without it, the render where configQuery.data
+  // first resolves (or changes again after a save) sees the new data while idpEntityId etc. above
+  // still hold their pre-sync defaults (the useEffect that copies them across hasn't run yet, since
+  // effects fire after the render that scheduled them). Every field here defaults to "" - a real
+  // loaded config's own values essentially never match that - so that window reliably evaluated
+  // this to a false "unsaved changes" for one frame, the same bug AdminSlackPage.tsx had.
   const hasUnsavedChanges =
+    hydratedFrom === configQuery.data &&
     !!configQuery.data &&
     (idpEntityId !== configQuery.data.idpEntityId ||
       idpSsoUrl !== configQuery.data.idpSsoUrl ||

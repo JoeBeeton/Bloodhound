@@ -64,20 +64,25 @@ class SlackIntegrationControllerTest {
     void save_blankWebhookUrl_noExistingIntegration_rejected() {
         when(repository.findByOrganization(orgId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.save(
-                        orgId, admin, new SlackIntegrationController.SlackConfigRequest(null, true, List.of(), false)))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        ResponseEntity<?> response = controller.save(
+                orgId, admin, new SlackIntegrationController.SlackConfigRequest(null, true, List.of(), false));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(((SlackIntegrationController.ErrorMessageResponse) response.getBody()).message())
+                .isEqualTo("webhookUrl is required");
         verify(repository, never()).upsert(any(), any(), org.mockito.Mockito.anyBoolean(), any(), org.mockito.Mockito.anyBoolean());
     }
 
     @Test
     void save_invalidNewWebhookUrl_rejected_neverStored() {
-        assertThatThrownBy(() -> controller.save(
-                        orgId,
-                        admin,
-                        new SlackIntegrationController.SlackConfigRequest("https://evil.com/steal", true, List.of(), false)))
-                .isInstanceOf(ResponseStatusException.class);
+        ResponseEntity<?> response = controller.save(
+                orgId,
+                admin,
+                new SlackIntegrationController.SlackConfigRequest("https://evil.com/steal", true, List.of(), false));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(((SlackIntegrationController.ErrorMessageResponse) response.getBody()).message())
+                .isEqualTo("webhookUrl must be a genuine https://hooks.slack.com/services/... URL");
         verify(repository, never()).upsert(any(), any(), org.mockito.Mockito.anyBoolean(), any(), org.mockito.Mockito.anyBoolean());
     }
 
@@ -88,8 +93,9 @@ class SlackIntegrationControllerTest {
                 UUID.randomUUID(), orgId, newUrl, true, List.of("NEW_FINDINGS"), false, Instant.now(), Instant.now());
         when(repository.upsert(orgId, newUrl, true, List.of("NEW_FINDINGS"), false)).thenReturn(saved);
 
-        SlackIntegrationController.SlackIntegrationResponse response = controller.save(
+        ResponseEntity<?> responseEntity = controller.save(
                 orgId, admin, new SlackIntegrationController.SlackConfigRequest(newUrl, true, List.of("NEW_FINDINGS"), false));
+        var response = (SlackIntegrationController.SlackIntegrationResponse) responseEntity.getBody();
 
         verify(repository).upsert(orgId, newUrl, true, List.of("NEW_FINDINGS"), false);
         assertThat(response.webhookUrlMasked()).doesNotContain("newtoken");
@@ -99,9 +105,11 @@ class SlackIntegrationControllerTest {
     void test_noIntegrationConfigured_rejectedBeforeAnyDeliveryAttempt() {
         when(repository.findByOrganization(orgId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.test(orgId, admin))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        ResponseEntity<?> response = controller.test(orgId, admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(((SlackIntegrationController.ErrorMessageResponse) response.getBody()).message())
+                .isEqualTo("No Slack webhook configured yet - save one first.");
         verify(slackNotifier, never()).attemptDelivery(any(), any(), any(), any(), any());
     }
 
@@ -111,7 +119,7 @@ class SlackIntegrationControllerTest {
         when(slackNotifier.attemptDelivery(eq(REAL_URL), any(), any(), eq("INFO"), eq("https://app.example/dashboard")))
                 .thenReturn(new SlackNotifier.DeliveryResult(true, null));
 
-        SlackIntegrationController.TestSendResponse response = controller.test(orgId, admin);
+        var response = (SlackIntegrationController.TestSendResponse) controller.test(orgId, admin).getBody();
 
         assertThat(response.success()).isTrue();
         assertThat(response.detail()).isNull();
@@ -125,7 +133,7 @@ class SlackIntegrationControllerTest {
         when(slackNotifier.attemptDelivery(eq(REAL_URL), any(), any(), any(), any()))
                 .thenReturn(new SlackNotifier.DeliveryResult(false, "Slack responded with HTTP 404"));
 
-        SlackIntegrationController.TestSendResponse response = controller.test(orgId, admin);
+        var response = (SlackIntegrationController.TestSendResponse) controller.test(orgId, admin).getBody();
 
         assertThat(response.success()).isFalse();
         assertThat(response.detail()).isEqualTo("Slack responded with HTTP 404");
