@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Actions in ci.yml are pinned to commit SHAs (not mutable tags) for supply-chain
+  # safety - Dependabot is what keeps those pins from going stale forever. It resolves
+  # the new SHA itself and updates the trailing "# vX" comment along with it.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
