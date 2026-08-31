@@ -23,8 +23,21 @@ async function changePassword(currentPassword: string, newPassword: string): Pro
     if (res.status === 429) {
       throw new Error(`Too many failed attempts. Try again in ${formatRetryAfter(res)}.`);
     }
-    const message = res.status === 403 ? "Current password is incorrect." : "Failed to change password.";
-    throw new Error(message);
+    if (res.status === 403) {
+      throw new Error("Current password is incorrect.");
+    }
+    // A security review added a common/easily-guessed-password check whose whole value is
+    // explaining specifically why a password was rejected (see UserSelfController#changePassword's
+    // own comment on why that one case returns a real response body, unlike every other error this
+    // endpoint can return) - parsed here rather than assumed, since a 400 can also mean something
+    // else entirely (e.g. this account doesn't use a local password), which has no body to read.
+    if (res.status === 400) {
+      const body = await res.json().catch(() => null);
+      if (body && typeof body.message === "string" && body.message.trim() !== "") {
+        throw new Error(body.message);
+      }
+    }
+    throw new Error("Failed to change password.");
   }
 }
 

@@ -9,6 +9,7 @@ import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
 import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
 import org.freedonia.bloodhound.server.security.HashUtil;
+import org.freedonia.bloodhound.server.security.WeakPasswordChecker;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,18 +38,21 @@ public class UserSelfController {
     private final RefreshTokenRepository refreshTokenRepository;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final AuditLogRepository auditLogRepository;
+    private final WeakPasswordChecker weakPasswordChecker;
 
     public UserSelfController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
             LoginAttemptLimiter loginAttemptLimiter,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            WeakPasswordChecker weakPasswordChecker) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
         this.loginAttemptLimiter = loginAttemptLimiter;
         this.auditLogRepository = auditLogRepository;
+        this.weakPasswordChecker = weakPasswordChecker;
     }
 
     /**
@@ -64,8 +68,11 @@ public class UserSelfController {
      * the two paths' failures count against one combined lockout per email rather than each
      * getting its own independent budget of guesses.
      */
+    /** The weak-password rejection's own response body - see the comment on that branch below for why this one case needs one. */
+    public record WeakPasswordResponse(String message) {}
+
     @PatchMapping("/password")
-    public ResponseEntity<Void> changePassword(
+    public ResponseEntity<?> changePassword(
             @Valid @RequestBody ChangePasswordRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
         try {
             loginAttemptLimiter.checkAllowed(principal.email());
@@ -85,6 +92,30 @@ public class UserSelfController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "current password is incorrect");
         }
         loginAttemptLimiter.recordSuccess(principal.email());
+        // A security review found this only validated newPassword's length (see
+        // ChangePasswordRequest's own @Size) - nothing stopped it from being a trivially
+        // guessable value like "password1" or the account's own email. NIST 800-63B's current
+        // guidance (SP 800-63B §5.1.1.2) is explicit that composition rules (require a digit, a
+        // symbol, etc.) are NOT recommended, but SHALL compare against known-common/compromised
+        // values and against context-specific ones (the account's own username) - this is exactly
+        // that check, not a composition-rule requirement. Checked only after the current-password
+        // verification above, not before: a caller who doesn't already know the real current
+        // password shouldn't learn anything about what would or wouldn't be accepted as a new one.
+        //
+        // Returns a real response body, unlike the two ResponseStatusException checks above -
+        // confirmed live that this app's default error handler (unlike SCIM's own
+        // package-scoped ScimExceptionHandler) never exposes a ResponseStatusException's reason
+        // text to the caller at all (the JSON body is just {timestamp,status,error,path}, no
+        // message field), the same reason ChangePasswordModal.tsx's own frontend code has to
+        // hardcode "Current password is incorrect." for a 403 rather than reading it from the
+        // body. A generic "your password was rejected" would be actively unhelpful here - the
+        // whole point of this check is telling the user specifically why, so they can pick
+        // something that will actually be accepted.
+        if (weakPasswordChecker.isWeak(request.newPassword(), principal.email())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new WeakPasswordResponse(
+                            "This password is too common or easily guessed. Choose something less predictable."));
+        }
         userRepository.updatePasswordHash(user.id(), passwordEncoder.encode(request.newPassword()));
         // A security review found this self-service change had no audit trail, unlike the
         // admin-triggered equivalent (OrgUserController's own USER_PASSWORD_RESET) - a distinct
