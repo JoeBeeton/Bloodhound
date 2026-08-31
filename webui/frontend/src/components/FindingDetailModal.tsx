@@ -13,7 +13,8 @@ import type { Finding, OrgFinding, Severity } from "../lib/types";
  * FindingReconciler forever until a human explicitly reopens it (see
  * V48__findings_dismissed_status.sql's own comment).
  */
-async function dismissFinding(id: string): Promise<void> {
+/** Exported for TargetDetailPage's own bulk-dismiss action - same endpoint, fired N times in parallel there (see its own triggerBulkDismiss, mirroring the page's existing triggerBulkScan/triggerBulkRemove pattern) rather than needing a dedicated bulk backend endpoint. */
+export async function dismissFinding(id: string): Promise<void> {
   const res = await apiFetch(`/api/v1/findings/${id}/dismiss`, { method: "POST" });
   if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to dismiss finding."));
 }

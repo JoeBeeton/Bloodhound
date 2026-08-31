@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
-import { findingsFilterParams, parseStatusParam, TargetNotes } from "./TargetDetailPage";
+import { findingsFilterParams, parseStatusParam, TargetNotes, triggerBulkDismiss } from "./TargetDetailPage";
 
 vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
 const mockedApiFetch = vi.mocked(apiFetch);
@@ -199,5 +199,42 @@ describe("findingsFilterParams / parseStatusParam", () => {
   it("defaults anything unrecognized (absent, stale, hand-edited) back to OPEN", () => {
     expect(parseStatusParam(null)).toBe("OPEN");
     expect(parseStatusParam("garbage")).toBe("OPEN");
+  });
+});
+
+describe("triggerBulkDismiss", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // A product review found triaging dozens of findings meant dismissing each one individually -
+  // same Promise.allSettled-over-N-real-requests pattern as TargetsPage's own bulk-scan/bulk-
+  // remove, reusing the single-finding dismiss endpoint rather than a dedicated bulk one.
+  it("fires one dismiss request per finding id and reports which ones succeeded", async () => {
+    mockedApiFetch
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response);
+
+    const outcomes = await triggerBulkDismiss(["f1", "f2"]);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", { method: "POST" });
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f2/dismiss", { method: "POST" });
+    expect(outcomes).toEqual([
+      { findingId: "f1", ok: true },
+      { findingId: "f2", ok: true },
+    ]);
+  });
+
+  it("one failure doesn't block the rest - each finding gets its own independent outcome", async () => {
+    mockedApiFetch
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ message: "only an open finding can be dismissed" }) } as Response);
+
+    const outcomes = await triggerBulkDismiss(["f1", "f2"]);
+
+    expect(outcomes).toEqual([
+      { findingId: "f1", ok: true },
+      { findingId: "f2", ok: false },
+    ]);
   });
 });
