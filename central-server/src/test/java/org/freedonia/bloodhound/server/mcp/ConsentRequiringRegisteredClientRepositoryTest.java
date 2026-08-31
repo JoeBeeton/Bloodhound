@@ -67,6 +67,27 @@ class ConsentRequiringRegisteredClientRepositoryTest {
         assertThat(ArgumentCaptorHelper.captureSaved(delegate).getClientName()).isEqualTo(exactlyAtCap);
     }
 
+    @Test
+    void emptyScope_grantedMcpRead_theRfc7591RequiredCaseForDynamicClientRegistration() {
+        // RFC 7591 requires a DCR request to omit scope entirely and leaves the server to decide
+        // what to grant (Spring's own DEFAULT_SCOPE_VALIDATOR rejects a request that specifies
+        // one) - a functional review found nothing ever did the server's half of that, leaving
+        // every self-registered client permanently unable to obtain mcp.read, the one scope the
+        // resource-server chain actually requires (see McpSecurityConfig).
+        repository.save(client("A Client").build());
+
+        assertThat(ArgumentCaptorHelper.captureSaved(delegate).getScopes()).containsExactly("mcp.read");
+    }
+
+    @Test
+    void nonEmptyScope_leftAlone() {
+        RegisteredClient client = client("A Client").scope("some.other.scope").build();
+
+        repository.save(client);
+
+        assertThat(ArgumentCaptorHelper.captureSaved(delegate).getScopes()).containsExactly("some.other.scope");
+    }
+
     /** Small local helper so each test doesn't repeat the ArgumentCaptor boilerplate. */
     private static final class ArgumentCaptorHelper {
         static RegisteredClient captureSaved(RegisteredClientRepository delegate) {
