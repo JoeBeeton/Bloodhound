@@ -70,6 +70,20 @@ public class TargetRepository {
         return jdbc.query("SELECT * FROM targets WHERE is_active = TRUE", ROW_MAPPER);
     }
 
+    /**
+     * Active only - a soft-removed target (is_active = FALSE) drives no scanning traffic of its
+     * own (see ScanAutoScheduler#findDueForScan), so it shouldn't count against the org's cap on
+     * concurrent outbound scanning. An org can always make room for a new target by removing an
+     * old one first, without needing to permanently delete anything.
+     */
+    public int countActiveByOrganization(UUID organizationId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM targets WHERE organization_id = ? AND is_active = TRUE",
+                Integer.class,
+                organizationId);
+        return count != null ? count : 0;
+    }
+
     public Target insert(UUID organizationId, String hostname, String targetType) {
         UUID id = UUID.randomUUID();
         jdbc.update(

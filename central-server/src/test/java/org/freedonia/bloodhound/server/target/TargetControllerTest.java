@@ -1,0 +1,158 @@
+package org.freedonia.bloodhound.server.target;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
+import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
+import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
+import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
+
+class TargetControllerTest {
+
+    private final TargetRepository targetRepository = mock(TargetRepository.class);
+    private final ScanRunService scanRunService = mock(ScanRunService.class);
+    private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
+    private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
+    private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+
+    private TargetController controller(int maxTargetsPerOrg) {
+        return new TargetController(
+                targetRepository,
+                scanRunService,
+                scoreSnapshotRepository,
+                scanRunRepository,
+                scanJobRepository,
+                auditLogRepository,
+                maxTargetsPerOrg);
+    }
+
+    private final UUID orgId = UUID.randomUUID();
+    private final JwtPrincipal admin = new JwtPrincipal(UUID.randomUUID(), orgId, "ADMIN", "admin@example.com");
+
+    private Target target(UUID id, String hostname) {
+        return new Target(id, orgId, hostname, "OWN", "UNAUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
+    }
+
+    @Test
+    void create_atCap_rejected_neverInserts() {
+        TargetController controller = controller(5);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(5);
+
+        assertThatThrownBy(() -> controller.create(new CreateTargetRequest("example.com", "OWN"), admin))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(409));
+        verify(targetRepository, never()).insert(any(), anyString(), anyString());
+    }
+
+    @Test
+    void create_underCap_succeeds() {
+        TargetController controller = controller(5);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(4);
+        UUID id = UUID.randomUUID();
+        when(targetRepository.insert(orgId, "example.com", "OWN")).thenReturn(target(id, "example.com"));
+
+        ResponseEntity<?> response = controller.create(new CreateTargetRequest("example.com", "OWN"), admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+    }
+
+    @Test
+    void createBulk_mixedBatch_eachHostnameGetsItsOwnResult() {
+        TargetController controller = controller(100);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(0);
+        when(targetRepository.insert(orgId, "good.example.com", "OWN"))
+                .thenReturn(target(UUID.randomUUID(), "good.example.com"));
+        when(targetRepository.insert(orgId, "dupe.example.com", "OWN")).thenThrow(new DataIntegrityViolationException("dup"));
+
+        ResponseEntity<List<TargetController.BulkCreateTargetResult>> response = controller.createBulk(
+                new BulkCreateTargetsRequest(
+                        List.of("good.example.com", "dupe.example.com", "not a valid hostname", "127.0.0.1", "  "),
+                        "OWN"),
+                admin);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+        List<TargetController.BulkCreateTargetResult> results = response.getBody();
+        // The blank line is silently dropped, not reported as a failure - not a hostname a caller
+        // pasted intending to track, just whitespace between real lines.
+        assertThat(results).hasSize(4);
+
+        assertThat(results.get(0).hostname()).isEqualTo("good.example.com");
+        assertThat(results.get(0).created()).isTrue();
+
+        assertThat(results.get(1).hostname()).isEqualTo("dupe.example.com");
+        assertThat(results.get(1).created()).isFalse();
+        assertThat(results.get(1).error()).contains("already tracked");
+
+        assertThat(results.get(2).hostname()).isEqualTo("not a valid hostname");
+        assertThat(results.get(2).created()).isFalse();
+        assertThat(results.get(2).error()).contains("valid domain name");
+
+        // An IP literal in loopback range - the same SSRF guard create() applies via
+        // rejectUnsafeHostname, exercised here through its shared underlying check.
+        // requireSafeIfResolvable recognizes IP literals directly with no DNS resolution needed,
+        // so this is deterministic in a unit test unlike a real hostname would be.
+        assertThat(results.get(3).hostname()).isEqualTo("127.0.0.1");
+        assertThat(results.get(3).created()).isFalse();
+        assertThat(results.get(3).error()).contains("private, loopback, or reserved");
+    }
+
+    @Test
+    void createBulk_stopsCountingAgainstCapOnceReached_restMarkedAsCapExceeded() {
+        TargetController controller = controller(2);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(0);
+        when(targetRepository.insert(any(), anyString(), anyString()))
+                .thenAnswer(inv -> target(UUID.randomUUID(), inv.getArgument(1)));
+
+        ResponseEntity<List<TargetController.BulkCreateTargetResult>> response = controller.createBulk(
+                new BulkCreateTargetsRequest(List.of("a.example.com", "b.example.com", "c.example.com"), "OWN"), admin);
+
+        List<TargetController.BulkCreateTargetResult> results = response.getBody();
+        assertThat(results.get(0).created()).isTrue();
+        assertThat(results.get(1).created()).isTrue();
+        assertThat(results.get(2).created()).isFalse();
+        assertThat(results.get(2).error()).contains("reached its limit");
+        verify(targetRepository, never()).insert(orgId, "c.example.com", "OWN");
+    }
+
+    @Test
+    void createBulk_recordsOneAuditEntryWithTheCreatedCount_notPerHostname() {
+        TargetController controller = controller(100);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(0);
+        when(targetRepository.insert(any(), anyString(), anyString()))
+                .thenAnswer(inv -> target(UUID.randomUUID(), inv.getArgument(1)));
+
+        controller.createBulk(new BulkCreateTargetsRequest(List.of("a.example.com", "b.example.com"), "OWN"), admin);
+
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "TARGETS_BULK_CREATED", "ORGANIZATION", orgId.toString(), "count=2");
+    }
+
+    @Test
+    void createBulk_nothingCreated_neverRecordsAudit() {
+        TargetController controller = controller(100);
+        when(targetRepository.countActiveByOrganization(orgId)).thenReturn(0);
+
+        controller.createBulk(new BulkCreateTargetsRequest(List.of("not a valid hostname"), "OWN"), admin);
+
+        verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+}

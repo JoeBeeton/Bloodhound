@@ -3,9 +3,11 @@ package org.freedonia.bloodhound.server.target;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
@@ -15,9 +17,11 @@ import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
 import org.freedonia.bloodhound.server.target.dto.TargetSummary;
 import org.freedonia.bloodhound.server.target.dto.UpdateTargetRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,12 +41,17 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/targets")
 public class TargetController {
 
+    /** Same pattern CreateTargetRequest's own @Pattern uses - kept in sync as one shared constant so createBulk's imperative per-hostname check can never drift from single-create's bean-validated one. */
+    private static final Pattern HOSTNAME_PATTERN =
+            Pattern.compile("^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$");
+
     private final TargetRepository targetRepository;
     private final ScanRunService scanRunService;
     private final ScoreSnapshotRepository scoreSnapshotRepository;
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
     private final AuditLogRepository auditLogRepository;
+    private final int maxTargetsPerOrg;
 
     public TargetController(
             TargetRepository targetRepository,
@@ -50,13 +59,15 @@ public class TargetController {
             ScoreSnapshotRepository scoreSnapshotRepository,
             ScanRunRepository scanRunRepository,
             ScanJobRepository scanJobRepository,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            @Value("${bloodhound.targets.max-per-org:100}") int maxTargetsPerOrg) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
         this.scoreSnapshotRepository = scoreSnapshotRepository;
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
         this.auditLogRepository = auditLogRepository;
+        this.maxTargetsPerOrg = maxTargetsPerOrg;
     }
 
     @GetMapping
@@ -105,6 +116,7 @@ public class TargetController {
     public ResponseEntity<TargetSummary> create(
             @Valid @RequestBody CreateTargetRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
+        requireUnderTargetCap(principal.organizationId(), 1);
         rejectUnsafeHostname(request.hostname());
         try {
             Target target = targetRepository.insert(principal.organizationId(), request.hostname(), request.targetType());
@@ -112,6 +124,93 @@ public class TargetController {
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "target already tracked for this organization");
         }
+    }
+
+    /**
+     * A security review found this had no cap at all - every tracked target drives real,
+     * periodic outbound scanning against a real external host, so unbounded creation is unbounded
+     * scanning traffic, the same abuse category scanCadenceSeconds' own @Min/@Max bounds guard
+     * against via a different field. Checked against active targets only - see
+     * TargetRepository#countActiveByOrganization's own comment for why a soft-removed one doesn't
+     * count. additionalCount lets createBulk below check "would adding N more exceed the cap"
+     * without a separate near-identical method.
+     */
+    private void requireUnderTargetCap(UUID organizationId, int additionalCount) {
+        int current = targetRepository.countActiveByOrganization(organizationId);
+        if (current + additionalCount > maxTargetsPerOrg) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "organization has reached its limit of " + maxTargetsPerOrg + " active targets");
+        }
+    }
+
+    public record BulkCreateTargetResult(String hostname, boolean created, String error, TargetSummary target) {
+        static BulkCreateTargetResult success(String hostname, TargetSummary target) {
+            return new BulkCreateTargetResult(hostname, true, null, target);
+        }
+
+        static BulkCreateTargetResult failure(String hostname, String error) {
+            return new BulkCreateTargetResult(hostname, false, error, null);
+        }
+    }
+
+    /**
+     * A product review found onboarding a domain portfolio meant submitting each hostname
+     * one-by-one through POST .../targets, same one-at-a-time gap the page's own bulk-scan/bulk-
+     * remove actions already closed for existing targets. Reuses create()'s own per-hostname
+     * validation (format, SSRF, duplicate) and the same org cap, but imperatively rather than via
+     * bean validation - see BulkCreateTargetsRequest's own javadoc for why a batch can't just
+     * reuse @Valid the way a single create does. One bad or duplicate hostname in an otherwise
+     * good batch becomes one failed result alongside the rest of the batch's successes, not a
+     * whole-request 400 - the point of a bulk endpoint over N individual POSTs is exactly that
+     * partial-success tolerance.
+     */
+    @PostMapping("/bulk")
+    public ResponseEntity<List<BulkCreateTargetResult>> createBulk(
+            @Valid @RequestBody BulkCreateTargetsRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireWriteAccess(principal);
+        int remainingCapacity = maxTargetsPerOrg - targetRepository.countActiveByOrganization(principal.organizationId());
+        List<BulkCreateTargetResult> results = new ArrayList<>();
+        for (String rawHostname : request.hostnames()) {
+            String hostname = rawHostname.trim();
+            if (hostname.isEmpty()) {
+                continue; // a blank line in a pasted batch isn't a hostname worth reporting on at all
+            }
+            if (remainingCapacity <= 0) {
+                results.add(BulkCreateTargetResult.failure(
+                        hostname, "organization has reached its limit of " + maxTargetsPerOrg + " active targets"));
+                continue;
+            }
+            if (!HOSTNAME_PATTERN.matcher(hostname).matches()) {
+                results.add(BulkCreateTargetResult.failure(hostname, "must be a valid domain name"));
+                continue;
+            }
+            try {
+                SafeAddressValidator.requireSafeIfResolvable(hostname);
+            } catch (IOException e) {
+                results.add(BulkCreateTargetResult.failure(
+                        hostname, "resolves to a private, loopback, or reserved address and cannot be tracked"));
+                continue;
+            }
+            try {
+                Target target = targetRepository.insert(principal.organizationId(), hostname, request.targetType());
+                results.add(BulkCreateTargetResult.success(hostname, TargetSummary.from(target)));
+                remainingCapacity--;
+            } catch (DataIntegrityViolationException e) {
+                results.add(BulkCreateTargetResult.failure(hostname, "already tracked for this organization"));
+            }
+        }
+        long createdCount = results.stream().filter(BulkCreateTargetResult::created).count();
+        if (createdCount > 0) {
+            auditLogRepository.record(
+                    principal.organizationId(),
+                    principal.userId(),
+                    principal.email(),
+                    "TARGETS_BULK_CREATED",
+                    "ORGANIZATION",
+                    principal.organizationId().toString(),
+                    "count=" + createdCount);
+        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(results);
     }
 
     /**

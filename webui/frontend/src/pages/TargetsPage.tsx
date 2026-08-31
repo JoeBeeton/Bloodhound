@@ -5,7 +5,7 @@ import { ErrorState } from "../components/ErrorState";
 import { GradeBadge } from "../components/GradeBadge";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { colorForTargetType } from "../lib/attackSurfaceGraph";
 import type { ScanRunDetail, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
@@ -53,6 +53,33 @@ async function createTarget(input: { hostname: string; targetType: TargetType })
 async function triggerScan(targetId: string): Promise<{ id: string }> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/scan`, { method: "POST" });
   if (!res.ok) throw new Error(res.status === 409 ? "A scan is already running for this target." : "Failed to start scan.");
+  return res.json();
+}
+
+interface BulkCreateTargetResult {
+  hostname: string;
+  created: boolean;
+  error: string | null;
+  target: Target | null;
+}
+
+/**
+ * A product review found onboarding a domain portfolio meant submitting each hostname
+ * one-by-one through createTarget above, the same one-at-a-time gap this page's own bulk-scan/
+ * bulk-remove actions already closed for existing targets. Unlike those two, this calls a real
+ * new backend endpoint (POST .../targets/bulk) rather than firing N individual requests in
+ * parallel - see BulkCreateTargetsRequest's own javadoc for why bean validation alone can't give
+ * per-hostname partial-success tolerance the way N separate requests naturally would have, and
+ * TargetController#createBulk reuses this endpoint to enforce the org's target cap consistently
+ * across a whole batch rather than each request racing to check it independently.
+ */
+async function createTargetsBulk(input: { hostnames: string[]; targetType: TargetType }): Promise<BulkCreateTargetResult[]> {
+  const res = await apiFetch("/api/v1/targets/bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to add targets."));
   return res.json();
 }
 
@@ -138,6 +165,10 @@ export function TargetsPage() {
   const [hostname, setHostname] = useState("");
   const [targetType, setTargetType] = useState<TargetType>("OWN");
   const [formError, setFormError] = useState<string | null>(null);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkResults, setBulkResults] = useState<BulkCreateTargetResult[] | null>(null);
+  const bulkLineCount = bulkText.split("\n").filter((line) => line.trim().length > 0).length;
 
   const addTarget = useMutation({
     mutationFn: createTarget,
@@ -147,6 +178,19 @@ export function TargetsPage() {
       queryClient.invalidateQueries({ queryKey: ["targets"] });
     },
     onError: (err) => setFormError(err instanceof Error ? err.message : "Failed to add target."),
+  });
+
+  const addTargetsBulk = useMutation({
+    mutationFn: createTargetsBulk,
+    onSuccess: (results) => {
+      setBulkText("");
+      setFormError(null);
+      setBulkResults(results);
+      if (results.some((r) => r.created)) {
+        queryClient.invalidateQueries({ queryKey: ["targets"] });
+      }
+    },
+    onError: (err) => setFormError(err instanceof Error ? err.message : "Failed to add targets."),
   });
 
   const setActive = useMutation({
@@ -168,7 +212,16 @@ export function TargetsPage() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    addTarget.mutate({ hostname, targetType });
+    if (bulkMode) {
+      setBulkResults(null);
+      const hostnames = bulkText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      addTargetsBulk.mutate({ hostnames, targetType });
+    } else {
+      addTarget.mutate({ hostname, targetType });
+    }
   }
 
   function handleScanStarted(targetId: string, runId: string) {
@@ -257,22 +310,56 @@ export function TargetsPage() {
           </div>
         )}
 
+        <div className="mb-2 flex justify-end">
+          {/* A product review found onboarding a domain portfolio meant adding each hostname
+              through this same form, one at a time, with no faster path. Toggles the hostname
+              field between a single input and a multi-line textarea rather than a separate page -
+              targetType and the submit button are shared either way, so switching mode mid-form
+              doesn't lose whatever's already been picked. */}
+          <button
+            type="button"
+            onClick={() => {
+              setBulkMode((v) => !v);
+              setFormError(null);
+              setBulkResults(null);
+            }}
+            className="font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline"
+          >
+            {bulkMode ? "← Add a single target" : "Bulk add multiple →"}
+          </button>
+        </div>
+
         <form
           onSubmit={handleSubmit}
           className="mb-8 flex flex-col gap-3 rounded-lg border border-neon-cyan/20 bg-panel/80 p-4 sm:flex-row sm:items-end"
         >
           <div className="flex-1">
-            <label htmlFor="addtarget-hostname" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-              Hostname
+            <label
+              htmlFor={bulkMode ? "addtarget-bulk-hostnames" : "addtarget-hostname"}
+              className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400"
+            >
+              {bulkMode ? "Hostnames (one per line)" : "Hostname"}
             </label>
-            <input
-              id="addtarget-hostname"
-              required
-              placeholder="example.com"
-              value={hostname}
-              onChange={(e) => setHostname(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
-            />
+            {bulkMode ? (
+              <textarea
+                id="addtarget-bulk-hostnames"
+                required
+                rows={4}
+                placeholder={"example.com\ncompetitor.com\nwatchlist.org"}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+              />
+            ) : (
+              <input
+                id="addtarget-hostname"
+                required
+                placeholder="example.com"
+                value={hostname}
+                onChange={(e) => setHostname(e.target.value)}
+                className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+              />
+            )}
           </div>
           <div>
             <label htmlFor="addtarget-type" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
@@ -293,13 +380,44 @@ export function TargetsPage() {
           </div>
           <button
             type="submit"
-            disabled={addTarget.isPending}
+            disabled={addTarget.isPending || addTargetsBulk.isPending || (bulkMode && bulkLineCount === 0)}
             className="rounded bg-neon-magenta/90 px-4 py-2 font-mono text-sm font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
           >
-            {addTarget.isPending ? "Adding…" : "Add target"}
+            {bulkMode
+              ? addTargetsBulk.isPending
+                ? "Adding…"
+                : `Add ${bulkLineCount} target${bulkLineCount === 1 ? "" : "s"}`
+              : addTarget.isPending
+                ? "Adding…"
+                : "Add target"}
           </button>
         </form>
         {formError && <p className="-mt-6 mb-6 font-mono text-xs text-severity-critical">{formError}</p>}
+
+        {bulkResults && (
+          <div className="-mt-6 mb-6 rounded border border-neon-cyan/20 bg-panel/40 px-3 py-2 font-mono text-xs" role="status">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-neon-cyan">
+                Added {bulkResults.filter((r) => r.created).length} of {bulkResults.length} target
+                {bulkResults.length === 1 ? "" : "s"}.
+              </span>
+              <button onClick={() => setBulkResults(null)} className="text-slate-500 hover:text-slate-300">
+                ✕
+              </button>
+            </div>
+            {bulkResults.some((r) => !r.created) && (
+              <ul className="mt-2 flex flex-col gap-0.5 text-severity-critical">
+                {bulkResults
+                  .filter((r) => !r.created)
+                  .map((r) => (
+                    <li key={r.hostname}>
+                      {r.hostname}: {r.error}
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {targetsQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading targets…</p>}
         {targetsQuery.isError && (
