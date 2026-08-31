@@ -23,6 +23,9 @@ RUN ./gradlew :webui-backend:bootJar --no-daemon -x test
 
 FROM ghcr.io/graalvm/jdk-community:21
 WORKDIR /app
-COPY --from=build /project/webui/backend/build/libs/webui.jar app.jar
+COPY --from=build --chown=1000:1000 /project/webui/backend/build/libs/webui.jar app.jar
+# Same container-hardening fix as central-server's own Dockerfile - see its comment for why a
+# bare numeric UID:GID rather than a named user.
+USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
