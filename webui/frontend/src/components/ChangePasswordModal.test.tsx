@@ -120,6 +120,47 @@ describe("ChangePasswordModal", () => {
     expect(await screen.findByText("Too many failed attempts. Try again in 11 minutes.")).toBeInTheDocument();
   });
 
+  it("shows the server's specific reason on a 400 weak-password rejection, not the generic failure text", async () => {
+    // A security review added a common/easily-guessed-password check whose whole point is
+    // explaining specifically why - confirmed live that this app's default error handler never
+    // exposes a ResponseStatusException's reason text, so UserSelfController#changePassword
+    // returns a real JSON body ({ message }) for exactly this one failure case.
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ count: 1 }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { message: "This password is too common or easily guessed. Choose something less predictable." },
+          { ok: false, status: 400 },
+        ),
+      );
+
+    renderModal();
+    await user.type(screen.getByLabelText("Current password"), "oldpass1");
+    await user.type(screen.getByLabelText("New password"), "password1");
+    await user.type(screen.getByLabelText("Confirm new password"), "password1");
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(
+      await screen.findByText("This password is too common or easily guessed. Choose something less predictable."),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the generic failure text on a 400 with no parseable message (e.g. the non-local-account case)", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse({ count: 1 }))
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 400 }));
+
+    renderModal();
+    await user.type(screen.getByLabelText("Current password"), "oldpass1");
+    await user.type(screen.getByLabelText("New password"), "newpass123");
+    await user.type(screen.getByLabelText("Confirm new password"), "newpass123");
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(await screen.findByText("Failed to change password.")).toBeInTheDocument();
+  });
+
   it("the password fields default masked and can be revealed via the Show toggle", async () => {
     const user = userEvent.setup();
     mockedApiFetch.mockResolvedValueOnce(jsonResponse({ count: 1 }));

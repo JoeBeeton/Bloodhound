@@ -19,6 +19,7 @@ import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
 import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
 import org.freedonia.bloodhound.server.security.HashUtil;
+import org.freedonia.bloodhound.server.security.WeakPasswordChecker;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,8 +32,17 @@ class UserSelfControllerTest {
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final LoginAttemptLimiter loginAttemptLimiter = mock(LoginAttemptLimiter.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    // Real, not mocked - a lightweight, deterministic component with no external dependencies
+    // (loads a bundled resource file once), same reasoning HashUtil is used directly rather than
+    // mocked elsewhere in this test class.
+    private final WeakPasswordChecker weakPasswordChecker = new WeakPasswordChecker();
     private final UserSelfController controller = new UserSelfController(
-            userRepository, passwordEncoder, refreshTokenRepository, loginAttemptLimiter, auditLogRepository);
+            userRepository,
+            passwordEncoder,
+            refreshTokenRepository,
+            loginAttemptLimiter,
+            auditLogRepository,
+            weakPasswordChecker);
 
     private final UUID userId = UUID.randomUUID();
     private final JwtPrincipal principal = new JwtPrincipal(userId, UUID.randomUUID(), "VIEWER", "u@example.com");
@@ -50,7 +60,7 @@ class UserSelfControllerTest {
         when(passwordEncoder.matches("current-pw", "old-hash")).thenReturn(true);
         when(passwordEncoder.encode("new-pw")).thenReturn("new-hash");
 
-        ResponseEntity<Void> response =
+        ResponseEntity<?> response =
                 controller.changePassword(new ChangePasswordRequest("current-pw", "new-pw"), principal);
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
@@ -111,7 +121,7 @@ class UserSelfControllerTest {
                 .checkAllowed(principal.email());
         when(loginAttemptLimiter.remainingLockoutSeconds(principal.email())).thenReturn(645L);
 
-        ResponseEntity<Void> response =
+        ResponseEntity<?> response =
                 controller.changePassword(new ChangePasswordRequest("whatever", "new-pw"), principal);
 
         assertThat(response.getStatusCode().value()).isEqualTo(429);
@@ -149,6 +159,56 @@ class UserSelfControllerTest {
                 .isInstanceOf(ResponseStatusException.class);
 
         verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void changePassword_commonPassword_rejectedWithAnExplanatoryMessage_neverStoredOrRevokesTokens() {
+        // A security review found newPassword was only length-checked - nothing stopped a
+        // trivially guessable value like "password1". Checked only after the current-password
+        // verification below succeeds - see the controller's own comment for why. Returns a real
+        // response body (unlike the wrong-current-password/non-local-account cases, which throw
+        // ResponseStatusException) - confirmed live that this app's default error handler never
+        // exposes a ResponseStatusException's reason text to the caller, so a generic "rejected"
+        // with no explanation would defeat the point of the check.
+        User existing = user("LOCAL", "old-hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.matches("current-pw", "old-hash")).thenReturn(true);
+
+        ResponseEntity<?> response =
+                controller.changePassword(new ChangePasswordRequest("current-pw", "password1"), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody()).isInstanceOf(UserSelfController.WeakPasswordResponse.class);
+        assertThat(((UserSelfController.WeakPasswordResponse) response.getBody()).message()).isNotBlank();
+        verify(userRepository, never()).updatePasswordHash(any(), any());
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void changePassword_newPasswordEqualsOwnEmail_rejected() {
+        User existing = user("LOCAL", "old-hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.matches("current-pw", "old-hash")).thenReturn(true);
+
+        ResponseEntity<?> response = controller.changePassword(
+                new ChangePasswordRequest("current-pw", principal.email()), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        verify(userRepository, never()).updatePasswordHash(any(), any());
+    }
+
+    @Test
+    void changePassword_newPasswordEqualsEmailLocalPart_rejected() {
+        // principal.email() is "u@example.com" - the local part alone ("u") is just as guessable
+        // a choice as the full address.
+        User existing = user("LOCAL", "old-hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.matches("current-pw", "old-hash")).thenReturn(true);
+
+        ResponseEntity<?> response = controller.changePassword(new ChangePasswordRequest("current-pw", "u"), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        verify(userRepository, never()).updatePasswordHash(any(), any());
     }
 
     @Test
