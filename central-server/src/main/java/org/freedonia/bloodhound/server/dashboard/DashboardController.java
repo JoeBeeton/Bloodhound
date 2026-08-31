@@ -17,6 +17,7 @@ import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
 import org.freedonia.bloodhound.server.scoring.ScoreImpact;
 import org.freedonia.bloodhound.server.scoring.ScoreImpactCalculator;
+import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
@@ -27,11 +28,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Org-overview aggregate for the dashboard - deliberately one round trip
- * fanning out to the same repositories the per-target/per-org endpoints
- * already use, rather than a new query language. Fine at Phase 1 scale (a
- * handful of targets/findings per org), same judgment call TargetController
- * already made for its per-target score lookups.
+ * Org-overview aggregate for the dashboard - deliberately fanning out to the same repositories
+ * the per-target/per-org endpoints already use, rather than a new query language. The one part of
+ * this that was a real per-target N+1 (the OWN targets' latest score) is now a single batched
+ * query - see ScoreSnapshotRepository#findLatestForTargets - fine at Phase 1 scale (a handful of
+ * findings per org) for everything else here.
  */
 @RestController
 @RequestMapping("/api/v1/dashboard")
@@ -69,9 +70,13 @@ public class DashboardController {
         UUID orgId = principal.organizationId();
         List<Target> allTargets = targetRepository.findByOrganization(orgId, null, false);
 
-        List<TargetSummary> ownTargets = allTargets.stream()
-                .filter(t -> "OWN".equals(t.targetType()))
-                .map(t -> TargetSummary.from(t, scoreSnapshotRepository.findLatest(t.id()).orElse(null)))
+        // Batched into one query rather than one findLatest() call per OWN target - see
+        // ScoreSnapshotRepository#findLatestForTargets for the N+1 this replaces.
+        List<Target> ownTargetsRaw = allTargets.stream().filter(t -> "OWN".equals(t.targetType())).toList();
+        Map<UUID, ScoreSnapshot> latestScoreByTarget =
+                scoreSnapshotRepository.findLatestForTargets(ownTargetsRaw.stream().map(Target::id).toList());
+        List<TargetSummary> ownTargets = ownTargetsRaw.stream()
+                .map(t -> TargetSummary.from(t, latestScoreByTarget.get(t.id())))
                 .toList();
 
         // Score impact needs each target's FULL open set as context (a category's "before"

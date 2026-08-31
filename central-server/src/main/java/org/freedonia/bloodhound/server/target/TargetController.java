@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
@@ -12,6 +13,7 @@ import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
+import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
 import org.freedonia.bloodhound.server.target.dto.TargetSummary;
@@ -62,12 +64,15 @@ public class TargetController {
             @RequestParam(required = false) String type,
             @RequestParam(required = false, defaultValue = "false") boolean includeInactive,
             @AuthenticationPrincipal JwtPrincipal principal) {
-        // One latest-score (+ now last-scan) lookup per target - fine at Phase 1 scale (a handful
-        // of targets per org); a batched query is a candidate optimization if
-        // that stops being true.
-        return targetRepository.findByOrganization(principal.organizationId(), type, includeInactive).stream()
-                .map(this::composeSummary)
-                .toList();
+        List<Target> targets = targetRepository.findByOrganization(principal.organizationId(), type, includeInactive);
+        // Batched into one query rather than one findLatest() call per target - see
+        // ScoreSnapshotRepository#findLatestForTargets for the N+1 this replaces. The
+        // last-scan-run and Tier 2 lookups below remain one-per-target - still fine at Phase 1
+        // scale (a handful of targets per org); a further batched query is a candidate
+        // optimization if that stops being true.
+        Map<UUID, ScoreSnapshot> latestScoreByTarget =
+                scoreSnapshotRepository.findLatestForTargets(targets.stream().map(Target::id).toList());
+        return targets.stream().map(t -> composeSummary(t, latestScoreByTarget.get(t.id()))).toList();
     }
 
     /**
@@ -80,7 +85,11 @@ public class TargetController {
      * own, tier is purely a property of which modules got queued under it).
      */
     private TargetSummary composeSummary(Target target) {
-        var latestScore = scoreSnapshotRepository.findLatest(target.id()).orElse(null);
+        return composeSummary(target, scoreSnapshotRepository.findLatest(target.id()).orElse(null));
+    }
+
+    /** Same as {@link #composeSummary(Target)}, but takes an already-fetched score - see {@link #list} for why. */
+    private TargetSummary composeSummary(Target target, ScoreSnapshot latestScore) {
         var lastScan = scanRunRepository.findMostRecentByTarget(target.id()).orElse(null);
         Instant lastScanAt = null;
         Boolean lastScanWasDeep = null;
