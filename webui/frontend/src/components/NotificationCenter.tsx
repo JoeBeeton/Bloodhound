@@ -183,20 +183,40 @@ export function NotificationCenter() {
         </>
       )}
 
-      <div className="pointer-events-none fixed bottom-6 right-6 z-[100] flex flex-col gap-2">
+      {/* aria-live (not aria-atomic, so each newly-appended toast is announced on its own rather
+          than re-reading the whole stack) - an accessibility review found this had no live region
+          at all, so a screen-reader user got zero announcement for exactly the kind of "new
+          critical finding"/"scan failed" alert this product exists to surface. Each toast was
+          also a bare div-with-onClick - unreachable by keyboard entirely, with no way to dismiss
+          one early short of waiting out TOAST_LIFETIME_MS. Now a real <button> (keyboard-
+          activatable for free, same convention the panel's own notification list already uses
+          below) plus an explicit dismiss button, kept separate from the navigate action so
+          "I want this gone" and "take me there" aren't forced into the same keypress. */}
+      <div aria-live="polite" className="pointer-events-none fixed bottom-6 right-6 z-[100] flex flex-col gap-2">
         {toasts.map((t) => (
           <div
             key={t.id}
-            className="pointer-events-auto w-80 cursor-pointer rounded-lg border border-neon-cyan/30 bg-panel/95 p-3 shadow-glow-cyan backdrop-blur"
-            onClick={() => {
-              setToasts((prev) => prev.filter((x) => x.id !== t.id));
-              goTo(t);
-            }}
+            className="pointer-events-auto flex w-80 items-start gap-2 rounded-lg border border-neon-cyan/30 bg-panel/95 p-3 shadow-glow-cyan backdrop-blur"
           >
-            <p className={`font-mono text-xs font-bold ${SEVERITY_CLASS[t.severity] ?? "text-slate-300"}`}>
-              {t.title}
-            </p>
-            <p className="mt-0.5 font-mono text-[11px] text-slate-400">{t.message}</p>
+            <button
+              onClick={() => {
+                setToasts((prev) => prev.filter((x) => x.id !== t.id));
+                goTo(t);
+              }}
+              className="flex-1 text-left"
+            >
+              <p className={`font-mono text-xs font-bold ${SEVERITY_CLASS[t.severity] ?? "text-slate-300"}`}>
+                {t.title}
+              </p>
+              <p className="mt-0.5 font-mono text-[11px] text-slate-400">{t.message}</p>
+            </button>
+            <button
+              onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
+              aria-label="Dismiss notification"
+              className="shrink-0 font-mono text-xs text-slate-500 transition hover:text-slate-300"
+            >
+              ✕
+            </button>
           </div>
         ))}
       </div>
