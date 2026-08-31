@@ -1,12 +1,14 @@
 package org.freedonia.bloodhound.worker.modules.subdomain;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +27,23 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
 
     private static final Logger log = LoggerFactory.getLogger(ExternalCliSubdomainSource.class);
     private static final long HARD_TIMEOUT_SECONDS = 75;
+
+    /**
+     * A security review found this had the same two bugs already fixed elsewhere this session
+     * (Zgrab2Fetcher, NucleiFetcher, NaabuFetcher): readAll() had no size cap at all, AND it ran
+     * BEFORE process.waitFor(HARD_TIMEOUT_SECONDS) - a subfinder (or future CLI source) child
+     * process hung without closing stdout blocked this forever, and the "hard timeout" never got
+     * a chance to run. Same watchdog fix: a shared daemon ScheduledExecutorService force-destroys
+     * the process after the deadline, which (unlike Thread.interrupt()) reliably unblocks a
+     * thread stuck reading its stdout pipe.
+     */
+    private static final int MAX_OUTPUT_BYTES = 5_000_000;
+
+    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "external-cli-subdomain-watchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     protected abstract List<String> command(String rootDomain);
 
@@ -47,10 +66,26 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
             stderrDrain.setDaemon(true);
             stderrDrain.start();
 
-            String stdout = readAll(process.getInputStream());
-            boolean finished = process.waitFor(HARD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
+            AtomicBoolean timedOut = new AtomicBoolean(false);
+            ScheduledFuture<?> deadline = WATCHDOG.schedule(
+                    () -> {
+                        timedOut.set(true);
+                        started.destroyForcibly();
+                    },
+                    HARD_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS);
+            String stdout;
+            try {
+                stdout = SafeHttpGet.readCappedUtf8(process.getInputStream(), MAX_OUTPUT_BYTES);
+            } finally {
+                deadline.cancel(false);
+            }
+            // Reap only - by this point the process has either finished naturally or been
+            // force-destroyed by the watchdog above, so this should return near-instantly; the
+            // explicit reaped check (not just timedOut) guards the exitValue() call below, which
+            // throws IllegalThreadStateException on a still-alive process.
+            boolean reaped = process.waitFor(2, TimeUnit.SECONDS);
+            if (timedOut.get() || !reaped) {
                 log.warn("{} timed out after {}s for {}", sourceName(), HARD_TIMEOUT_SECONDS, rootDomain);
                 return List.of();
             }
@@ -72,11 +107,5 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
                 process.destroyForcibly();
             }
         }
-    }
-
-    private String readAll(InputStream in) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        in.transferTo(out);
-        return out.toString(StandardCharsets.UTF_8);
     }
 }

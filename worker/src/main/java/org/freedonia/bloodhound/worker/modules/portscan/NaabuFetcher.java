@@ -1,8 +1,11 @@
 package org.freedonia.bloodhound.worker.modules.portscan;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -21,6 +24,24 @@ public class NaabuFetcher {
 
     private static final long HARD_TIMEOUT_SECONDS = 300; // 5 minutes - full 1-65535 range
 
+    /**
+     * A security review found this had the same two bugs already fixed in Zgrab2Fetcher/
+     * NucleiFetcher this session: readAll() had no size cap at all, AND it ran BEFORE
+     * process.waitFor(HARD_TIMEOUT_SECONDS) - a naabu child process hung without closing stdout
+     * blocked this forever, and the "hard timeout" never got a chance to run. Same watchdog fix:
+     * a shared daemon ScheduledExecutorService force-destroys the process after the deadline,
+     * which (unlike Thread.interrupt()) reliably unblocks a thread stuck reading its stdout pipe.
+     * A full 1-65535 port sweep's JSON-lines output (one line per open port) is naturally larger
+     * than a single-probe tool's - generous relative to that.
+     */
+    private static final int MAX_OUTPUT_BYTES = 5_000_000;
+
+    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "naabu-watchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     public String fetchJsonLines(String ip) throws ScanModuleException {
         ProcessBuilder pb = new ProcessBuilder(
                 "naabu", "-host", ip, "-p", "1-65535", "-json", "-silent",
@@ -37,10 +58,25 @@ public class NaabuFetcher {
             });
             stderrDrain.setDaemon(true);
             stderrDrain.start();
-            String output = readAll(process.getInputStream());
-            boolean finished = process.waitFor(HARD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
+
+            AtomicBoolean timedOut = new AtomicBoolean(false);
+            ScheduledFuture<?> deadline = WATCHDOG.schedule(
+                    () -> {
+                        timedOut.set(true);
+                        started.destroyForcibly();
+                    },
+                    HARD_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS);
+            String output;
+            try {
+                output = SafeHttpGet.readCappedUtf8(process.getInputStream(), MAX_OUTPUT_BYTES);
+            } finally {
+                deadline.cancel(false);
+            }
+            // Reap only - by this point the process has either finished naturally or been
+            // force-destroyed by the watchdog above, so this should return near-instantly.
+            process.waitFor(2, TimeUnit.SECONDS);
+            if (timedOut.get()) {
                 throw new ScanModuleException(
                         "naabu scan of " + ip + " exceeded the hard " + HARD_TIMEOUT_SECONDS + "s timeout");
             }
@@ -55,11 +91,5 @@ public class NaabuFetcher {
                 process.destroyForcibly();
             }
         }
-    }
-
-    private String readAll(InputStream in) throws java.io.IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        in.transferTo(out);
-        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 }
