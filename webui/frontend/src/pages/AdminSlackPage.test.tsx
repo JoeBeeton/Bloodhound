@@ -193,6 +193,12 @@ describe("AdminSlackPage - test-send", () => {
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/orgs/org-1/slack-integration", { method: "DELETE" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Wait for the invalidateQueries-triggered refetch (the 3rd queued mock) to actually fire
+    // before the test ends and RTL unmounts the tree - otherwise that fetch promise is still
+    // in-flight at unmount, and its resolution can race past cleanup into whatever test runs
+    // next in this file. That's exactly the kind of order-dependent flakiness that was making
+    // the "unsaved changes warning" tests below fail intermittently only under a full-suite run.
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledTimes(3));
   });
 });
 
