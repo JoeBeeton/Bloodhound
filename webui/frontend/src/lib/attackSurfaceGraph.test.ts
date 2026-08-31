@@ -4,11 +4,12 @@ import {
   colorForNode,
   colorForTargetType,
   hrefForNode,
+  layoutGraph,
   selectNonOverlappingSubdomainLabels,
   SUBDOMAINS_PER_TARGET_CAP,
 } from "./attackSurfaceGraph";
 import type { GraphNode } from "./attackSurfaceGraph";
-import type { Subdomain, Target, WorkerStatus } from "./types";
+import type { Subdomain, Target, TargetType, WorkerStatus } from "./types";
 
 function target(overrides: Partial<Target> = {}): Target {
   return {
@@ -257,6 +258,70 @@ describe("buildGraph", () => {
     const graph = buildGraph([t], new Map([["t1", { sample: [], total: 0 }]]), [w]);
 
     expect(graph.links).toContainEqual({ source: "worker:w1", target: "target:t1", kind: "scanning" });
+  });
+});
+
+describe("layoutGraph", () => {
+  const WIDTH = 1200;
+  const HEIGHT = 720;
+  const DIAGONAL = Math.hypot(WIDTH, HEIGHT);
+
+  it("keeps each target-type cluster's own node - and its full subdomain halo - well clear of the platform hub", () => {
+    // A bug report found a WATCHLIST target's cluster visually sitting on top of the platform
+    // cluster (central-server/postgres/webui/workers). Root cause: the old cluster centers put
+    // WATCHLIST and platform on almost the same y-band (0.85h vs 0.78h, only 0.07*height apart),
+    // relying entirely on a (large-looking, but not actually sufficient) x-axis gap to keep them
+    // apart. A target's own subdomain nodes fan out from it under mutual repulsion - the more of
+    // them, the further the whole halo can spread along a shared band - so centroid-to-centroid
+    // distance alone doesn't catch this: two cluster centers can be far apart while their actual
+    // rendered extents still collide. This checks every node belonging to each cluster (not just
+    // its center) never comes within a "these are clearly the same cluster" distance of the hub.
+    const types: TargetType[] = ["OWN", "COMPETITOR", "WATCHLIST"];
+    const targets = types.map((t, i) => target({ id: `t-${t}`, targetType: t, hostname: `${i}.example.com` }));
+    // A wide subdomain fan-out per target - the exact condition (many nodes, high mutual
+    // repulsion) that let a cluster spread far enough to bridge a shared-band gap in the wild.
+    const subdomainsByTarget = new Map(
+      targets.map((t) => [
+        t.id,
+        {
+          sample: Array.from({ length: SUBDOMAINS_PER_TARGET_CAP }, (_, i) => sub(`${t.id}-s${i}`, `h${i}.${t.hostname}`)),
+          total: SUBDOMAINS_PER_TARGET_CAP,
+        },
+      ]),
+    );
+    const workers = [worker({ workerId: "w1" }), worker({ workerId: "w2" }), worker({ workerId: "w3" })];
+    const graph = buildGraph(targets, subdomainsByTarget, workers);
+    const laidOut = layoutGraph(graph, WIDTH, HEIGHT);
+
+    const hub = laidOut.nodes.find((n) => n.id === "hub")!;
+    // 12% of the canvas diagonal - comfortably inside "two clearly distinct clusters", loose
+    // enough to tolerate simulation noise, but well short of what the old (buggy) coordinates
+    // actually produced for the WATCHLIST cluster's closest members.
+    const MIN_DISTANCE_FROM_HUB = DIAGONAL * 0.12;
+
+    for (const type of types) {
+      const clusterNodes = laidOut.nodes.filter(
+        (n): n is GraphNode & { x: number; y: number } =>
+          n.targetType === type && n.x != null && n.y != null,
+      );
+      expect(clusterNodes.length).toBeGreaterThan(0);
+      for (const n of clusterNodes) {
+        const dist = Math.hypot(n.x - hub.x!, n.y - hub.y!);
+        expect(
+          dist,
+          `a ${type} node (${n.id}) is only ${dist.toFixed(0)}px from the platform hub`,
+        ).toBeGreaterThan(MIN_DISTANCE_FROM_HUB);
+      }
+    }
+  });
+
+  it("populates x/y on every node, including the hub", () => {
+    const graph = buildGraph([], new Map());
+    const laidOut = layoutGraph(graph, WIDTH, HEIGHT);
+
+    const hub = laidOut.nodes.find((n) => n.id === "hub")!;
+    expect(hub.x).not.toBeNull();
+    expect(hub.y).not.toBeNull();
   });
 });
 
