@@ -347,6 +347,10 @@ function AddUserModal({
             id="adduser-email"
             required
             type="email"
+            // Matches CreateUserRequest's own @Size(max=320) (RFC 5321's max total email length) -
+            // a security review found this form had no client-side cap at all, so a pasted huge
+            // value hit the backend with no inline feedback, just a raw request failure.
+            maxLength={320}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
@@ -359,6 +363,8 @@ function AddUserModal({
           <input
             id="adduser-display-name"
             required
+            // Matches CreateUserRequest's own @Size(max=200), the same cap MCP client_name uses.
+            maxLength={200}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
