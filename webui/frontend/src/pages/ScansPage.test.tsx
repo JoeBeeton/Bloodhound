@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -194,5 +194,93 @@ describe("ScansPage - Recent Scans filtering and pagination", () => {
     await user.click(screen.getByRole("button", { name: "CANCELLED" }));
 
     expect(await screen.findByText(/no cancelled scans found/i, {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+});
+
+describe("ScansPage - cancelling an active scan", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockActiveAndRecent(active: ActiveScan[], cancelResult?: { ok: boolean; status?: number }) {
+    mockedApiFetch.mockImplementation(async (url: string) => {
+      if (url.includes("/cancel")) {
+        if (!cancelResult || !cancelResult.ok) return jsonResponse(null, { ok: false, status: cancelResult?.status ?? 500 });
+        return jsonResponse(null);
+      }
+      if (url.startsWith("/api/v1/scans/active")) return jsonResponse(active);
+      return jsonResponse([], { totalCount: 0 }); // recent scans
+    });
+  }
+
+  it("shows a Cancel button on each active scan card, separate from the card's own link", async () => {
+    mockActiveAndRecent([scan([{ moduleType: "DNS", status: "RUNNING" }])]);
+
+    renderScansPage();
+
+    await screen.findByText("example.com");
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    expect(cancelButton.closest("a")).toBeNull(); // never nested inside the card's <Link>
+  });
+
+  it("clicking Cancel opens a confirmation modal without firing the request or navigating", async () => {
+    const user = userEvent.setup();
+    mockActiveAndRecent([scan([{ moduleType: "DNS", status: "RUNNING" }])]);
+
+    renderScansPage();
+    await screen.findByText("example.com");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("dialog", { name: "Cancel scan" })).toBeInTheDocument();
+    expect(mockedApiFetch).not.toHaveBeenCalledWith(expect.stringContaining("/cancel"), expect.anything());
+  });
+
+  it("confirming calls the cancel endpoint and closes the modal", async () => {
+    const user = userEvent.setup();
+    mockActiveAndRecent([scan([{ moduleType: "DNS", status: "RUNNING" }])], { ok: true });
+
+    renderScansPage();
+    await screen.findByText("example.com");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const dialog = screen.getByRole("dialog", { name: "Cancel scan" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel scan" }));
+
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/runs/scan-1/cancel", { method: "POST" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("shows an error inside the modal and stays open if the scan already finished (409)", async () => {
+    const user = userEvent.setup();
+    mockActiveAndRecent([scan([{ moduleType: "DNS", status: "RUNNING" }])], { ok: false, status: 409 });
+
+    renderScansPage();
+    await screen.findByText("example.com");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const dialog = screen.getByRole("dialog", { name: "Cancel scan" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel scan" }));
+
+    expect(await screen.findByText("This scan already finished.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Cancel scan" })).toBeInTheDocument();
+  });
+
+  it("Keep running closes the modal without cancelling", async () => {
+    const user = userEvent.setup();
+    mockActiveAndRecent([scan([{ moduleType: "DNS", status: "RUNNING" }])]);
+
+    renderScansPage();
+    await screen.findByText("example.com");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Keep running" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockedApiFetch).not.toHaveBeenCalledWith(expect.stringContaining("/cancel"), expect.anything());
   });
 });

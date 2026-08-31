@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CenteredState } from "../components/CenteredState";
 import { ErrorState } from "../components/ErrorState";
+import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { WorkerPanel } from "../components/WorkerPanel";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
@@ -53,6 +54,17 @@ async function fetchActiveScans(): Promise<ActiveScan[]> {
   const res = await apiFetch("/api/v1/scans/active");
   if (!res.ok) throw new Error("Failed to load active scans.");
   return res.json();
+}
+
+/**
+ * A product review found cancelling a scan required navigating to its own detail page first -
+ * an extra click for exactly the page whose whole purpose is "what's running right now, and do
+ * I need to do anything about it". Same endpoint/semantics as ScanDetailPage's own cancelRun -
+ * see RunController#cancel for what does and doesn't get interrupted.
+ */
+async function cancelActiveScan(runId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/runs/${runId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error(res.status === 409 ? "This scan already finished." : "Failed to cancel scan.");
 }
 
 interface RecentScansPage {
@@ -220,18 +232,23 @@ export function scanHasFailure(scan: ActiveScan): boolean {
   return scan.modules.some((m) => m.status === "FAILED");
 }
 
-function ScanCard({ scan }: { scan: ActiveScan }) {
+function ScanCard({ scan, onRequestCancel }: { scan: ActiveScan; onRequestCancel: (scan: ActiveScan) => void }) {
   const pct = scan.totalJobs > 0 ? Math.round((scan.completedJobs / scan.totalJobs) * 100) : 0;
   const hasFailure = scanHasFailure(scan);
   return (
-    <Link
-      to={`/scans/${scan.id}`}
-      className={`block rounded-lg border bg-panel/80 p-5 transition ${
-        hasFailure
-          ? "border-severity-critical/40 hover:border-severity-critical/70 hover:shadow-[0_0_8px_#ff2e97,0_0_24px_rgba(255,46,151,0.5)]"
-          : "border-neon-cyan/20 hover:border-neon-cyan/50 hover:shadow-glow-cyan"
-      }`}
-    >
+    // Cancel below is a sibling of the Link, not nested inside it - a <button> inside an <a> is
+    // invalid HTML and would fire both the button's onClick and a navigation on the same click.
+    // Absolutely positioned into the same top-right corner the ETA/failure text already occupies
+    // rather than adding a new row, so the card's height stays exactly what it was.
+    <div className="relative">
+      <Link
+        to={`/scans/${scan.id}`}
+        className={`block rounded-lg border bg-panel/80 p-5 pr-24 transition ${
+          hasFailure
+            ? "border-severity-critical/40 hover:border-severity-critical/70 hover:shadow-[0_0_8px_#ff2e97,0_0_24px_rgba(255,46,151,0.5)]"
+            : "border-neon-cyan/20 hover:border-neon-cyan/50 hover:shadow-glow-cyan"
+        }`}
+      >
       <div className="mb-3 flex items-start justify-between gap-4">
         <div>
           <p className="font-mono text-sm text-slate-200">{scan.targetHostname}</p>
@@ -288,16 +305,39 @@ function ScanCard({ scan }: { scan: ActiveScan }) {
             .join(", ")}
         </div>
       )}
-    </Link>
+      </Link>
+      <button
+        type="button"
+        onClick={() => onRequestCancel(scan)}
+        className="absolute right-5 top-5 rounded border border-slate-700 bg-panel px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:border-severity-critical/50 hover:text-severity-critical"
+      >
+        Cancel
+      </button>
+    </div>
   );
 }
 
 export function ScansPage() {
   usePageTitle("Active Scans");
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["scans-active"],
     queryFn: fetchActiveScans,
     refetchInterval: POLL_INTERVAL_MS,
+  });
+  // Cancelling is destructive-but-self-service and can't be undone (see RunController#cancel's
+  // own javadoc for exactly what does/doesn't get interrupted) - same confirm-before-destroying
+  // modal pattern as every other irreversible action in this app. Lives here, not inside
+  // ScanCard, so the modal is never a DOM descendant of any card's own clickable <Link> - a
+  // click anywhere inside it would otherwise bubble up and could be misread as "open this card".
+  const [pendingCancel, setPendingCancel] = useState<ActiveScan | null>(null);
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelActiveScan(pendingCancel!.id),
+    onSuccess: () => {
+      setPendingCancel(null);
+      queryClient.invalidateQueries({ queryKey: ["scans-active"] });
+      queryClient.invalidateQueries({ queryKey: ["scans-recent"] });
+    },
   });
 
   return (
@@ -338,7 +378,7 @@ export function ScansPage() {
           {query.data && query.data.length > 0 && (
             <div className="flex flex-col gap-3">
               {query.data.map((scan) => (
-                <ScanCard key={scan.id} scan={scan} />
+                <ScanCard key={scan.id} scan={scan} onRequestCancel={setPendingCancel} />
               ))}
             </div>
           )}
@@ -352,6 +392,36 @@ export function ScansPage() {
           </div>
         </div>
       </div>
+
+      {pendingCancel && (
+        <Modal title="Cancel scan" onClose={() => setPendingCancel(null)}>
+          <p className="mb-4 text-sm text-slate-300">
+            Cancel this scan of <span className="font-mono text-neon-cyan">{pendingCancel.targetHostname}</span>? Jobs a
+            worker has already claimed will still finish, but no further findings from this run will be collected and
+            no score will be computed from it. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setPendingCancel(null)}
+              className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-300 hover:border-slate-500"
+            >
+              Keep running
+            </button>
+            <button
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+              className="rounded border border-severity-critical/50 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-severity-critical transition hover:bg-severity-critical/10 disabled:opacity-40"
+            >
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel scan"}
+            </button>
+          </div>
+          {cancelMutation.isError && (
+            <p className="mt-2 font-mono text-xs text-severity-critical">
+              {(cancelMutation.error as Error).message}
+            </p>
+          )}
+        </Modal>
+      )}
     </Shell>
   );
 }
