@@ -335,7 +335,7 @@ export function AdminSlackPage() {
                 </p>
               ))}
             {testMutation.isError && (
-              <p className="mt-2 font-mono text-xs text-severity-critical">
+              <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
                 {(testMutation.error as Error)?.message ?? "Failed to send test message."}
               </p>
             )}
@@ -346,7 +346,7 @@ export function AdminSlackPage() {
             <p className="mt-2 font-mono text-xs text-neon-amber">Unsaved changes.</p>
           )}
           {saveMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
               {(saveMutation.error as Error)?.message ?? "Failed to save."}
             </p>
           )}
@@ -376,7 +376,9 @@ export function AdminSlackPage() {
             </button>
           </div>
           {deleteMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to remove the integration. Try again.</p>
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+              Failed to remove the integration. Try again.
+            </p>
           )}
         </Modal>
       )}

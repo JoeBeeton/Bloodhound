@@ -76,7 +76,7 @@ export function AdminRulesCatalogPage() {
         {rulesQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading rules…</p>}
         {rulesQuery.isError && <ErrorState message="Failed to load the rules catalog." onRetry={() => rulesQuery.refetch()} />}
         {toggleMutation.isError && (
-          <p className="mb-4 font-mono text-xs text-severity-critical">
+          <p role="alert" className="mb-4 font-mono text-xs text-severity-critical">
             {(toggleMutation.error as Error)?.message ?? "Failed to update the rule."}
           </p>
         )}

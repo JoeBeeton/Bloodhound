@@ -259,7 +259,11 @@ export function TargetNotes({ targetId, notes }: { targetId: string; notes: stri
         >
           {draft.length} / {NOTES_MAX_LENGTH}
         </p>
-        {saveMutation.isError && <p className="mt-1 font-mono text-xs text-severity-critical">Failed to save notes.</p>}
+        {saveMutation.isError && (
+          <p role="alert" className="mt-1 font-mono text-xs text-severity-critical">
+            Failed to save notes.
+          </p>
+        )}
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => saveMutation.mutate(draft)}
@@ -445,7 +449,9 @@ export function TargetDetailPage() {
           </Link>
         </div>
         {updateTargetTypeMutation.isError && (
-          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to update target type. Try again.</p>
+          <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
+            Failed to update target type. Try again.
+          </p>
         )}
 
         {target && <TargetNotes targetId={targetId} notes={target.notes} />}
@@ -550,7 +556,9 @@ export function TargetDetailPage() {
               Next scheduled scan: {new Date(target.nextScanAt).toLocaleString()}
             </span>
             {updateScheduleMutation.isError && (
-              <p className="w-full font-mono text-xs text-severity-critical">Failed to update scan schedule. Try again.</p>
+              <p role="alert" className="w-full font-mono text-xs text-severity-critical">
+                Failed to update scan schedule. Try again.
+              </p>
             )}
           </div>
         )}
@@ -604,7 +612,9 @@ export function TargetDetailPage() {
           </div>
         </div>
         {exportCsvMutation.isError && (
-          <p className="mb-2 font-mono text-xs text-severity-critical">Failed to export findings. Try again.</p>
+          <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
+            Failed to export findings. Try again.
+          </p>
         )}
 
         <FindingsFilterBar value={filters} onChange={setFilters} resultCount={findingsQuery.data?.totalCount} />

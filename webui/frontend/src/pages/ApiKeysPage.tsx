@@ -169,7 +169,11 @@ export function ApiKeysPage() {
               {createMutation.isPending ? "Generating…" : "Generate key"}
             </button>
           </form>
-          {createMutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to generate key.</p>}
+          {createMutation.isError && (
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+              Failed to generate key.
+            </p>
+          )}
         </div>
 
         <div className="rounded-lg border border-slate-700 bg-panel/60 p-5">
@@ -249,7 +253,9 @@ export function ApiKeysPage() {
             </button>
           </div>
           {revokeMutation.isError && (
-            <p className="mt-2 font-mono text-xs text-severity-critical">Failed to revoke key.</p>
+            <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+              Failed to revoke key.
+            </p>
           )}
         </Modal>
       )}
