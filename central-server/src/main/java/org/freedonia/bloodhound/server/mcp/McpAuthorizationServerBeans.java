@@ -114,10 +114,12 @@ public class McpAuthorizationServerBeans {
     }
 
     /**
-     * Consent is skipped entirely (see McpSecurityConfig - every client is auto-approved for its
-     * requested scopes) for this first version, so nothing is ever actually persisted here; a
-     * plain in-memory implementation is the correct, honest choice rather than a JDBC one backed
-     * by a table that would only ever stay empty.
+     * In-memory, not JDBC-backed: consent decisions here are Spring's plain default consent
+     * screen only (see registeredClientRepository above - every client now genuinely requires
+     * consent, unlike this comment's own earlier, since-fixed claim that it was skipped
+     * entirely), and losing them across a restart just means re-approving on next use, not a
+     * security-relevant loss - not worth a table that would otherwise need its own retention/
+     * cleanup story.
      */
     @Bean
     public OAuth2AuthorizationConsentService authorizationConsentService() {
