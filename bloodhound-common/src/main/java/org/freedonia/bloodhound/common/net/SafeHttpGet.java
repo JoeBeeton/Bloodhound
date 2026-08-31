@@ -138,8 +138,19 @@ public final class SafeHttpGet {
      * titles, etc. are typically near the top), unlike discarding everything.
      */
     public static String readCappedUtf8(InputStream body, int maxBytes) throws IOException {
+        return new String(readCappedBytes(body, maxBytes), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The binary counterpart to {@link #readCappedUtf8} - same bounded-memory reasoning
+     * ({@link InputStream#readNBytes(int)} never allocates more than {@code maxBytes} regardless
+     * of how much more the server tries to send, silently truncating rather than throwing), just
+     * without the UTF-8 decode step for callers whose response is binary (a screenshot PNG, an
+     * image), not text.
+     */
+    public static byte[] readCappedBytes(InputStream body, int maxBytes) throws IOException {
         try (InputStream in = body) {
-            return new String(in.readNBytes(maxBytes), StandardCharsets.UTF_8);
+            return in.readNBytes(maxBytes);
         }
     }
 
