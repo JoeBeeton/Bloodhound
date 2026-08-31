@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.apikey.dto.ApiKeySummary;
 import org.freedonia.bloodhound.server.apikey.dto.CreateApiKeyRequest;
 import org.freedonia.bloodhound.server.apikey.dto.CreateApiKeyResponse;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.security.HashUtil;
 import org.springframework.http.HttpStatus;
@@ -57,9 +58,11 @@ public class ApiKeyController {
     private static final int PREFIX_DISPLAY_LENGTH = 12;
 
     private final ApiKeyRepository apiKeyRepository;
+    private final AuditLogRepository auditLogRepository;
 
-    public ApiKeyController(ApiKeyRepository apiKeyRepository) {
+    public ApiKeyController(ApiKeyRepository apiKeyRepository, AuditLogRepository auditLogRepository) {
         this.apiKeyRepository = apiKeyRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     @Operation(summary = "List your own API keys (never returns the raw key or its hash)")
@@ -85,6 +88,19 @@ public class ApiKeyController {
 
         ApiKey created = apiKeyRepository.insert(
                 principal.organizationId(), principal.userId(), request.label(), keyPrefix, HashUtil.sha256Hex(token), expiresAt);
+        // An audit review found minting/revoking these read-only external API keys had no audit
+        // trail at all, unlike ScimTokenAdminController's equivalent credential-lifecycle
+        // controller. Never logs the raw key or its hash, only its label - same restraint
+        // CreateApiKeyResponse itself already applies (the raw key is returned exactly once, to
+        // this same response, and never again).
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "API_KEY_CREATED",
+                "API_KEY",
+                created.id().toString(),
+                "label=" + created.label());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new CreateApiKeyResponse(
                         created.id(), created.label(), created.keyPrefix(), token, created.createdAt(), created.expiresAt()));
@@ -93,6 +109,11 @@ public class ApiKeyController {
     @Operation(summary = "Revoke an API key immediately (your own key, or any key in your org if you're an admin)")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> revoke(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        String label = apiKeyRepository.findByOrganization(principal.organizationId()).stream()
+                .filter(k -> k.id().equals(id))
+                .findFirst()
+                .map(ApiKey::label)
+                .orElse(null);
         int updated = apiKeyRepository.revokeOwnedByUser(id, principal.userId());
         if (updated == 0 && "ADMIN".equals(principal.role())) {
             updated = apiKeyRepository.revokeWithinOrganization(id, principal.organizationId());
@@ -100,6 +121,9 @@ public class ApiKeyController {
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
+        auditLogRepository.record(
+                principal.organizationId(), principal.userId(), principal.email(), "API_KEY_REVOKED", "API_KEY", id.toString(),
+                "label=" + label);
         return ResponseEntity.noContent().build();
     }
 }

@@ -81,6 +81,11 @@ const ACTION_LABELS: Record<string, string> = {
   MCP_DISABLED: "MCP access disabled",
   SCIM_TOKEN_CREATED: "SCIM token created",
   SCIM_TOKEN_REVOKED: "SCIM token revoked",
+  SSO_CONFIG_SAVED: "SSO config saved",
+  TARGET_AUTHORIZED: "Target authorized",
+  TARGET_AUTHORIZATION_REVOKED: "Target authorization revoked",
+  API_KEY_CREATED: "API key created",
+  API_KEY_REVOKED: "API key revoked",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
@@ -92,6 +97,8 @@ const DESTRUCTIVE_ACTIONS = new Set([
   "SLACK_INTEGRATION_REMOVED",
   "MCP_DISABLED",
   "SCIM_TOKEN_REVOKED",
+  "TARGET_AUTHORIZATION_REVOKED",
+  "API_KEY_REVOKED",
 ]);
 
 const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
@@ -21,8 +22,9 @@ class TargetAuthorizationControllerTest {
 
     private final TargetRepository targetRepository = mock(TargetRepository.class);
     private final TargetAuthorizationRepository authorizationRepository = mock(TargetAuthorizationRepository.class);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final TargetAuthorizationController controller =
-            new TargetAuthorizationController(targetRepository, authorizationRepository);
+            new TargetAuthorizationController(targetRepository, authorizationRepository, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -84,6 +86,22 @@ class TargetAuthorizationControllerTest {
     }
 
     @Test
+    void authorize_recordsAuditEntry() {
+        // This flow already keeps its own detailed history (target_authorizations, surfaced via
+        // GET above) - a security review found it wasn't also visible from the org-wide Audit Log
+        // page, the one place an admin reviewing "everything sensitive that happened here" would
+        // actually look.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target("UNAUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target("AUTHORIZED")));
+        when(authorizationRepository.findHistory(targetId)).thenReturn(List.of());
+
+        controller.authorize(targetId, new TargetAuthorizationController.AuthorizeRequest("I own this domain"), admin);
+
+        verify(auditLogRepository).record(
+                orgId, admin.userId(), admin.email(), "TARGET_AUTHORIZED", "TARGET", targetId.toString(), "hostname=example.com");
+    }
+
+    @Test
     void revoke_viewerRole_forbidden() {
         assertThatThrownBy(() -> controller.revoke(targetId, viewer)).isInstanceOf(ResponseStatusException.class);
         verify(authorizationRepository, never()).revokeCurrent(any(), any());
@@ -99,5 +117,18 @@ class TargetAuthorizationControllerTest {
 
         assertThat(response.authorizationStatus()).isEqualTo("UNAUTHORIZED");
         verify(authorizationRepository).revokeCurrent(targetId, admin.userId());
+    }
+
+    @Test
+    void revoke_recordsAuditEntry() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target("AUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target("UNAUTHORIZED")));
+        when(authorizationRepository.findHistory(targetId)).thenReturn(List.of());
+
+        controller.revoke(targetId, admin);
+
+        verify(auditLogRepository).record(
+                orgId, admin.userId(), admin.email(), "TARGET_AUTHORIZATION_REVOKED", "TARGET", targetId.toString(),
+                "hostname=example.com");
     }
 }

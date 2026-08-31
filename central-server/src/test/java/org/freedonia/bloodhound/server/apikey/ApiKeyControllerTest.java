@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.apikey.dto.CreateApiKeyRequest;
 import org.freedonia.bloodhound.server.apikey.dto.CreateApiKeyResponse;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +25,8 @@ import org.springframework.web.server.ResponseStatusException;
 class ApiKeyControllerTest {
 
     private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
-    private final ApiKeyController controller = new ApiKeyController(apiKeyRepository);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final ApiKeyController controller = new ApiKeyController(apiKeyRepository, auditLogRepository);
     private final UUID orgId = UUID.randomUUID();
     private final UUID userId = UUID.randomUUID();
     private final JwtPrincipal viewer = new JwtPrincipal(userId, orgId, "VIEWER", "viewer@example.com");
@@ -140,6 +142,41 @@ class ApiKeyControllerTest {
         when(apiKeyRepository.revokeWithinOrganization(keyId, orgId)).thenReturn(0);
 
         assertThatThrownBy(() -> controller.revoke(keyId, admin)).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void create_recordsAuditEntry_withLabelButNeverTheRawKeyOrHash() {
+        // An audit review found minting/revoking these keys had no audit trail at all, unlike
+        // ScimTokenAdminController's equivalent credential-lifecycle controller.
+        stubInsertToEchoArguments();
+
+        ResponseEntity<CreateApiKeyResponse> response = controller.create(viewer, new CreateApiKeyRequest("ci-integration", null));
+        UUID createdId = response.getBody().id();
+
+        verify(auditLogRepository).record(
+                orgId, userId, viewer.email(), "API_KEY_CREATED", "API_KEY", createdId.toString(), "label=ci-integration");
+    }
+
+    @Test
+    void revoke_recordsAuditEntry_withTheKeysLabel() {
+        UUID keyId = UUID.randomUUID();
+        ApiKey existing = new ApiKey(keyId, orgId, userId, "ci-integration", "bhk_abcdef", "hash", Instant.now(), null, null, null);
+        when(apiKeyRepository.findByOrganization(orgId)).thenReturn(List.of(existing));
+        when(apiKeyRepository.revokeOwnedByUser(keyId, userId)).thenReturn(1);
+
+        controller.revoke(keyId, viewer);
+
+        verify(auditLogRepository).record(
+                orgId, userId, viewer.email(), "API_KEY_REVOKED", "API_KEY", keyId.toString(), "label=ci-integration");
+    }
+
+    @Test
+    void revoke_unknownKey_notFound_neverRecordsAudit() {
+        UUID keyId = UUID.randomUUID();
+        when(apiKeyRepository.revokeOwnedByUser(keyId, userId)).thenReturn(0);
+
+        assertThatThrownBy(() -> controller.revoke(keyId, viewer)).isInstanceOf(ResponseStatusException.class);
+        verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
     }
 
     private org.assertj.core.data.TemporalUnitOffset within2Minutes() {
