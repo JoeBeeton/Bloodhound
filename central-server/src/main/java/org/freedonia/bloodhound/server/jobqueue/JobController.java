@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.jobqueue;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import io.swagger.v3.oas.annotations.Hidden;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
@@ -22,7 +23,22 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Worker-facing job queue endpoints - see SecurityConfig, these require ROLE_WORKER (X-Worker-Api-Key), not a user JWT. */
+/**
+ * Worker-facing job queue endpoints - see SecurityConfig, these require ROLE_WORKER
+ * (X-Worker-Api-Key), not a user JWT.
+ *
+ * <p>{@code @Hidden} - a security review found the public, unauthenticated /v3/api-docs (see
+ * OpenApiConfig; SecurityConfig permitAlls that path) fully documented this internal worker
+ * protocol - exact request/response shapes for job claiming/reporting - to anyone on the internet
+ * with zero cost. Unlike every other controller OpenApiConfig's own javadoc deliberately keeps
+ * documented (a genuine "map of the whole REST API" for a real customer, even one whose own
+ * credential can't reach every operation - see e.g. admin-only routes, still worth documenting
+ * for an ADMIN-role customer), X-Worker-Api-Key is purely an infrastructure secret this app's own
+ * worker fleet uses - no real customer is ever issued one or has any reason to read this
+ * protocol's docs. Hiding it removes pure attacker reconnaissance value with no loss to any
+ * legitimate consumer of the spec.
+ */
+@Hidden
 @RestController
 @RequestMapping("/api/v1/jobs")
 public class JobController {
