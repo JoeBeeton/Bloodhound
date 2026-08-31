@@ -215,4 +215,53 @@ describe("AdminAuditLogPage", () => {
       await screen.findByText("Failed to export the audit log. Try again.", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
   });
+
+  // A review found these 4 actions - each added by a real backend feature shipped earlier this
+  // session (finding dismiss/reopen, bulk target creation, the Active Sessions page) - were never
+  // added to ACTION_LABELS: an existing row rendered the raw enum string instead of a label, and
+  // (the real user-facing gap, since ACTION_VALUES is derived from that same map) couldn't be
+  // filtered for via the action chips at all.
+  it.each([
+    ["FINDING_DISMISSED", "Finding dismissed"],
+    ["FINDING_REOPENED", "Finding reopened"],
+    ["TARGETS_BULK_CREATED", "Targets bulk-created"],
+    ["USER_SESSION_REVOKED", "Session revoked"],
+  ])("renders a real label for %s, and offers it as a filter chip", async (action, label) => {
+    // The label text alone isn't a unique query - every known action renders as a filter chip
+    // <button> regardless of what's in the loaded page (see ACTION_VALUES.map(...) above), so a
+    // matching log row means a second, non-button element with the same text.
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([entry({ action })], { totalCount: 1 }));
+
+    renderPage();
+    await screen.findByText("alice@example.com", {}, { timeout: 5000 });
+
+    const matches = screen.getAllByText(label);
+    expect(matches.some((el) => el.tagName !== "BUTTON")).toBe(true); // the actual log row
+    expect(screen.queryByText(action)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: label })).toBeInTheDocument(); // the filter chip
+  });
+
+  it("treats USER_SESSION_REVOKED as a destructive action, styled the same as an existing one like API_KEY_REVOKED", async () => {
+    // "Session revoked"/"API key revoked" each appear twice (once as a filter chip <button>, once
+    // as the log row's own <span>) - the label alone isn't a unique query, so this picks the
+    // non-button match (the actual log row) out of each pair rather than asserting on whichever
+    // element happens to be found first.
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse(
+        [
+          entry({ id: "e1", action: "USER_SESSION_REVOKED", actorEmail: "alice@example.com" }),
+          entry({ id: "e2", action: "API_KEY_REVOKED", actorEmail: "bob@example.com" }),
+        ],
+        { totalCount: 2 },
+      ),
+    );
+
+    renderPage();
+    await screen.findByText("bob@example.com", {}, { timeout: 5000 });
+
+    const revokedRow = screen.getAllByText("Session revoked").find((el) => el.tagName !== "BUTTON");
+    const apiKeyRevokedRow = screen.getAllByText("API key revoked").find((el) => el.tagName !== "BUTTON");
+    expect(revokedRow).toBeDefined();
+    expect(revokedRow!.className).toBe(apiKeyRevokedRow!.className);
+  });
 });
