@@ -7,7 +7,10 @@ import { apiFetch } from "../lib/apiClient";
 import { TargetsPage } from "./TargetsPage";
 import type { Target } from "../lib/types";
 
-vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
+vi.mock("../lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/apiClient")>()),
+  apiFetch: vi.fn(),
+}));
 vi.mock("../components/Shell", () => ({ Shell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("../lib/useAuth", () => ({ useAuth: () => ({ user: { role: "ADMIN" } }) }));
 
@@ -345,6 +348,86 @@ describe("TargetsPage - bulk remove", () => {
     const summary = await screen.findByRole("status", {}, { timeout: 5000 });
     expect(summary.textContent).toMatch(/removed 1 target/i);
     expect(summary.textContent).toMatch(/1 failed/i);
+  });
+});
+
+describe("TargetsPage - bulk add targets", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("toggling 'Bulk add multiple' swaps the hostname input for a multi-line textarea", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce(jsonResponse([]));
+
+    renderPage();
+    await screen.findByLabelText("Hostname", {}, { timeout: 5000 });
+
+    expect(screen.getByLabelText("Hostname")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Bulk add multiple →" }));
+
+    expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Hostnames (one per line)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add 0 targets" })).toBeDisabled();
+  });
+
+  it("submitting a multi-line batch posts the parsed hostname list and reports a partial-success summary", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([])) // initial list load
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { hostname: "good.example.com", created: true, error: null, target: target({ id: "t1", hostname: "good.example.com" }) },
+          { hostname: "dupe.example.com", created: false, error: "already tracked for this organization", target: null },
+        ]),
+      ) // POST .../targets/bulk
+      .mockResolvedValueOnce(jsonResponse([target({ id: "t1", hostname: "good.example.com" })])); // refetch after invalidation
+
+    renderPage();
+    await screen.findByLabelText("Hostname", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Bulk add multiple →" }));
+    // A blank line (from a trailing newline, or extra spacing between pasted hostnames) is
+    // filtered out client-side before it's ever sent - matches the backend's own tolerance for
+    // blank lines, but keeps the displayed "Add N targets" count accurate either way.
+    await user.type(screen.getByLabelText("Hostnames (one per line)"), "good.example.com\n\ndupe.example.com");
+    await user.click(screen.getByRole("button", { name: "Add 2 targets" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenNthCalledWith(2, "/api/v1/targets/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hostnames: ["good.example.com", "dupe.example.com"], targetType: "OWN" }),
+      }),
+    );
+
+    const summary = await screen.findByRole("status", {}, { timeout: 5000 });
+    expect(summary.textContent).toMatch(/added 1 of 2 targets/i);
+    expect(summary.textContent).toMatch(/dupe\.example\.com: already tracked for this organization/i);
+    // The textarea clears once the request completes, regardless of partial failure - the failed
+    // hostname is still visible in the summary above, not silently lost.
+    expect(screen.getByLabelText("Hostnames (one per line)")).toHaveValue("");
+  });
+
+  it("a whole-request failure (e.g. a 500) shows a form error and leaves the textarea untouched", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
+
+    renderPage();
+    await screen.findByLabelText("Hostname", {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole("button", { name: "Bulk add multiple →" }));
+    await user.type(screen.getByLabelText("Hostnames (one per line)"), "example.com");
+    await user.click(screen.getByRole("button", { name: "Add 1 target" }));
+
+    expect(await screen.findByText("Failed to add targets.", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Hostnames (one per line)")).toHaveValue("example.com");
   });
 });
 
