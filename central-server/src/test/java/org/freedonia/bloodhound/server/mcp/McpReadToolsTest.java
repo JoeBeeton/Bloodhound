@@ -150,6 +150,43 @@ class McpReadToolsTest {
     }
 
     @Test
+    void listOpenFindingsForOrganization_oversizedLimit_isClampedTo500() {
+        // A security review found this was the one MCP tool of its shape with no upper bound at
+        // all on limit (listFindingsForTarget/listSubdomains both already clamped) - an MCP client
+        // could otherwise request Integer.MAX_VALUE rows across the whole org in one call.
+        authenticateAsOrg(orgId);
+        when(findingRepository.findOpenByOrganization(orgId, List.of(), 500)).thenReturn(List.of());
+
+        tools.listOpenFindingsForOrganization(null, Integer.MAX_VALUE);
+
+        org.mockito.Mockito.verify(findingRepository).findOpenByOrganization(orgId, List.of(), 500);
+    }
+
+    @Test
+    void listRecentScans_mapsRunsForCallerOrg() {
+        authenticateAsOrg(orgId);
+        ScanRun run = new ScanRun(UUID.randomUUID(), targetId, "MANUAL", null, Instant.now(), null, "COMPLETE");
+        when(scanRunRepository.findRecentByOrganization(orgId, 30)).thenReturn(List.of(new OrgScanRun(run, "example.com")));
+
+        List<ScansController.RecentScan> result = tools.listRecentScans(null);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).targetHostname()).isEqualTo("example.com");
+    }
+
+    @Test
+    void listRecentScans_oversizedLimit_isClampedTo500() {
+        // Same unbounded-limit gap as listOpenFindingsForOrganization, found in the same review -
+        // this method had the identical shape (limit != null ? limit : 30, no upper bound).
+        authenticateAsOrg(orgId);
+        when(scanRunRepository.findRecentByOrganization(orgId, 500)).thenReturn(List.of());
+
+        tools.listRecentScans(Integer.MAX_VALUE);
+
+        org.mockito.Mockito.verify(scanRunRepository).findRecentByOrganization(orgId, 500);
+    }
+
+    @Test
     void getScanRun_runsTargetInDifferentOrg_throwsIllegalArgument() {
         authenticateAsOrg(orgId);
         UUID runId = UUID.randomUUID();

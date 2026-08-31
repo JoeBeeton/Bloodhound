@@ -131,11 +131,12 @@ public class McpReadTools {
     public List<OrgFindingSummary> listOpenFindingsForOrganization(
             @McpToolParam(description = "Comma-separated severities (CRITICAL,HIGH,MEDIUM,LOW,INFO)", required = false)
                     String severity,
-            @McpToolParam(description = "Max rows to return (default 50)", required = false) Integer limit) {
+            @McpToolParam(description = "Max rows to return (default 50, capped at 500)", required = false) Integer limit) {
         List<String> severities =
                 severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
+        int boundedLimit = Math.clamp(limit != null ? limit : 50, 1, 500);
         return findingRepository
-                .findOpenByOrganization(currentOrganizationId(), severities, limit != null ? limit : 50)
+                .findOpenByOrganization(currentOrganizationId(), severities, boundedLimit)
                 .stream()
                 .map(f -> OrgFindingSummary.from(f, parseEvidence(f.finding().evidenceJson()), null))
                 .toList();
@@ -188,8 +189,9 @@ public class McpReadTools {
             description = "List recent scan runs (any status) for the caller's organization, most recent first.",
             annotations = @McpTool.McpAnnotations(title = "List recent scans", readOnlyHint = true, destructiveHint = false, idempotentHint = false, openWorldHint = false))
     public List<ScansController.RecentScan> listRecentScans(
-            @McpToolParam(description = "Max rows to return (default 30)", required = false) Integer limit) {
-        return scanRunRepository.findRecentByOrganization(currentOrganizationId(), limit != null ? limit : 30).stream()
+            @McpToolParam(description = "Max rows to return (default 30, capped at 500)", required = false) Integer limit) {
+        int boundedLimit = Math.clamp(limit != null ? limit : 30, 1, 500);
+        return scanRunRepository.findRecentByOrganization(currentOrganizationId(), boundedLimit).stream()
                 .map(McpReadTools::toRecentScan)
                 .toList();
     }
