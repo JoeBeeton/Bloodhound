@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.orgs;
 
 import jakarta.validation.Valid;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
 import org.freedonia.bloodhound.server.auth.LoginRateLimitedException;
@@ -35,16 +36,19 @@ public class UserSelfController {
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
     private final LoginAttemptLimiter loginAttemptLimiter;
+    private final AuditLogRepository auditLogRepository;
 
     public UserSelfController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
-            LoginAttemptLimiter loginAttemptLimiter) {
+            LoginAttemptLimiter loginAttemptLimiter,
+            AuditLogRepository auditLogRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
         this.loginAttemptLimiter = loginAttemptLimiter;
+        this.auditLogRepository = auditLogRepository;
     }
 
     /**
@@ -82,6 +86,16 @@ public class UserSelfController {
         }
         loginAttemptLimiter.recordSuccess(principal.email());
         userRepository.updatePasswordHash(user.id(), passwordEncoder.encode(request.newPassword()));
+        // A security review found this self-service change had no audit trail, unlike the
+        // admin-triggered equivalent (OrgUserController's own USER_PASSWORD_RESET) - a distinct
+        // action name, not the same one, so an admin reviewing the log can tell "the user changed
+        // it themselves" apart from "an admin reset it for them". Password changes are exactly
+        // the kind of event compliance frameworks expect logged - both as routine self-service
+        // hygiene and because "change the password" is also a common step in an actual account
+        // takeover, which this entry helps an incident review reconstruct.
+        auditLogRepository.record(
+                principal.organizationId(), user.id(), principal.email(), "USER_PASSWORD_CHANGED", "USER", user.id().toString(),
+                "email=" + principal.email());
         // A security review found that changing your password previously left every other
         // active session (refresh token / httpOnly cookie, on any device, including the caller's
         // own current one) completely valid - revoking them all here is the actual point of "I
@@ -118,6 +132,18 @@ public class UserSelfController {
             @Valid @RequestBody LogoutOtherSessionsRequest request, @AuthenticationPrincipal JwtPrincipal principal) {
         refreshTokenRepository.revokeAllForUserExceptHash(
                 principal.userId(), HashUtil.sha256Hex(request.currentRefreshToken()));
+        // Same reasoning as changePassword's own new audit entry above - "something feels off, log
+        // out everywhere else" is exactly the kind of self-remediation an incident review benefits
+        // from being able to see happened (and when), not just infer from a sudden drop in active
+        // session count.
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "USER_LOGGED_OUT_OTHER_SESSIONS",
+                "USER",
+                principal.userId().toString(),
+                "email=" + principal.email());
         return ResponseEntity.noContent().build();
     }
 }

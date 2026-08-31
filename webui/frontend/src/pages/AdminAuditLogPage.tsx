@@ -89,6 +89,8 @@ const ACTION_LABELS: Record<string, string> = {
   SCIM_USER_CREATED: "User provisioned (SCIM)",
   SCIM_USER_ACTIVATED: "User activated (SCIM)",
   SCIM_USER_DEACTIVATED: "User deactivated (SCIM)",
+  USER_PASSWORD_CHANGED: "Password changed (self-service)",
+  USER_LOGGED_OUT_OTHER_SESSIONS: "Logged out other sessions",
 };
 
 const ACTION_VALUES = Object.keys(ACTION_LABELS);
