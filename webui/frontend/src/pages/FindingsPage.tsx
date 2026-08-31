@@ -17,11 +17,21 @@ interface FindingsPageData {
 
 const PAGE_SIZE = 50;
 
-function orgFindingsFilterParams(filters: FindingsFilterState): URLSearchParams {
+/** Same bug class the params-writer above documents - reads the raw URL value back, defaulting to OPEN for anything unrecognized (a stale/hand-edited URL, not just an absent param). */
+export function parseStatusParam(value: string | null): FindingsFilterState["status"] {
+  return value === "RESOLVED" || value === "DISMISSED" ? value : "OPEN";
+}
+
+export function orgFindingsFilterParams(filters: FindingsFilterState): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
-  if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  // OPEN is the server's own default (FindingRepository#appendFilters) - only a non-default
+  // value needs to be sent at all. A bug found live after FindingsFilterBar gained its third
+  // "Dismissed" toggle: this only ever forwarded the literal string "RESOLVED", so clicking
+  // Dismissed rendered as pressed/active but silently kept showing Open findings - the param was
+  // deleted, not set, for any status other than exactly "RESOLVED".
+  if (filters.status && filters.status !== "OPEN") params.set("status", filters.status);
   if (filters.search) params.set("search", filters.search);
   return params;
 }
@@ -90,7 +100,7 @@ export function FindingsPage() {
   const filters: FindingsFilterState = {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
-    status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
+    status: parseStatusParam(searchParams.get("status")),
     search: searchParams.get("search") ?? undefined,
   };
   const setFilters = (next: FindingsFilterState) => {
@@ -99,7 +109,7 @@ export function FindingsPage() {
         const params = new URLSearchParams(prev);
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
-        next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
+        next.status && next.status !== "OPEN" ? params.set("status", next.status) : params.delete("status");
         next.search ? params.set("search", next.search) : params.delete("search");
         return params;
       },
@@ -158,10 +168,12 @@ export function FindingsPage() {
         {query.data?.totalCount === 0 && (
           <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-neon-cyan">
             {filters.severities.length > 0 || filters.categories.length > 0 || filters.search
-              ? `No ${filters.status === "RESOLVED" ? "resolved" : "open"} findings match the selected filters.`
+              ? `No ${(filters.status ?? "OPEN").toLowerCase()} findings match the selected filters.`
               : filters.status === "RESOLVED"
                 ? "Nothing resolved yet."
-                : "Clean sweep — no open findings across your organization."}
+                : filters.status === "DISMISSED"
+                  ? "Nothing dismissed yet."
+                  : "Clean sweep — no open findings across your organization."}
           </p>
         )}
 
@@ -181,6 +193,11 @@ export function FindingsPage() {
                     {f.status === "RESOLVED" && (
                       <span className="rounded border border-neon-cyan/40 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-cyan">
                         Resolved
+                      </span>
+                    )}
+                    {f.status === "DISMISSED" && (
+                      <span className="rounded border border-slate-600 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Dismissed
                       </span>
                     )}
                     <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">{f.targetHostname}</span>
