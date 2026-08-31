@@ -21,6 +21,15 @@ export function SsoCallbackPage() {
   useEffect(() => {
     if (ranOnce.current) return;
     ranOnce.current = true;
+    // A misconfigured IdP (unrecognized registration, or a missing email attribute mapping) is
+    // caught server-side and redirected here with ?error=... instead of ?code=... - see
+    // SamlAuthenticationSuccessHandler. Checked before the missing-code fallback below so an admin
+    // testing SSO setup gets the specific, actionable reason rather than the generic message.
+    const serverError = searchParams.get("error");
+    if (serverError) {
+      setError(serverError);
+      return;
+    }
     const code = searchParams.get("code");
     if (!code) {
       setError("No SSO code was present in the callback URL.");
