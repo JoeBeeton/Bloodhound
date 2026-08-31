@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.worker.modules.whois;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -11,6 +12,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
@@ -29,6 +31,21 @@ public class WhoisFetcher {
     private static final Duration TIMEOUT = Duration.ofSeconds(8);
     private static final int WHOIS_PORT = 43;
     private static final int SOCKET_TIMEOUT_MS = 8000;
+
+    /**
+     * A security review found both queryWhoisServer (raw port-43 sockets) and get (RDAP HTTP
+     * fetches) read their entire response with no size limit at all - readAllBytes() and
+     * BodyHandlers.ofString() respectively, the exact issue SafeHttpGet#readCappedUtf8 was
+     * introduced to fix elsewhere (TechFetcher, DocumentFetcher, CrtShSource). The RDAP domain
+     * lookup and the WHOIS referral-server query both hit a server this app doesn't control (the
+     * queried hostname's own TLD registry) - a misbehaving or malicious one could stream gigabytes
+     * within the request/socket timeout and exhaust the shared worker JVM's heap, same as the
+     * already-fixed cases. Generous relative to TechFetcher/DocumentFetcher's 300,000-char page
+     * caps since RDAP JSON (nested contact/entity objects) can legitimately run larger than one
+     * HTML page's text, but WHOIS/RDAP domain records are never remotely close to megabytes for a
+     * real domain either way.
+     */
+    private static final int MAX_RESPONSE_BYTES = 200_000;
 
     private final HttpClient client =
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -88,7 +105,7 @@ public class WhoisFetcher {
             socket.setSoTimeout(SOCKET_TIMEOUT_MS);
             socket.getOutputStream().write((query + "\r\n").getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
-            return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            return SafeHttpGet.readCappedUtf8(socket.getInputStream(), MAX_RESPONSE_BYTES);
         }
     }
 
@@ -98,11 +115,12 @@ public class WhoisFetcher {
                 .header("User-Agent", ScanUserAgent.VALUE)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
+            response.body().close();
             throw new IOException("HTTP " + response.statusCode() + " from " + url);
         }
-        return response.body();
+        return SafeHttpGet.readCappedUtf8(response.body(), MAX_RESPONSE_BYTES);
     }
 
     static String tldOf(String hostname) {
