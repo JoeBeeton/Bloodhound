@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.core.Ordered;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -61,6 +63,15 @@ public class McpSecurityConfig {
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 // Dynamic Client Registration (RFC 7591) - lets an MCP client (e.g. claude.ai's
                 // connector UI) self-register a client_id/secret without an admin pre-creating one.
+                // Reachable with zero authentication by design (see DcrRateLimiter's javadoc for
+                // why that still needs its own bound, confirmed live as an unauthenticated,
+                // unbounded storage-growth DoS otherwise) - see mcpDcrRateLimitFilterRegistration
+                // below for where that bound is actually enforced; it can't be wired in here via
+                // the usual addFilterBefore(..., OAuth2ClientRegistrationEndpointFilter.class),
+                // since that filter class has no registered order yet at the point this chain is
+                // being built (confirmed live: IllegalArgumentException, "does not have a
+                // registered order" - McpAuthorizationServerConfigurer only registers it during
+                // its own later configure() phase).
                 .with(
                         McpAuthorizationServerConfigurer.mcpAuthorizationServer().dynamicClientRegistration(true),
                         withDefaults())
@@ -134,5 +145,23 @@ public class McpSecurityConfig {
                         new McpEnabledGuardFilter(userRepository, organizationRepository),
                         BearerTokenAuthenticationFilter.class);
         return http.build();
+    }
+
+    /**
+     * A plain servlet-container filter (Spring Boot's own registration mechanism, not Spring
+     * Security's addFilterBefore/After), matched to POST /oauth2/register and given the highest
+     * possible precedence so it runs before Spring Security's whole FilterChainProxy even engages
+     * - the one placement that sidesteps the ordinal-registration problem documented on
+     * mcpAuthorizationServerFilterChain above entirely, since it doesn't need Spring Security to
+     * know anything about where any other filter sits.
+     */
+    @Bean
+    public FilterRegistrationBean<McpDcrRateLimitFilter> mcpDcrRateLimitFilterRegistration(
+            DcrRateLimiter dcrRateLimiter) {
+        FilterRegistrationBean<McpDcrRateLimitFilter> registration =
+                new FilterRegistrationBean<>(new McpDcrRateLimitFilter(dcrRateLimiter));
+        registration.addUrlPatterns("/oauth2/register");
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
     }
 }
