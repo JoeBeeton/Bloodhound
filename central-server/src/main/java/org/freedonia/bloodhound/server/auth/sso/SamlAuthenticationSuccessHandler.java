@@ -3,6 +3,8 @@ package org.freedonia.bloodhound.server.auth.sso;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import org.freedonia.bloodhound.server.auth.AuthResult;
 import org.freedonia.bloodhound.server.auth.AuthenticationService;
@@ -56,15 +58,35 @@ public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHa
         Saml2AuthenticatedPrincipal principal = (Saml2AuthenticatedPrincipal) samlAuth.getPrincipal();
         String registrationId = principal.getRelyingPartyRegistrationId();
 
-        IdentityProvider idp = identityProviderRepository
-                .findByRegistrationId(registrationId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "SAML success for unknown registrationId " + registrationId));
+        // Both of these were previously thrown as an unhandled IllegalStateException - a security/
+        // UX review found that meant an admin mid-way through setting up SSO (the single most
+        // likely time to actually hit either of these: a stale registrationId from a half-finished
+        // config change, or - the common real mistake - an email_attribute_name that doesn't match
+        // what the IdP's assertion actually sends) got a raw, unactionable 500 with no indication
+        // of what to fix, instead of ever reaching the SPA's own error UI (SsoCallbackPage.tsx
+        // already renders a clean message for a missing/invalid handoff code - these are the same
+        // kind of "the SSO flow didn't complete" outcome, just detected earlier in the process).
+        Optional<IdentityProvider> idpLookup = identityProviderRepository.findByRegistrationId(registrationId);
+        if (idpLookup.isEmpty()) {
+            log.warn("SAML success for unknown registrationId {}", registrationId);
+            redirectWithError(response, "SSO configuration error: unrecognized identity provider. Contact your administrator.");
+            return;
+        }
+        IdentityProvider idp = idpLookup.get();
 
-        String email = firstAttribute(principal, idp.emailAttributeName())
-                .orElseThrow(() -> new IllegalStateException(
-                        "SAML assertion from " + registrationId + " has no '" + idp.emailAttributeName()
-                                + "' attribute - check the org's email_attribute_name mapping"));
+        Optional<String> emailLookup = firstAttribute(principal, idp.emailAttributeName());
+        if (emailLookup.isEmpty()) {
+            log.warn(
+                    "SAML assertion from {} has no '{}' attribute - check the org's email_attribute_name mapping",
+                    registrationId,
+                    idp.emailAttributeName());
+            redirectWithError(
+                    response,
+                    "SSO configuration error: the identity provider's response is missing the configured email"
+                            + " attribute. Contact your administrator to check the SSO email attribute mapping.");
+            return;
+        }
+        String email = emailLookup.get();
         String displayName = idp.displayNameAttributeName() != null
                 ? firstAttribute(principal, idp.displayNameAttributeName()).orElse(email)
                 : email;
@@ -82,6 +104,11 @@ public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHa
         String code = handoffCodeRepository.create(user.id(), tokens.accessToken(), tokens.expiresIn(), tokens.refreshToken());
 
         response.sendRedirect(webuiCallbackUrl + "?code=" + code);
+    }
+
+    /** Same handoff destination as a successful login, an "error" param instead of "code" - see SsoCallbackPage.tsx. */
+    private void redirectWithError(HttpServletResponse response, String message) throws IOException {
+        response.sendRedirect(webuiCallbackUrl + "?error=" + URLEncoder.encode(message, StandardCharsets.UTF_8));
     }
 
     // Package-private (not private) so SamlAuthenticationSuccessHandlerTest can exercise it directly -
