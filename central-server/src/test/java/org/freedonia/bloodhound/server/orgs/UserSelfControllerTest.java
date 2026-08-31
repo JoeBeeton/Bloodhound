@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
 import org.freedonia.bloodhound.server.auth.LoginRateLimitedException;
@@ -29,8 +30,9 @@ class UserSelfControllerTest {
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final LoginAttemptLimiter loginAttemptLimiter = mock(LoginAttemptLimiter.class);
-    private final UserSelfController controller =
-            new UserSelfController(userRepository, passwordEncoder, refreshTokenRepository, loginAttemptLimiter);
+    private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final UserSelfController controller = new UserSelfController(
+            userRepository, passwordEncoder, refreshTokenRepository, loginAttemptLimiter, auditLogRepository);
 
     private final UUID userId = UUID.randomUUID();
     private final JwtPrincipal principal = new JwtPrincipal(userId, UUID.randomUUID(), "VIEWER", "u@example.com");
@@ -120,6 +122,36 @@ class UserSelfControllerTest {
     }
 
     @Test
+    void changePassword_correctCurrentPassword_recordsAuditEntry_distinctFromAdminReset() {
+        // A security review found this self-service change had no audit trail, unlike the
+        // admin-triggered equivalent (OrgUserController's own USER_PASSWORD_RESET) - a distinct
+        // action name lets an admin reviewing the log tell "the user changed it themselves" apart
+        // from "an admin reset it for them".
+        User existing = user("LOCAL", "old-hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.matches("current-pw", "old-hash")).thenReturn(true);
+        when(passwordEncoder.encode("new-pw")).thenReturn("new-hash");
+
+        controller.changePassword(new ChangePasswordRequest("current-pw", "new-pw"), principal);
+
+        verify(auditLogRepository).record(
+                principal.organizationId(), userId, principal.email(), "USER_PASSWORD_CHANGED", "USER", userId.toString(),
+                "email=" + principal.email());
+    }
+
+    @Test
+    void changePassword_wrongCurrentPassword_neverRecordsAudit() {
+        User existing = user("LOCAL", "old-hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
+        when(passwordEncoder.matches("wrong-pw", "old-hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> controller.changePassword(new ChangePasswordRequest("wrong-pw", "new-pw"), principal))
+                .isInstanceOf(ResponseStatusException.class);
+
+        verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void changePassword_nonLocalAccount_badRequest_neverRevokesTokens() {
         User existing = user("SAML", null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(existing));
@@ -149,5 +181,17 @@ class UserSelfControllerTest {
         // The whole point: this must never be confused with the change-password path's
         // revoke-literally-everything call.
         verify(refreshTokenRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void logoutOtherSessions_recordsAuditEntry() {
+        // "Something feels off, log out everywhere else" is exactly the kind of self-remediation
+        // an incident review benefits from being able to see happened (and when), not just infer
+        // from a sudden drop in active session count.
+        controller.logoutOtherSessions(new LogoutOtherSessionsRequest("raw-current-token"), principal);
+
+        verify(auditLogRepository).record(
+                principal.organizationId(), userId, principal.email(), "USER_LOGGED_OUT_OTHER_SESSIONS", "USER",
+                userId.toString(), "email=" + principal.email());
     }
 }
