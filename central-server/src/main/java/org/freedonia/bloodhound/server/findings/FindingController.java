@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.dto.FindingSummary;
 import org.freedonia.bloodhound.server.findings.dto.OrgFindingSummary;
@@ -27,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -49,18 +51,21 @@ public class FindingController {
     private final ScanRunRepository scanRunRepository;
     private final RuleWeightRepository ruleWeightRepository;
     private final ObjectMapper objectMapper;
+    private final AuditLogRepository auditLogRepository;
 
     public FindingController(
             FindingRepository findingRepository,
             TargetRepository targetRepository,
             ScanRunRepository scanRunRepository,
             RuleWeightRepository ruleWeightRepository,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            AuditLogRepository auditLogRepository) {
         this.findingRepository = findingRepository;
         this.targetRepository = targetRepository;
         this.scanRunRepository = scanRunRepository;
         this.ruleWeightRepository = ruleWeightRepository;
         this.objectMapper = objectMapper;
+        this.auditLogRepository = auditLogRepository;
     }
 
     /**
@@ -283,6 +288,73 @@ public class FindingController {
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             return Map.of();
+        }
+    }
+
+    /** See UserSelfController's own WeakPasswordResponse / SlackIntegrationController's own ErrorMessageResponse for why a real body, not a thrown ResponseStatusException, is needed for a message the caller is actually meant to see - this app's default error handler never exposes a ResponseStatusException's reason text. */
+    public record ErrorMessageResponse(String message) {}
+
+    /**
+     * A product review found FindingReconciler's automatic OPEN-&gt;RESOLVED transition (fires
+     * only once a scan no longer detects an issue - see its own javadoc) was the ONLY way a
+     * finding's status ever changed: a false positive or an accepted-risk finding just sat as
+     * OPEN indefinitely, with no way for an analyst to say "reviewed, doesn't need action" short
+     * of waiting for the underlying condition to change. DISMISSED is a sticky human override -
+     * see V48__findings_dismissed_status.sql's own comment for why FindingReconciler never
+     * touches one either direction once set.
+     */
+    @PostMapping("/api/v1/findings/{id}/dismiss")
+    public ResponseEntity<?> dismissFinding(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireWriteAccess(principal);
+        Finding finding = requireOwnedFinding(id, principal);
+        if (findingRepository.dismiss(id) == 0) {
+            // Only reachable via a race (another request changed the status between the lookup
+            // above and this UPDATE) or a direct API call against an already-non-OPEN finding -
+            // reported distinctly from NOT_FOUND so a caller can tell "exists but isn't open"
+            // apart from "doesn't exist/isn't yours".
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorMessageResponse("only an open finding can be dismissed"));
+        }
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "FINDING_DISMISSED",
+                "FINDING",
+                id.toString(),
+                "ruleId=" + finding.ruleId() + " affectedAsset=" + finding.affectedAsset());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/findings/{id}/reopen")
+    public ResponseEntity<?> reopenFinding(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        requireWriteAccess(principal);
+        Finding finding = requireOwnedFinding(id, principal);
+        if (findingRepository.reopen(id) == 0) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorMessageResponse("only a dismissed finding can be reopened"));
+        }
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "FINDING_REOPENED",
+                "FINDING",
+                id.toString(),
+                "ruleId=" + finding.ruleId() + " affectedAsset=" + finding.affectedAsset());
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Same "mismatch reads as not found, not forbidden" reasoning as TargetController#requireOwnedTarget. */
+    private Finding requireOwnedFinding(UUID id, JwtPrincipal principal) {
+        Finding finding = findingRepository.findById(id).orElseThrow(FindingController::notFound);
+        targetRepository.findByIdAndOrganization(finding.targetId(), principal.organizationId()).orElseThrow(FindingController::notFound);
+        return finding;
+    }
+
+    private static void requireWriteAccess(JwtPrincipal principal) {
+        if (!"ADMIN".equals(principal.role()) && !"ANALYST".equals(principal.role())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN or ANALYST role required");
         }
     }
 

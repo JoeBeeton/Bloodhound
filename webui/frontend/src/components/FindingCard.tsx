@@ -56,6 +56,14 @@ export function FindingCard({ finding, onSelect }: { finding: Finding; onSelect:
               Resolved
             </span>
           )}
+          {finding.status === "DISMISSED" && (
+            <span
+              className="rounded border border-slate-600 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400"
+              title="Manually dismissed - open the finding to reopen it"
+            >
+              Dismissed
+            </span>
+          )}
           {isTier2Finding(finding.moduleType) && (
             <span className="rounded border border-neon-amber/50 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-amber">
               Tier 2
