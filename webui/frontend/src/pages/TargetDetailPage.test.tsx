@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
-import { TargetNotes } from "./TargetDetailPage";
+import { findingsFilterParams, parseStatusParam, TargetNotes } from "./TargetDetailPage";
 
 vi.mock("../lib/apiClient", () => ({ apiFetch: vi.fn() }));
 const mockedApiFetch = vi.mocked(apiFetch);
@@ -168,5 +168,36 @@ describe("TargetNotes", () => {
     // leaving edit mode on success clears the warning).
     await waitFor(() => expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument());
     expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+  });
+});
+
+describe("findingsFilterParams / parseStatusParam", () => {
+  // A live UX bug found after FindingsFilterBar gained its third "Dismissed" toggle: both
+  // functions here only ever recognized the literal string "RESOLVED", so clicking Dismissed
+  // rendered as pressed/active but the status param was silently dropped, leaving the page
+  // showing Open findings the whole time. These are the exact regression case.
+  it("forwards DISMISSED, not just RESOLVED, in the outgoing query params", () => {
+    const params = findingsFilterParams({ severities: [], categories: [], status: "DISMISSED" });
+    expect(params.get("status")).toBe("DISMISSED");
+  });
+
+  it("forwards RESOLVED too - the case that was already working", () => {
+    const params = findingsFilterParams({ severities: [], categories: [], status: "RESOLVED" });
+    expect(params.get("status")).toBe("RESOLVED");
+  });
+
+  it("omits the status param entirely for OPEN - the server's own default", () => {
+    const params = findingsFilterParams({ severities: [], categories: [], status: "OPEN" });
+    expect(params.has("status")).toBe(false);
+  });
+
+  it("reads DISMISSED back from a URL param, not just RESOLVED", () => {
+    expect(parseStatusParam("DISMISSED")).toBe("DISMISSED");
+    expect(parseStatusParam("RESOLVED")).toBe("RESOLVED");
+  });
+
+  it("defaults anything unrecognized (absent, stale, hand-edited) back to OPEN", () => {
+    expect(parseStatusParam(null)).toBe("OPEN");
+    expect(parseStatusParam("garbage")).toBe("OPEN");
   });
 });

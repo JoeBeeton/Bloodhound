@@ -74,13 +74,22 @@ async function fetchTarget(id: string): Promise<Target> {
   return res.json();
 }
 
-function findingsFilterParams(filters: FindingsFilterState): URLSearchParams {
+export function findingsFilterParams(filters: FindingsFilterState): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.severities.length > 0) params.set("severity", filters.severities.join(","));
   if (filters.categories.length > 0) params.set("category", filters.categories.join(","));
-  if (filters.status === "RESOLVED") params.set("status", "RESOLVED");
+  // OPEN is the server's own default (FindingRepository#appendFilters) - only a non-default value
+  // needs to be sent. Same bug FindingsPage's own orgFindingsFilterParams had (see its comment):
+  // this only ever forwarded the literal string "RESOLVED", so once FindingsFilterBar gained its
+  // third "Dismissed" toggle, clicking it here silently kept showing Open findings too.
+  if (filters.status && filters.status !== "OPEN") params.set("status", filters.status);
   if (filters.search) params.set("search", filters.search);
   return params;
+}
+
+/** Same bug class findingsFilterParams above documents - reads the raw URL value back, defaulting to OPEN for anything unrecognized. */
+export function parseStatusParam(value: string | null): FindingsFilterState["status"] {
+  return value === "RESOLVED" || value === "DISMISSED" ? value : "OPEN";
 }
 
 async function fetchFindings(targetId: string, filters: FindingsFilterState): Promise<FindingsPage> {
@@ -316,7 +325,7 @@ export function TargetDetailPage() {
   const filters: FindingsFilterState = {
     severities: (searchParams.get("severity")?.split(",").filter(Boolean) ?? []) as Severity[],
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
-    status: searchParams.get("status") === "RESOLVED" ? "RESOLVED" : "OPEN",
+    status: parseStatusParam(searchParams.get("status")),
     search: searchParams.get("search") ?? undefined,
   };
   const setFilters = (next: FindingsFilterState) => {
@@ -325,7 +334,7 @@ export function TargetDetailPage() {
         const params = new URLSearchParams(prev);
         next.severities.length > 0 ? params.set("severity", next.severities.join(",")) : params.delete("severity");
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
-        next.status === "RESOLVED" ? params.set("status", "RESOLVED") : params.delete("status");
+        next.status && next.status !== "OPEN" ? params.set("status", next.status) : params.delete("status");
         next.search ? params.set("search", next.search) : params.delete("search");
         return params;
       },
@@ -587,7 +596,7 @@ export function TargetDetailPage() {
 
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 id="findings" className="scroll-mt-14 font-mono text-sm uppercase tracking-widest text-slate-400">
-            {filters.status === "RESOLVED" ? "Resolved findings" : "Open findings"}{" "}
+            {filters.status === "RESOLVED" ? "Resolved findings" : filters.status === "DISMISSED" ? "Dismissed findings" : "Open findings"}{" "}
             {findingsQuery.data ? `(${findingsQuery.data.totalCount})` : ""}
           </h2>
           <div className="flex items-center gap-3">
@@ -601,7 +610,7 @@ export function TargetDetailPage() {
                 {exportCsvMutation.isPending ? "Exporting…" : "Export CSV ↓"}
               </button>
             )}
-            {findingsQuery.data && findingsQuery.data.items.length > 1 && filters.status !== "RESOLVED" && (
+            {findingsQuery.data && findingsQuery.data.items.length > 1 && filters.status === "OPEN" && (
               <button
                 onClick={() => setSortByScoreImpact((v) => !v)}
                 className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
@@ -629,7 +638,9 @@ export function TargetDetailPage() {
               ? "No findings match the selected filters."
               : filters.status === "RESOLVED"
                 ? "Nothing resolved yet."
-                : "No open findings — run a scan to check this target."}
+                : filters.status === "DISMISSED"
+                  ? "Nothing dismissed yet."
+                  : "No open findings — run a scan to check this target."}
           </p>
         )}
 
