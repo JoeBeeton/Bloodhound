@@ -115,6 +115,18 @@ COPY --from=nuclei /tmp/nuclei-templates /opt/nuclei-templates
 # own blocklist has nothing to add here.
 RUN touch /etc/zgrab2-blocklist.conf
 
-COPY --from=build /project/worker/build/libs/worker.jar app.jar
+COPY --from=build --chown=1000:1000 /project/worker/build/libs/worker.jar app.jar
+# A container-hardening review found this (and central-server's/webui's) had no USER directive -
+# ran as root by default. worker is the highest-value target for this fix specifically: it
+# bundles subfinder/naabu/zgrab2/nuclei, all of which parse untrusted responses from real external
+# scan targets, so a memory-safety bug in any of them processing attacker-controlled data would
+# otherwise execute as root. HOME=/tmp because these are real third-party CLI tools with their own
+# assumptions about a writable home directory for cache/config (zgrab2's own blocklist-file
+# default lookup above is a documented instance of exactly this) - the numeric-UID-only user below
+# has no /etc/passwd entry and so no real home directory; /tmp is reliably world-writable
+# regardless of which UID owns it, giving any tool that wants to write somewhere a valid target
+# without needing to special-case each one the way zgrab2's blocklist already had to be.
+ENV HOME=/tmp
+USER 1000:1000
 EXPOSE 8081
 ENTRYPOINT ["java", "-jar", "app.jar"]

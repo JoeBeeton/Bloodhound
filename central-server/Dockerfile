@@ -14,6 +14,11 @@ RUN ./gradlew :central-server:bootJar --no-daemon -x test
 
 FROM ghcr.io/graalvm/jdk-community:21
 WORKDIR /app
-COPY --from=build /project/central-server/build/libs/central-server.jar app.jar
+COPY --from=build --chown=1000:1000 /project/central-server/build/libs/central-server.jar app.jar
+# A container-hardening review found every service in this repo ran as root by default (no USER
+# directive anywhere) - the standard CIS Docker Benchmark/OWASP Docker Top 10 gap. Numeric
+# UID:GID rather than a named user - no dependency on useradd/shadow-utils being present in this
+# base image, and Docker honors a bare UID:GID for USER without any /etc/passwd entry existing.
+USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
