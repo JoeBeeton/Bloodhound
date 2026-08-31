@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -81,6 +82,29 @@ public class ScoreSnapshotRepository {
                         targetId)
                 .stream()
                 .findFirst();
+    }
+
+    /**
+     * Same as {@link #findLatest}, batched into one query for a whole page of targets - a
+     * performance review found TargetController#list and DashboardController#get both called
+     * findLatest once per target in a loop (an N+1 the former's own javadoc already flagged as a
+     * "Phase 1 scale" tradeoff worth revisiting). DISTINCT ON (target_id) ... ORDER BY target_id,
+     * computed_at DESC is Postgres' idiomatic "latest row per group" - one query, one round trip,
+     * regardless of how many targets an org has. Uses the same dynamic IN (...) placeholder
+     * pattern SubdomainRepository#markScanned already established in this codebase rather than
+     * ANY(?) - plain JdbcTemplate binding of a bare List/array doesn't work with ANY(?) (the
+     * Postgres JDBC driver needs an explicit java.sql.Array via Connection.createArrayOf for
+     * that), so every other batched-by-id query here follows the same convention.
+     */
+    public Map<UUID, ScoreSnapshot> findLatestForTargets(List<UUID> targetIds) {
+        if (targetIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = targetIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        String sql = "SELECT DISTINCT ON (target_id) * FROM score_snapshots WHERE target_id IN (" + placeholders + ") "
+                + "ORDER BY target_id, computed_at DESC";
+        List<ScoreSnapshot> rows = jdbc.query(sql, rowMapper, targetIds.toArray());
+        return rows.stream().collect(Collectors.toMap(ScoreSnapshot::targetId, s -> s));
     }
 
     private <T> T readMap(String json, TypeReference<T> type) {

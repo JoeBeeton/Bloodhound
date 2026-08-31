@@ -63,7 +63,6 @@ class DashboardControllerTest {
         Target competitor = target("COMPETITOR");
         Target watchlist = target("WATCHLIST");
         when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of(own, competitor, watchlist));
-        when(scoreSnapshotRepository.findLatest(any())).thenReturn(java.util.Optional.empty());
         stubEmptyBaseline();
 
         DashboardSummary summary = controller.get(principal);
@@ -73,10 +72,27 @@ class DashboardControllerTest {
     }
 
     @Test
+    void ownTargets_scoreLookupIsBatched_onlyForOwnTargets_notEveryTarget() {
+        // The actual point of this test: a performance review found this previously called
+        // findLatest() once per target in a loop - findLatestForTargets is the batched
+        // replacement, and it should only ever be asked about OWN targets (the only ones this
+        // response even surfaces a score for), not competitor/watchlist targets too.
+        Target own = target("OWN");
+        Target competitor = target("COMPETITOR");
+        when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of(own, competitor));
+        when(scoreSnapshotRepository.findLatestForTargets(List.of(own.id()))).thenReturn(Map.of());
+        stubEmptyBaseline();
+
+        controller.get(principal);
+
+        verify(scoreSnapshotRepository).findLatestForTargets(List.of(own.id()));
+        verify(scoreSnapshotRepository, org.mockito.Mockito.never()).findLatest(any());
+    }
+
+    @Test
     void stats_countEachTargetTypeCorrectly() {
         when(targetRepository.findByOrganization(orgId, null, false))
                 .thenReturn(List.of(target("OWN"), target("OWN"), target("COMPETITOR"), target("WATCHLIST")));
-        when(scoreSnapshotRepository.findLatest(any())).thenReturn(java.util.Optional.empty());
         stubEmptyBaseline();
         when(findingRepository.countOpenByOrganization(orgId, List.of("CRITICAL"))).thenReturn(3);
         when(findingRepository.countOpenByOrganization(orgId, List.of("HIGH"))).thenReturn(5);
