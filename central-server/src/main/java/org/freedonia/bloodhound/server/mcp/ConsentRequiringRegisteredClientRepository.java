@@ -15,15 +15,22 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
  * length limit at all (confirmed live: registered and stored, verbatim, in full, including HTML
  * markup). DcrRateLimiter bounds how many times an attacker can call this endpoint; this bounds
  * how much each individual call can store, so one registration can't itself be an unbounded-size
- * write (e.g. megabytes of text as a single "name"). The rest of client_name's content is left
- * alone: client_name is meant to reach Spring's own default consent page as a human-readable
- * label, but confirmed live that a self-registered (Dynamic-Client-Registration) client's own
- * scope set is always empty - requesting no scope at /oauth2/authorize skips the consent screen
- * entirely (nothing to consent to), and requesting any actual scope (e.g. mcp.read) is rejected
- * outright as invalid_scope, since the client was never granted it. So a DCR-registered client's
- * client_name structurally never reaches the consent page at all today, independent of whatever
- * escaping that page does or doesn't apply - not relied upon as the actual mitigation here, just
- * noted as the current reality.
+ * write (e.g. megabytes of text as a single "name").
+ *
+ * <p>Also grants {@link #MCP_READ_SCOPE} to any client whose requested scope set is empty. RFC
+ * 7591 requires a Dynamic Client Registration request to omit {@code scope} entirely and leaves
+ * the authorization server to decide what to grant (confirmed live: Spring's own
+ * DEFAULT_SCOPE_VALIDATOR rejects a registration that DOES specify one, with "scope must not be
+ * set during Dynamic Client Registration"). A functional review found nothing in this app ever
+ * did the other half of that: a DCR-registered client was left with a permanently empty scope
+ * set, and the resource-server chain requires {@code SCOPE_mcp.read} (see McpSecurityConfig) - so
+ * every self-registered MCP client, the officially-supported way a real client like Claude
+ * Desktop connects, could complete the entire OAuth dance and still never successfully call a
+ * single tool, always landing on invalid_scope the moment it asked for mcp.read at /oauth2/
+ * authorize. mcp.read is this AS's only issuable scope (see McpSecurityConfig's own comment), so
+ * granting it here is exactly the RFC's "server decides" step, not a broadening of what any
+ * client can get - a client that arrives with a non-empty scope set (a manually pre-registered
+ * one, if this app ever adds that path) is left alone.
  */
 public class ConsentRequiringRegisteredClientRepository implements RegisteredClientRepository {
 
@@ -34,6 +41,8 @@ public class ConsentRequiringRegisteredClientRepository implements RegisteredCli
      * text into one row.
      */
     private static final int MAX_CLIENT_NAME_LENGTH = 200;
+
+    private static final String MCP_READ_SCOPE = "mcp.read";
 
     private final RegisteredClientRepository delegate;
 
@@ -46,11 +55,13 @@ public class ConsentRequiringRegisteredClientRepository implements RegisteredCli
         ClientSettings.Builder settings = ClientSettings.withSettings(
                 registeredClient.getClientSettings().getSettings());
         settings.requireAuthorizationConsent(true);
-        RegisteredClient corrected = RegisteredClient.from(registeredClient)
+        RegisteredClient.Builder builder = RegisteredClient.from(registeredClient)
                 .clientSettings(settings.build())
-                .clientName(cap(registeredClient.getClientName()))
-                .build();
-        delegate.save(corrected);
+                .clientName(cap(registeredClient.getClientName()));
+        if (registeredClient.getScopes().isEmpty()) {
+            builder.scope(MCP_READ_SCOPE);
+        }
+        delegate.save(builder.build());
     }
 
     private static String cap(String clientName) {
