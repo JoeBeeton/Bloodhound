@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { colorForTargetType } from "../lib/attackSurfaceGraph";
+import { formatRetryAfter } from "../lib/authClient";
 import type { ScanRunDetail, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
@@ -79,7 +80,18 @@ async function createTargetsBulk(input: { hostnames: string[]; targetType: Targe
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to add targets."));
+  if (!res.ok) {
+    // TargetBulkCreateRateLimiter's own 429 carries a Retry-After header but no JSON body (a
+    // security review found repeated calls here had no limit at all - each one runs a real DNS
+    // lookup per hostname) - readErrorMessage's generic fallback would otherwise show "Failed to
+    // add targets.", indistinguishable from a real failure and giving no indication the caller
+    // should just wait, the same reason the login form's own 429 handling reads Retry-After
+    // explicitly rather than trusting a response body that was never sent.
+    if (res.status === 429) {
+      throw new Error(`Too many requests. Try again in ${formatRetryAfter(res)}.`);
+    }
+    throw new Error(await readErrorMessage(res, "Failed to add targets."));
+  }
   return res.json();
 }
 
