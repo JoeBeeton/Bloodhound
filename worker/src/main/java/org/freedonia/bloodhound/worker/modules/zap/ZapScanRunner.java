@@ -7,11 +7,13 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +59,18 @@ public class ZapScanRunner {
     private static final Duration TOTAL_BUDGET = Duration.ofMinutes(12);
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(5);
     private static final int SPIDER_MAX_CHILDREN = 10;
+
+    /**
+     * A security review found callRaw used BodyHandlers.ofString(), buffering the entire response
+     * into memory with no size limit - the same issue already fixed elsewhere in the worker
+     * module via SafeHttpGet. Lower risk than most of those fixes - ZAP's own control API is a
+     * trusted internal Docker sidecar, not directly attacker-controlled - but its alert-list
+     * response size is driven by how much attack surface the actual scanned target has, so a
+     * large or pathological target could still produce a large response through it. Generous:
+     * ZAP's alerts endpoint returns one JSON object per finding across a whole spider+ascan run,
+     * legitimately larger than a single API call's typical payload elsewhere in this codebase.
+     */
+    private static final int MAX_RESPONSE_BYTES = 10_000_000;
 
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -195,11 +209,12 @@ public class ZapScanRunner {
                 .GET()
                 .build();
         try {
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() != 200) {
+                response.body().close();
                 throw new ScanModuleException("ZAP API call to " + path + " returned HTTP " + response.statusCode());
             }
-            return response.body();
+            return SafeHttpGet.readCappedUtf8(response.body(), MAX_RESPONSE_BYTES);
         } catch (java.io.IOException e) {
             throw new ScanModuleException("failed to reach ZAP at " + baseUrl + path, e);
         } catch (InterruptedException e) {
