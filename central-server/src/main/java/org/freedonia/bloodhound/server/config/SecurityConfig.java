@@ -11,6 +11,7 @@ import org.freedonia.bloodhound.server.auth.WorkerApiKeyAuthFilter;
 import org.freedonia.bloodhound.server.auth.WorkerCredentialRepository;
 import org.freedonia.bloodhound.server.auth.sso.SamlAuthenticationSuccessHandler;
 import org.freedonia.bloodhound.server.scim.ScimTokenAuthFilter;
+import org.freedonia.bloodhound.server.scim.ScimTokenRateLimiter;
 import org.freedonia.bloodhound.server.scim.ScimTokenRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -103,6 +104,7 @@ public class SecurityConfig {
             JwtService jwtService,
             WorkerCredentialRepository workerCredentialRepository,
             ScimTokenRepository scimTokenRepository,
+            ScimTokenRateLimiter scimTokenRateLimiter,
             ApiKeyRepository apiKeyRepository,
             ApiKeyRateLimiter apiKeyRateLimiter)
             throws Exception {
@@ -175,7 +177,8 @@ public class SecurityConfig {
                         new WorkerApiKeyAuthFilter(workerCredentialRepository),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
-                        new ScimTokenAuthFilter(scimTokenRepository), UsernamePasswordAuthenticationFilter.class)
+                        new ScimTokenAuthFilter(scimTokenRepository, scimTokenRateLimiter),
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new ApiKeyAuthFilter(apiKeyRepository, apiKeyRateLimiter),
                         UsernamePasswordAuthenticationFilter.class);
