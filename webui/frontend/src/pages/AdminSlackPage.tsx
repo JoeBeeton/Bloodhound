@@ -4,7 +4,7 @@ import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
@@ -44,17 +44,6 @@ async function fetchIntegration(orgId: string): Promise<SlackIntegration | null>
   if (res.status === 204) return null;
   if (!res.ok) throw new Error("Failed to load Slack integration.");
   return res.json();
-}
-
-/**
- * The server returns a real {message} JSON body on a 400 (see SlackIntegrationController's own
- * ErrorMessageResponse javadoc) - a plain res.text() read here would previously have picked up
- * the framework's generic {timestamp,status,error,path} error body instead, showing the admin a
- * raw JSON blob rather than the specific reason their save was rejected.
- */
-async function readErrorMessage(res: Response, fallback: string): Promise<string> {
-  const body = await res.json().catch(() => undefined);
-  return (body && typeof body.message === "string" && body.message) || fallback;
 }
 
 async function saveIntegration(orgId: string, body: SaveSlackIntegrationInput): Promise<SlackIntegration> {

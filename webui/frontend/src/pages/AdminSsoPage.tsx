@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
-import { apiFetch } from "../lib/apiClient";
+import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
@@ -33,7 +33,7 @@ async function saveConfig(orgId: string, body: Omit<SsoConfig, "registrationId" 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error("Failed to save SSO configuration.");
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to save SSO configuration."));
   return res.json();
 }
 
@@ -166,6 +166,7 @@ export function AdminSsoPage() {
                 value={idpEntityId}
                 onChange={(e) => setIdpEntityId(e.target.value)}
                 required
+                maxLength={1000}
                 className="mb-3 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
               />
 
@@ -174,9 +175,11 @@ export function AdminSsoPage() {
               </label>
               <input
                 id="sso-idp-sso-url"
+                type="url"
                 value={idpSsoUrl}
                 onChange={(e) => setIdpSsoUrl(e.target.value)}
                 required
+                maxLength={2000}
                 className="mb-3 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
               />
 
@@ -189,6 +192,7 @@ export function AdminSsoPage() {
                 onChange={(e) => setIdpX509Cert(e.target.value)}
                 required
                 rows={5}
+                maxLength={32000}
                 className="mb-3 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-[10px] text-slate-200 outline-none focus:border-neon-magenta"
               />
 
@@ -202,6 +206,7 @@ export function AdminSsoPage() {
                     value={emailAttributeName}
                     onChange={(e) => setEmailAttributeName(e.target.value)}
                     required
+                    maxLength={500}
                     className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
                   />
                 </div>
@@ -213,6 +218,7 @@ export function AdminSsoPage() {
                     id="sso-display-name-attr"
                     value={displayNameAttributeName}
                     onChange={(e) => setDisplayNameAttributeName(e.target.value)}
+                    maxLength={500}
                     className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-neon-magenta"
                   />
                 </div>
@@ -235,7 +241,11 @@ export function AdminSsoPage() {
               {hasUnsavedChanges && !mutation.isPending && (
                 <p className="mt-2 font-mono text-xs text-neon-amber">Unsaved changes.</p>
               )}
-              {mutation.isError && <p className="mt-2 font-mono text-xs text-severity-critical">Failed to save.</p>}
+              {mutation.isError && (
+                <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+                  {(mutation.error as Error)?.message || "Failed to save."}
+                </p>
+              )}
             </form>
           </div>
         )}
