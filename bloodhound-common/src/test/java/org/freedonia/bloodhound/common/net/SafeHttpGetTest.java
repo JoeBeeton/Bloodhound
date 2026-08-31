@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -128,5 +129,33 @@ class SafeHttpGetTest {
         assertEquals(200, result.response().statusCode());
         assertEquals("WordPress", result.allHopHeaders().get("x-redirect-by"));
         assertEquals("yes", result.allHopHeaders().get("x-final-only"));
+    }
+
+    @Test
+    void readCappedBytes_underTheCap_returnsEverything() throws Exception {
+        byte[] data = {1, 2, 3, 4, 5};
+
+        byte[] result = SafeHttpGet.readCappedBytes(new ByteArrayInputStream(data), 100);
+
+        assertEquals(5, result.length);
+    }
+
+    @Test
+    void readCappedBytes_overTheCap_truncatesSilently_ratherThanThrowing() throws Exception {
+        byte[] data = new byte[1000];
+
+        byte[] result = SafeHttpGet.readCappedBytes(new ByteArrayInputStream(data), 10);
+
+        assertEquals(10, result.length);
+    }
+
+    @Test
+    void readCappedUtf8_overTheCap_truncatesAtTheByteBoundary() throws Exception {
+        String text = "hello world";
+
+        String result = SafeHttpGet.readCappedUtf8(
+                new ByteArrayInputStream(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)), 5);
+
+        assertEquals("hello", result);
     }
 }

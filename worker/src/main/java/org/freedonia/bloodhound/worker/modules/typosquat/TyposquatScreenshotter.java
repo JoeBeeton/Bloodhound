@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.typosquat;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -7,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +42,19 @@ public class TyposquatScreenshotter {
     private static final int VIEWPORT_HEIGHT = 600;
     private static final Duration PAGE_LOAD_TIMEOUT = Duration.ofSeconds(8);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+
+    /**
+     * A security review found doCapture used BodyHandlers.ofByteArray(), buffering the entire
+     * screenshot response into memory with no size limit - the same issue already fixed elsewhere
+     * in the worker module via SafeHttpGet, just on the binary-response side (readCappedBytes)
+     * instead of the text side (readCappedUtf8). Lower risk than the already-fixed cases - the
+     * browserless sidecar is a trusted internal Docker service, not attacker-influenced - but it's
+     * the one outbound HTTP call left in the module without the equivalent treatment, worth doing
+     * purely for consistency. Generous relative to a real PNG at this fixed 800x600 viewport
+     * (typically tens to low hundreds of KB): even an uncompressed raw bitmap at this resolution
+     * (800*600*4 bytes ~= 1.9MB) is well under this cap.
+     */
+    private static final int MAX_SCREENSHOT_BYTES = 5_000_000;
 
     // HTTP/1.1 explicitly - confirmed live that the sidecar's JSON body parser rejects a
     // perfectly valid JSON body ("Couldn't parse JSON body") when JDK HttpClient's default
@@ -99,15 +114,16 @@ public class TyposquatScreenshotter {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
                 .build();
-        HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
+            response.body().close();
             log.debug(
                     "non-200 from screenshotter for {}: status={}",
                     pageUrl,
                     response.statusCode());
             return null;
         }
-        return response.body();
+        return SafeHttpGet.readCappedBytes(response.body(), MAX_SCREENSHOT_BYTES);
     }
 
     private static String escapeJson(String value) {
