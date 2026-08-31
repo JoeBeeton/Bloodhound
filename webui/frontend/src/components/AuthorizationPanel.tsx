@@ -121,6 +121,9 @@ export function AuthorizationPanel({ targetId }: { targetId: string }) {
             onChange={(e) => setAttestationText(e.target.value)}
             placeholder='e.g. "I confirm we own/have written permission to actively scan this asset."'
             rows={2}
+            // Matches AuthorizeRequest's own @Size(max=2000) on the backend - the same cap target
+            // notes uses.
+            maxLength={2000}
             className="w-full rounded border border-neon-cyan/20 bg-void/60 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-500 focus:border-neon-cyan/60 focus:outline-none"
           />
           <button
@@ -133,7 +136,9 @@ export function AuthorizationPanel({ targetId }: { targetId: string }) {
         </div>
       )}
       {(authorizeMutation.isError || revokeMutation.isError) && (
-        <p className="mt-2 font-mono text-xs text-severity-critical">Action failed — please try again.</p>
+        <p role="alert" className="mt-2 font-mono text-xs text-severity-critical">
+          Action failed — please try again.
+        </p>
       )}
 
       {past.length > 0 && (

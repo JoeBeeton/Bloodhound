@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.target;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -104,7 +105,14 @@ public class TargetAuthorizationController {
         }
     }
 
-    public record AuthorizeRequest(@NotBlank String attestationText) {}
+    // A security review found this had no length cap at all, unlike every other free-text field
+    // capped this session (target notes @Size(max=2000), SCIM userName/displayName, MCP OAuth2
+    // client_name) - attestation_text is plain TEXT with no DB-level limit either, and is rendered
+    // back verbatim in AuthorizationPanel.tsx's authorization-history list every time an admin
+    // views this target. Same 2000-char cap target notes already uses - this is the same shape of
+    // field (free-text, admin-authored, org-scoped, rendered in the UI), so there's no reason for
+    // a different bound.
+    public record AuthorizeRequest(@NotBlank @Size(max = 2000) String attestationText) {}
 
     public record AuthorizationEntry(
             UUID id, UUID authorizedByUserId, Instant authorizedAt, String attestationText, Instant revokedAt) {
