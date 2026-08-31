@@ -69,6 +69,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # An infra/ops review found only postgres had a healthcheck - the three app services (this
+    # one, worker, webui) all already expose a working /actuator/health (confirmed live via curl
+    # from inside each running container) with nothing in Compose ever checking it. Without this,
+    # a service that deadlocks or exhausts its threads post-startup (the exact failure class this
+    # session already fixed multiple times at the code level, e.g. FtpAnonymousChecker's
+    # thread/socket leak) just sits there marked "Up" in `docker compose ps` forever - no self-
+    # healing, no operator-visible signal. start_period covers this app's own observed ~8-9s
+    # Spring Boot startup (seen repeatedly in this session's own redeploys) with headroom for a
+    # slower environment, so a container isn't marked unhealthy while still legitimately starting.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
@@ -102,7 +118,19 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     depends_on:
-      - central-server
+      central-server:
+        condition: service_healthy
+    # See central-server's own healthcheck comment above for why this exists. condition:
+    # service_healthy (not the bare service-started form this used before) also fixes a real,
+    # if narrow, startup race: previously worker could start polling for jobs before
+    # central-server's own HTTP server was actually accepting connections yet.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     environment:
       CENTRAL_SERVER_URL: ${CENTRAL_SERVER_URL}
       WORKER_API_KEY: ${WORKER_API_KEY}
@@ -249,7 +277,16 @@ services:
       context: .
       dockerfile: webui/Dockerfile
     depends_on:
-      - central-server
+      central-server:
+        condition: service_healthy
+    # See central-server's own healthcheck comment above for why this exists.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     environment:
       CENTRAL_SERVER_URL: ${CENTRAL_SERVER_URL}
     ports:
