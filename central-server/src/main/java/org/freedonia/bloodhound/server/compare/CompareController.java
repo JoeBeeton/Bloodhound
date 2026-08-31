@@ -29,6 +29,13 @@ public class CompareController {
 
     private static final int DEFAULT_LOOKBACK_DAYS = 90;
 
+    // The compare chart is a handful-of-competitors comparison by design - the UI never offers a
+    // way to select more than a few. This is defensive, not a real user-facing limit: an
+    // input-validation review found targetIds had no bound at all, so a crafted request with a
+    // very long id list would drive a proportionally long chain of sequential
+    // findByIdAndOrganization + score-history lookups per request.
+    private static final int MAX_COMPARE_TARGETS = 20;
+
     private final TargetRepository targetRepository;
     private final ScoreSnapshotRepository scoreSnapshotRepository;
 
@@ -43,6 +50,9 @@ public class CompareController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @AuthenticationPrincipal JwtPrincipal principal) {
+        if (targetIds.size() > MAX_COMPARE_TARGETS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "too many targetIds (max " + MAX_COMPARE_TARGETS + ")");
+        }
         Instant effectiveTo = to != null ? to : Instant.now();
         Instant effectiveFrom = from != null ? from : effectiveTo.minus(DEFAULT_LOOKBACK_DAYS, ChronoUnit.DAYS);
 
