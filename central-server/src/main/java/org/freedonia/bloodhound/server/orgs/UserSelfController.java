@@ -1,10 +1,14 @@
 package org.freedonia.bloodhound.server.orgs;
 
 import jakarta.validation.Valid;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
 import org.freedonia.bloodhound.server.auth.LoginRateLimitedException;
+import org.freedonia.bloodhound.server.auth.RefreshToken;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.orgs.dto.ChangePasswordRequest;
 import org.freedonia.bloodhound.server.orgs.dto.LogoutOtherSessionsRequest;
@@ -15,7 +19,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -175,6 +181,55 @@ public class UserSelfController {
                 "USER",
                 principal.userId().toString(),
                 "email=" + principal.email());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * sessionStartedAt/expiresAt only - no device name, browser, or IP, because refresh_tokens
+     * doesn't capture any of that today (see RefreshTokenRepository#listActiveForUser's own
+     * comment). Still real value over the count-only endpoint above: a user can now see roughly
+     * *how many* sessions there are and *when* each began, enough to recognize "I only ever use
+     * this from two places, why are there four rows" even without a friendly device label -
+     * capturing User-Agent/IP at issuance to make this fully self-explanatory is a natural
+     * follow-up, deliberately left out of this pass to keep it to central-server alone (that would
+     * mean threading request context through AuthenticationService#issueTokens, used by both the
+     * local-login and SAML-success paths).
+     */
+    public record SessionSummary(UUID id, Instant sessionStartedAt, Instant createdAt, Instant expiresAt) {
+        static SessionSummary from(RefreshToken t) {
+            return new SessionSummary(t.id(), t.sessionStartedAt(), t.createdAt(), t.expiresAt());
+        }
+    }
+
+    @GetMapping("/sessions")
+    public List<SessionSummary> listSessions(@AuthenticationPrincipal JwtPrincipal principal) {
+        return refreshTokenRepository.listActiveForUser(principal.userId()).stream()
+                .map(SessionSummary::from)
+                .toList();
+    }
+
+    /**
+     * Ends one specific session by id, unlike logout-others above which is all-or-nothing - lets a
+     * user recognize a single stale/unrecognized entry in the list above (by when it started) and
+     * end just that one without also signing themselves out of every other device. No special
+     * case for "is this my own current session" - there's no reliable way to tell from here which
+     * row that is (see SessionSummary's own comment), and revoking your own current session is a
+     * harmless, unsurprising action anyway: it's exactly what a normal logout already does.
+     */
+    @DeleteMapping("/sessions/{id}")
+    public ResponseEntity<Void> revokeSession(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+        int updated = refreshTokenRepository.revokeOwnedByUser(id, principal.userId());
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "USER_SESSION_REVOKED",
+                "USER",
+                principal.userId().toString(),
+                "sessionId=" + id);
         return ResponseEntity.noContent().build();
     }
 }

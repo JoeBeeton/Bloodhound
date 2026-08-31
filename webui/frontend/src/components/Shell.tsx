@@ -85,6 +85,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <NavLink to="/settings/api-keys" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
         API Keys
       </NavLink>
+      <NavLink to="/settings/sessions" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Sessions
+      </NavLink>
       {user?.role === "ADMIN" && (
         <NavLink to="/admin/users" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
           Admin

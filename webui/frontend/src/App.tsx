@@ -24,6 +24,7 @@ const SubdomainDetailPage = lazy(() =>
   import("./pages/SubdomainDetailPage").then((m) => ({ default: m.SubdomainDetailPage })),
 );
 const ApiKeysPage = lazy(() => import("./pages/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })));
+const SessionsPage = lazy(() => import("./pages/SessionsPage").then((m) => ({ default: m.SessionsPage })));
 const AttackSurfaceMapPage = lazy(() =>
   import("./pages/AttackSurfaceMapPage").then((m) => ({ default: m.AttackSurfaceMapPage })),
 );
@@ -115,6 +116,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <ApiKeysPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/settings/sessions"
+            element={
+              <RequireAuth>
+                <SessionsPage />
               </RequireAuth>
             }
           />

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../lib/apiClient";
 import { formatRetryAfter } from "../lib/authClient";
@@ -175,7 +176,15 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       </form>
 
       <div className="mt-5 border-t border-slate-800 pt-4">
-        <h3 className="mb-1 font-mono text-xs uppercase tracking-widest text-slate-400">Active sessions</h3>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <h3 className="font-mono text-xs uppercase tracking-widest text-slate-400">Active sessions</h3>
+          {/* This section is only ever "sign out everything else" - to end one specific session
+              without touching the rest, that needs to see each one, which needs its own page (see
+              SessionsPage's own comment for why this can't just be a longer list here). */}
+          <Link to="/settings/sessions" onClick={onClose} className="font-mono text-[11px] uppercase tracking-widest text-neon-cyan hover:underline">
+            Manage individually →
+          </Link>
+        </div>
         {otherSessionCount === null ? (
           <p className="font-mono text-xs text-slate-500">Loading…</p>
         ) : loggedOutOthers ? (

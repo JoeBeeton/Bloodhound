@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../lib/apiClient";
 import { ChangePasswordModal } from "./ChangePasswordModal";
@@ -15,9 +16,11 @@ function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {
 function renderModal() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <ChangePasswordModal onClose={vi.fn()} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <ChangePasswordModal onClose={vi.fn()} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
