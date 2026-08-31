@@ -84,6 +84,8 @@ public class ScimUsersController {
             @AuthenticationPrincipal ScimPrincipal principal, @RequestBody ScimUserWriteRequest request) {
         requireUserName(request.userName());
         String displayName = ScimUserResource.combineDisplayName(request.name(), request.displayName());
+        requireWithinLength(displayName, "displayName", MAX_DISPLAY_NAME_LENGTH);
+        requireWithinLength(request.externalId(), "externalId", MAX_EXTERNAL_ID_LENGTH);
         try {
             ScimUserRow created = scimUserRepository.insert(
                     principal.organizationId(), request.userName(), displayName, request.activeOrDefault(), request.externalId());
@@ -112,6 +114,8 @@ public class ScimUsersController {
         ScimUserRow before = requireUser(principal, id);
         requireUserName(request.userName());
         String displayName = ScimUserResource.combineDisplayName(request.name(), request.displayName());
+        requireWithinLength(displayName, "displayName", MAX_DISPLAY_NAME_LENGTH);
+        requireWithinLength(request.externalId(), "externalId", MAX_EXTERNAL_ID_LENGTH);
         try {
             scimUserRepository.replace(
                     principal.organizationId(), id, request.userName(), displayName, request.activeOrDefault(), request.externalId());
@@ -130,6 +134,8 @@ public class ScimUsersController {
             @AuthenticationPrincipal ScimPrincipal principal, @PathVariable UUID id, @RequestBody ScimPatchRequest request) {
         ScimUserRow current = requireUser(principal, id);
         ScimPatchPlan plan = ScimPatchProcessor.apply(request.operations(), current.displayName());
+        requireWithinLength(plan.userName(), "userName", MAX_USERNAME_LENGTH);
+        requireWithinLength(plan.displayName(), "displayName", MAX_DISPLAY_NAME_LENGTH);
         try {
             if (plan.active() != null) {
                 scimUserRepository.updateActive(principal.organizationId(), id, plan.active());
@@ -192,6 +198,31 @@ public class ScimUsersController {
     private void requireUserName(String userName) {
         if (userName == null || userName.isBlank()) {
             throw scimError(HttpStatus.BAD_REQUEST, "userName is required");
+        }
+        requireWithinLength(userName, "userName", MAX_USERNAME_LENGTH);
+    }
+
+    /**
+     * A security review found none of userName/displayName/externalId had any length cap at all,
+     * anywhere in this controller or its request DTOs - the same "attacker/misconfiguration-
+     * influenced free text stored unbounded" gap already fixed for target notes (@Size(max=2000))
+     * and the MCP OAuth2 client_name field this session. userName/displayName write straight into
+     * the shared `users` table's email/display_name columns (both plain TEXT, no DB-level limit
+     * either) - the exact same columns local-login users and SAML SSO share, so an oversized value
+     * here doesn't just bloat this one row, it flows into every other page that renders a user's
+     * email/display name (Users admin page, Audit Log, dropdowns) the same way any other user's
+     * would. Reachable by anything holding a valid SCIM bearer token - already-authenticated, but
+     * a compromised token or a misconfigured IdP integration pushing malformed provisioning
+     * payloads is a realistic way to hit this, not a purely theoretical one.
+     */
+    private static final int MAX_USERNAME_LENGTH = 320; // RFC 5321's own max total email length.
+
+    private static final int MAX_DISPLAY_NAME_LENGTH = 200; // Matches the cap MCP client_name uses.
+    private static final int MAX_EXTERNAL_ID_LENGTH = 200; // An opaque IdP-assigned id - never legitimately long.
+
+    private void requireWithinLength(String value, String fieldName, int max) {
+        if (value != null && value.length() > max) {
+            throw scimError(HttpStatus.BAD_REQUEST, fieldName + " must be " + max + " characters or fewer");
         }
     }
 
