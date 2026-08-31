@@ -7,10 +7,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRateLimiter.ApiKeyRateLimitedException;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.security.HashUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -45,9 +48,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(ApiKeyAuthFilter.class);
 
     private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyRateLimiter apiKeyRateLimiter;
 
-    public ApiKeyAuthFilter(ApiKeyRepository apiKeyRepository) {
+    public ApiKeyAuthFilter(ApiKeyRepository apiKeyRepository, ApiKeyRateLimiter apiKeyRateLimiter) {
         this.apiKeyRepository = apiKeyRepository;
+        this.apiKeyRateLimiter = apiKeyRateLimiter;
     }
 
     @Override
@@ -57,10 +62,20 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
-            apiKeyRepository.findByKeyHash(HashUtil.sha256Hex(token)).ifPresent(apiKey -> {
-                if (!apiKey.isActive(Instant.now())) {
+            Optional<ApiKey> found = apiKeyRepository.findByKeyHash(HashUtil.sha256Hex(token));
+            if (found.isPresent() && found.get().isActive(Instant.now())) {
+                ApiKey apiKey = found.get();
+                // See ApiKeyRateLimiter's own javadoc for why this exists - checked before
+                // authenticating the request, not after, so a key already over its budget is
+                // rejected without ever reaching the actual endpoint logic.
+                try {
+                    apiKeyRateLimiter.checkAllowed(apiKey.id());
+                } catch (ApiKeyRateLimitedException e) {
+                    response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+                    response.setHeader("Retry-After", String.valueOf(e.retryAfterSeconds()));
                     return;
                 }
+                apiKeyRateLimiter.recordRequest(apiKey.id());
                 var principal = new JwtPrincipal(apiKey.createdByUserId(), apiKey.organizationId(), "VIEWER", null);
                 var authorities = List.of(new SimpleGrantedAuthority("ROLE_API_KEY"));
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
@@ -74,7 +89,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 } catch (RuntimeException e) {
                     log.warn("failed to update last-used timestamp for API key {}", apiKey.id(), e);
                 }
-            });
+            }
         }
         filterChain.doFilter(request, response);
     }
