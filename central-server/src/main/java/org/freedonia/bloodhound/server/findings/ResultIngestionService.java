@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
+import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -17,10 +18,15 @@ public class ResultIngestionService {
 
     private final FindingRepository findingRepository;
     private final RuleWeightRepository ruleWeightRepository;
+    private final TargetRepository targetRepository;
 
-    public ResultIngestionService(FindingRepository findingRepository, RuleWeightRepository ruleWeightRepository) {
+    public ResultIngestionService(
+            FindingRepository findingRepository,
+            RuleWeightRepository ruleWeightRepository,
+            TargetRepository targetRepository) {
         this.findingRepository = findingRepository;
         this.ruleWeightRepository = ruleWeightRepository;
+        this.targetRepository = targetRepository;
     }
 
     public void ingest(UUID scanRunId, UUID targetId, String moduleType, List<FindingPayload> reported) {
@@ -30,7 +36,19 @@ public class ResultIngestionService {
         // before it was disabled get resolved on this target's next scan - FindingReconciler
         // treats "not in this run's reported batch" as "no longer present" regardless of why,
         // so this needs no separate cleanup logic of its own.
-        Set<String> disabledRuleIds = ruleWeightRepository.findDisabledRuleIds();
+        //
+        // Resolved here (not threaded through every one of this method's own callers -
+        // JobLifecycleService, VulnerabilityCorrelationScheduler, CompoundRiskAnalysisService) so
+        // there's exactly one place that maps "which org's disabled-rules apply" from a targetId -
+        // a security review found the org-scoping fix for this (see RuleWeightRepository's own
+        // javadoc) landing everywhere at once was less error-prone than updating each call site to
+        // separately look up and pass an organizationId through.
+        UUID organizationId = targetRepository
+                .findById(targetId)
+                .map(org.freedonia.bloodhound.server.target.Target::organizationId)
+                .orElse(null);
+        Set<String> disabledRuleIds =
+                organizationId != null ? ruleWeightRepository.findDisabledRuleIds(organizationId) : Set.of();
         List<FindingPayload> allowed =
                 disabledRuleIds.isEmpty() ? reported : reported.stream().filter(f -> !disabledRuleIds.contains(f.ruleId())).toList();
 

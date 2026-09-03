@@ -25,6 +25,7 @@ class RulesCatalogControllerTest {
     private final RulesCatalogController controller = new RulesCatalogController(jdbc, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
+    private final UUID otherOrgId = UUID.randomUUID();
     private final JwtPrincipal admin = new JwtPrincipal(UUID.randomUUID(), orgId, "ADMIN", "admin@example.com");
 
     private RulesCatalogEntry entry(String ruleId, boolean enabled) {
@@ -32,35 +33,55 @@ class RulesCatalogControllerTest {
     }
 
     @Test
-    void setEnabled_noSuchRule_notFound_neverAudited() {
-        when(jdbc.update(any(String.class), eq(false), eq("NO_SUCH_RULE"))).thenReturn(0);
+    void setEnabled_differentOrg_notFound_neverWrites() {
+        assertThatThrownBy(() -> controller.setEnabled(
+                        otherOrgId, "DNS_SPF_MISSING", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(jdbc, never())
+                .update(org.mockito.ArgumentMatchers.contains("org_rule_overrides"), any(), any(), any(Boolean.class));
+    }
 
-        assertThatThrownBy(() -> controller.setEnabled("NO_SUCH_RULE", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin))
+    @Test
+    void setEnabled_noSuchRule_notFound_neverAudited() {
+        when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq("NO_SUCH_RULE"))).thenReturn(0);
+
+        assertThatThrownBy(() -> controller.setEnabled(
+                        orgId, "NO_SUCH_RULE", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin))
                 .isInstanceOf(ResponseStatusException.class);
         verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
-    void setEnabled_disablingARule_audited() {
-        when(jdbc.update(any(String.class), eq(false), eq("DNS_SPF_MISSING"))).thenReturn(1);
-        when(jdbc.queryForObject(any(String.class), any(RowMapper.class), eq("DNS_SPF_MISSING")))
+    void setEnabled_disablingARule_writesAnOrgScopedOverride_notTheGlobalCatalogRow_audited() {
+        when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq("DNS_SPF_MISSING"))).thenReturn(1);
+        when(jdbc.queryForObject(any(String.class), any(RowMapper.class), eq(orgId), eq("DNS_SPF_MISSING")))
                 .thenReturn(entry("DNS_SPF_MISSING", false));
 
-        RulesCatalogEntry result =
-                controller.setEnabled("DNS_SPF_MISSING", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin);
+        RulesCatalogEntry result = controller.setEnabled(
+                orgId, "DNS_SPF_MISSING", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin);
 
         assertThat(result.enabled()).isFalse();
+        // The write targets org_rule_overrides (a per-org overlay), never a bare UPDATE against
+        // rules_catalog itself - that global-write shape is exactly the cross-tenant gap this
+        // fixes (see the class javadoc).
+        verify(jdbc)
+                .update(
+                        org.mockito.ArgumentMatchers.contains("INSERT INTO org_rule_overrides"),
+                        eq(orgId),
+                        eq("DNS_SPF_MISSING"),
+                        eq(false));
+        verify(jdbc, never()).update(org.mockito.ArgumentMatchers.contains("UPDATE rules_catalog"), any(), any());
         verify(auditLogRepository)
                 .record(orgId, admin.userId(), admin.email(), "RULE_DISABLED", "RULE", "DNS_SPF_MISSING", null);
     }
 
     @Test
     void setEnabled_enablingARule_auditedWithEnabledAction() {
-        when(jdbc.update(any(String.class), eq(true), eq("DNS_SPF_MISSING"))).thenReturn(1);
-        when(jdbc.queryForObject(any(String.class), any(RowMapper.class), eq("DNS_SPF_MISSING")))
+        when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq("DNS_SPF_MISSING"))).thenReturn(1);
+        when(jdbc.queryForObject(any(String.class), any(RowMapper.class), eq(orgId), eq("DNS_SPF_MISSING")))
                 .thenReturn(entry("DNS_SPF_MISSING", true));
 
-        controller.setEnabled("DNS_SPF_MISSING", new RulesCatalogController.UpdateRuleEnabledRequest(true), admin);
+        controller.setEnabled(orgId, "DNS_SPF_MISSING", new RulesCatalogController.UpdateRuleEnabledRequest(true), admin);
 
         verify(auditLogRepository)
                 .record(orgId, admin.userId(), admin.email(), "RULE_ENABLED", "RULE", "DNS_SPF_MISSING", null);

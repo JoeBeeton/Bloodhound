@@ -8,11 +8,15 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.scoring.RuleWeightRepository;
+import org.freedonia.bloodhound.server.target.Target;
+import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
@@ -21,10 +25,13 @@ class ResultIngestionServiceTest {
 
     private final FindingRepository repository = mock(FindingRepository.class);
     private final RuleWeightRepository ruleWeightRepository = mock(RuleWeightRepository.class);
-    private final ResultIngestionService service = new ResultIngestionService(repository, ruleWeightRepository);
+    private final TargetRepository targetRepository = mock(TargetRepository.class);
+    private final ResultIngestionService service =
+            new ResultIngestionService(repository, ruleWeightRepository, targetRepository);
 
     private final UUID scanRunId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
+    private final UUID organizationId = UUID.randomUUID();
 
     private static FindingPayload payload(String ruleId, String asset) {
         return new FindingPayload(ruleId, "HIGH", "DNS", "title", "description", asset, Map.of());
@@ -32,7 +39,11 @@ class ResultIngestionServiceTest {
 
     @BeforeEach
     void noRulesDisabledByDefault() {
-        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of());
+        when(targetRepository.findById(targetId))
+                .thenReturn(Optional.of(new Target(
+                        targetId, organizationId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true,
+                        Instant.now(), null)));
+        when(ruleWeightRepository.findDisabledRuleIds(organizationId)).thenReturn(Set.of());
     }
 
     @Test
@@ -91,7 +102,7 @@ class ResultIngestionServiceTest {
         // completely inert - returned by the API, rendered on the admin page, but never checked
         // anywhere. This is the enforcement that makes it real.
         when(repository.findOpenKeys(targetId, "DNS_POSTURE")).thenReturn(List.of());
-        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of("DNS_SPF_MISSING"));
+        when(ruleWeightRepository.findDisabledRuleIds(organizationId)).thenReturn(Set.of("DNS_SPF_MISSING"));
         FindingPayload disabled = payload("DNS_SPF_MISSING", "example.com");
         FindingPayload stillEnabled = payload("DNS_CAA_MISSING", "example.com");
 
@@ -109,12 +120,42 @@ class ResultIngestionServiceTest {
         UUID openId = UUID.randomUUID();
         when(repository.findOpenKeys(targetId, "DNS_POSTURE"))
                 .thenReturn(List.of(new OpenFindingKey(openId, "DNS_SPF_MISSING", "example.com")));
-        when(ruleWeightRepository.findDisabledRuleIds()).thenReturn(Set.of("DNS_SPF_MISSING"));
+        when(ruleWeightRepository.findDisabledRuleIds(organizationId)).thenReturn(Set.of("DNS_SPF_MISSING"));
         FindingPayload nowDisabled = payload("DNS_SPF_MISSING", "example.com");
 
         service.ingest(scanRunId, targetId, "DNS_POSTURE", List.of(nowDisabled));
 
         verify(repository).resolve(List.of(openId));
         verify(repository, times(0)).insert(eq(scanRunId), eq(targetId), eq("DNS_POSTURE"), eq(nowDisabled));
+    }
+
+    @Test
+    void disabledRuleIdsAreLookedUpForTheTargetsOwnOrganization_notGlobally() {
+        // The actual security-relevant assertion: a review found the first version of the
+        // disabled-rule filter above queried a global rules_catalog.enabled flag with no org
+        // scoping at all, so any org's admin disabling a rule affected every tenant's ingestion.
+        // This confirms the fix resolves organizationId from the target being ingested for and
+        // passes exactly that org id to the lookup - not some other org's, and not none at all.
+        when(repository.findOpenKeys(targetId, "DNS_POSTURE")).thenReturn(List.of());
+
+        service.ingest(scanRunId, targetId, "DNS_POSTURE", List.of(payload("DNS_SPF_MISSING", "example.com")));
+
+        verify(targetRepository).findById(targetId);
+        verify(ruleWeightRepository).findDisabledRuleIds(organizationId);
+    }
+
+    @Test
+    void targetNotFound_noDisabledRulesApplied_ingestStillProceeds() {
+        // Defensive fallback for a target that's somehow gone by the time ingestion runs (e.g.
+        // deleted mid-scan) - rather than fail the whole ingest or guess at an org, no rule
+        // filtering is applied and findings are reconciled as reported.
+        when(targetRepository.findById(targetId)).thenReturn(Optional.empty());
+        when(repository.findOpenKeys(targetId, "DNS_POSTURE")).thenReturn(List.of());
+        FindingPayload finding = payload("DNS_SPF_MISSING", "example.com");
+
+        service.ingest(scanRunId, targetId, "DNS_POSTURE", List.of(finding));
+
+        verify(repository).insert(scanRunId, targetId, "DNS_POSTURE", finding);
+        verify(ruleWeightRepository, org.mockito.Mockito.never()).findDisabledRuleIds(org.mockito.ArgumentMatchers.any());
     }
 }
