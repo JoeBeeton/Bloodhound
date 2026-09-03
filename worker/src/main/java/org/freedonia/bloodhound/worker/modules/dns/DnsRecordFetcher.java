@@ -1,13 +1,12 @@
 package org.freedonia.bloodhound.worker.modules.dns;
 
-import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Record;
@@ -98,14 +97,25 @@ public class DnsRecordFetcher {
         return !queryRecords(probe, Type.A).isEmpty();
     }
 
+    /**
+     * A security review found this connected via a plain, unguarded HttpClient.send() - the
+     * derived hostname ("mta-sts." + the target's apex) is not itself re-checked against
+     * SafeAddressValidator the way the apex is at target-creation time, and even if it were, DNS
+     * for this specific subdomain is independently attacker-controlled regardless of what the
+     * apex resolves to. Without a guard, this was a 443 reachability oracle into RFC1918/
+     * link-local space. SafeHttpGet.get() resolves-and-checks the host before connecting, the
+     * same guard every other outbound HTTP fetch in this codebase already uses.
+     *
+     * <p>maxRedirects 0, not some positive bound: RFC 8461 (MTA-STS) requires the policy fetch to
+     * NOT follow HTTP redirects at all - a redirected response must be treated as "no valid
+     * policy," which SafeHttpGet.get() already does for free here (a 3xx with nowhere left to go
+     * throws, caught below and treated the same as any other failed fetch), so this is both the
+     * security fix and the spec-correct behavior in one change.
+     */
     private boolean fetchesOk(String url) {
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(6))
-                    .header("User-Agent", ScanUserAgent.VALUE)
-                    .GET()
-                    .build();
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<Void> response = SafeHttpGet.get(
+                    httpClient, url, Duration.ofSeconds(6), ScanUserAgent.VALUE, HttpResponse.BodyHandlers.discarding(), 0);
             return response.statusCode() >= 200 && response.statusCode() < 300;
         } catch (Exception e) {
             return false;

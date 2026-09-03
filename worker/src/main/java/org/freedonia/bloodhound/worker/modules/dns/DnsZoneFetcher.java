@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.worker.modules.dns;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.xbill.DNS.ARecord;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Name;
@@ -47,6 +48,22 @@ public class DnsZoneFetcher {
             if (nsIp == null) {
                 // Can't reach this NS at all from here - not evidence of anything, just skip it
                 // rather than guessing at either a positive or negative finding.
+                continue;
+            }
+            // A security review found respondsAuthoritatively/attemptAxfr connected straight to
+            // nsIp with no SafeAddressValidator check at all - unlike every other outbound
+            // connection this codebase makes. ns is attacker-influenceable (it's whatever NS
+            // records the target's own DNS zone delegates to - by definition an external,
+            // untrusted answer), so a target whose zone delegates to a nameserver hostname that
+            // resolves to an internal address turns this into a real TCP/53 reachability oracle
+            // into RFC1918/link-local space, the same class of gap NsTakeoverChecker already
+            // guards against on its own, separate NS-resolution path. Treated the same as an
+            // unreachable NS above - skipped, not an error - since "the delegated nameserver
+            // isn't somewhere we're willing to connect to" isn't evidence about this zone's
+            // configuration either way.
+            try {
+                SafeAddressValidator.requireSafeIfResolvable(nsIp);
+            } catch (java.io.IOException e) {
                 continue;
             }
             boolean answersAuthoritatively = respondsAuthoritatively(hostname, nsIp);
