@@ -78,6 +78,20 @@ class McpLoginConsentPageControllerTest {
     }
 
     @Test
+    void consentPage_showsRedirectUri() {
+        // A security review found this page never showed where the authorization code would
+        // actually be sent - DCR is reachable unauthenticated, so an attacker can self-register a
+        // client named "Claude Desktop" and send a real user an authorize link for it; without
+        // this, nothing on the page would look any different from a real connection.
+        when(registeredClientRepository.findByClientId("client-1")).thenReturn(client("id-1", "Claude Desktop"));
+        var principal = new TestingAuthenticationToken("user@example.com", null);
+
+        var response = controller.consent("client-1", "mcp.read", "state-abc", principal, requestWithCsrf());
+
+        assertThat(response.getBody()).contains("https://example.com/callback");
+    }
+
+    @Test
     void consentPage_escapesAttackerControlledClientName() {
         // Dynamic Client Registration accepts an arbitrary client_name with no content
         // restriction (see ConsentRequiringRegisteredClientRepository's own length-cap comment) -

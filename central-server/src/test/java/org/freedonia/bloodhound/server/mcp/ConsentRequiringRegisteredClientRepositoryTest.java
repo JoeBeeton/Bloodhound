@@ -41,6 +41,26 @@ class ConsentRequiringRegisteredClientRepositoryTest {
     }
 
     @Test
+    void forcesProofKeyOn_regardlessOfWhatTheCallerRequested() {
+        // A security review found DCR is reachable unauthenticated: an attacker can self-register
+        // a client, name it "Claude Desktop", and send a real user an authorize link. Consent
+        // being required already surfaces this as a separate app, but without mandatory PKCE a
+        // leaked authorization code (referrer/browser history/logs) could still be redeemed by
+        // anyone who captured it, not just the party that generated the original request.
+        RegisteredClient client = client("A Client")
+                .clientSettings(org.springframework.security.oauth2.server.authorization.settings.ClientSettings
+                        .builder()
+                        .requireProofKey(false)
+                        .build())
+                .build();
+
+        repository.save(client);
+
+        RegisteredClient saved = ArgumentCaptorHelper.captureSaved(delegate);
+        assertThat(saved.getClientSettings().isRequireProofKey()).isTrue();
+    }
+
+    @Test
     void shortClientName_isStoredUnchanged() {
         repository.save(client("A Client").build());
 

@@ -157,6 +157,17 @@ public class McpLoginConsentPageController {
         String clientLabel = client != null && client.getClientName() != null
                 ? HtmlUtils.htmlEscape(client.getClientName())
                 : HtmlUtils.htmlEscape(clientId);
+        // A security review found this page didn't show redirect_uri at all - DCR is reachable
+        // unauthenticated, so an attacker can self-register a client named e.g. "Claude Desktop"
+        // and send a real user an authorize link for it; without this, nothing here would look
+        // any different from a real connection. Sourced from the registered client's own stored
+        // redirect_uris (what the /oauth2/consent redirect itself carries as query params doesn't
+        // include it) - exactly where the authorization code is actually about to be sent, which
+        // is the concrete, checkable fact a user can use to recognize a client they didn't expect.
+        String redirectUriLine = client != null && !client.getRedirectUris().isEmpty()
+                ? "<p class=\"hint\">Access will be sent to: <span class=\"client-name\" style=\"word-break:break-all;\">"
+                        + HtmlUtils.htmlEscape(String.join(", ", client.getRedirectUris())) + "</span></p>"
+                : "";
         CsrfToken csrf = csrfToken(request);
 
         StringBuilder scopeRows = new StringBuilder();
@@ -189,6 +200,7 @@ public class McpLoginConsentPageController {
                     <span class="client-name">%s</span> wants to access
                     <span class="account">%s</span>'s Bloodhound data.
                   </p>
+                  %s
                   <form method="post" action="/oauth2/authorize">
                     <input type="hidden" name="%s" value="%s">
                     <input type="hidden" name="client_id" value="%s">
@@ -205,6 +217,7 @@ public class McpLoginConsentPageController {
                                 STYLE,
                                 clientLabel,
                                 HtmlUtils.htmlEscape(principal.getName()),
+                                redirectUriLine,
                                 HtmlUtils.htmlEscape(csrf.getParameterName()),
                                 HtmlUtils.htmlEscape(csrf.getToken()),
                                 HtmlUtils.htmlEscape(clientId),
