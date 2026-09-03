@@ -32,6 +32,7 @@ class TargetControllerTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     // Real, not mocked - same reasoning ApiKeyRateLimiterTest/ApiKeyAuthFilterTest use for their
     // own sibling limiter: a simple, deterministic, no-dependency component. JUnit 5's default
@@ -46,6 +47,7 @@ class TargetControllerTest {
                 scoreSnapshotRepository,
                 scanRunRepository,
                 scanJobRepository,
+                targetAuthorizationRepository,
                 auditLogRepository,
                 targetBulkCreateRateLimiter,
                 maxTargetsPerOrg);

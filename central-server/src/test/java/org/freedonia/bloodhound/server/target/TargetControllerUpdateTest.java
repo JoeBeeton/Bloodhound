@@ -34,10 +34,11 @@ class TargetControllerUpdateTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final TargetController controller = new TargetController(
-            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository, auditLogRepository,
-            new TargetBulkCreateRateLimiter(), 100);
+            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository,
+            targetAuthorizationRepository, auditLogRepository, new TargetBulkCreateRateLimiter(), 100);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -50,6 +51,12 @@ class TargetControllerUpdateTest {
     private Target target(String notes, boolean isActive) {
         return new Target(
                 targetId, orgId, "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), isActive, Instant.now(), notes);
+    }
+
+    private Target targetOfType(String targetType, String authorizationStatus) {
+        return new Target(
+                targetId, orgId, "example.com", targetType, authorizationStatus, 3600, Instant.now(), true,
+                Instant.now(), null);
     }
 
     @Test
@@ -179,5 +186,71 @@ class TargetControllerUpdateTest {
         controller.update(targetId, new UpdateTargetRequest(null, null, null, "OWN"), admin);
 
         verify(targetRepository).updateTargetType(targetId, "OWN");
+    }
+
+    @Test
+    void update_retypedAwayFromOwnWhileAuthorized_revokesAuthorization() {
+        // A security review found retyping an OWN, Tier-2-authorized target to COMPETITOR left
+        // authorization_status untouched - "authorize as OWN, then PATCH the type" bypassed the
+        // OWN-only check TargetAuthorizationController#authorize now enforces at authorize time,
+        // since that check never runs again at retype time. This is the other half of that fix.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(targetOfType("OWN", "AUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(targetOfType("COMPETITOR", "AUTHORIZED")));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, "COMPETITOR"), admin);
+
+        verify(targetAuthorizationRepository).revokeCurrent(targetId, admin.userId());
+    }
+
+    @Test
+    void update_retypedAwayFromOwnWhileNotAuthorized_stillCallsRevoke_repositoryNoOps() {
+        // revokeCurrent no-ops safely (returns false) when there's nothing to revoke - calling it
+        // unconditionally on every non-OWN transition is simpler and no less correct than first
+        // checking whether the target happened to be authorized.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(targetOfType("OWN", "UNAUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(targetOfType("WATCHLIST", "UNAUTHORIZED")));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, "WATCHLIST"), admin);
+
+        verify(targetAuthorizationRepository).revokeCurrent(targetId, admin.userId());
+    }
+
+    @Test
+    void update_retypedButStaysOwn_doesNotRevoke() {
+        // "OWN" -> "OWN" (a redundant re-send, or some other field-only edit that happens to
+        // include the current targetType) is not a transition away from OWN at all.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(targetOfType("OWN", "AUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(targetOfType("OWN", "AUTHORIZED")));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, "OWN"), admin);
+
+        verify(targetAuthorizationRepository, never()).revokeCurrent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_retypedToOwnFromSomethingElse_doesNotRevoke() {
+        // Moving TO OWN is exactly the direction that's supposed to become eligible for Tier 2
+        // authorization, not lose it.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(targetOfType("WATCHLIST", "UNAUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(targetOfType("OWN", "UNAUTHORIZED")));
+
+        controller.update(targetId, new UpdateTargetRequest(null, null, null, "OWN"), admin);
+
+        verify(targetAuthorizationRepository, never()).revokeCurrent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void update_targetTypeOmitted_doesNotRevoke() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(targetOfType("OWN", "AUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(targetOfType("OWN", "AUTHORIZED")));
+
+        controller.update(targetId, new UpdateTargetRequest(7200, null, null, null), admin);
+
+        verify(targetAuthorizationRepository, never()).revokeCurrent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }
