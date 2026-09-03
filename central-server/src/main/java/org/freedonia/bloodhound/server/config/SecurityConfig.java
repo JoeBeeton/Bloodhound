@@ -10,6 +10,7 @@ import org.freedonia.bloodhound.server.auth.JwtService;
 import org.freedonia.bloodhound.server.auth.WorkerApiKeyAuthFilter;
 import org.freedonia.bloodhound.server.auth.WorkerCredentialRepository;
 import org.freedonia.bloodhound.server.auth.sso.SamlAuthenticationSuccessHandler;
+import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.freedonia.bloodhound.server.scim.ScimTokenAuthFilter;
 import org.freedonia.bloodhound.server.scim.ScimTokenRateLimiter;
 import org.freedonia.bloodhound.server.scim.ScimTokenRepository;
@@ -102,6 +103,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(
             HttpSecurity http,
             JwtService jwtService,
+            UserRepository userRepository,
             WorkerCredentialRepository workerCredentialRepository,
             ScimTokenRepository scimTokenRepository,
             ScimTokenRateLimiter scimTokenRateLimiter,
@@ -172,7 +174,8 @@ public class SecurityConfig {
                 // 403/404 checks (Milestone 1 never exercised a non-401 error path).
                 // Constructed directly (not a @Component) so Spring Boot's automatic
                 // servlet-filter registration doesn't also run them outside this chain.
-                .addFilterBefore(new JwtAuthenticationFilter(jwtService), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(
+                        new JwtAuthenticationFilter(jwtService, userRepository), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(
                         new WorkerApiKeyAuthFilter(workerCredentialRepository),
                         UsernamePasswordAuthenticationFilter.class)
