@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
@@ -32,9 +33,10 @@ class OrgUserControllerTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
-    private final OrgUserController controller =
-            new OrgUserController(userRepository, passwordEncoder, refreshTokenRepository, auditLogRepository);
+    private final OrgUserController controller = new OrgUserController(
+            userRepository, passwordEncoder, refreshTokenRepository, apiKeyRepository, auditLogRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();
@@ -240,6 +242,52 @@ class OrgUserControllerTest {
         assertThatThrownBy(() -> controller.update(orgId, targetUserId, new UpdateUserRequest("VIEWER", null, null), admin))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(409));
+    }
+
+    @Test
+    void update_transitionToDisabled_revokesRefreshTokensAndApiKeys() {
+        // A security review found disabling a user here revoked nothing: refresh tokens stayed
+        // valid until their next use, and API keys - which have no live status check anywhere -
+        // kept working for up to their full remaining expiry (default 90 days). An offboarded or
+        // compromised-then-disabled user kept read access via either for as long as their
+        // existing tokens/keys happened to still be valid.
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "ACTIVE");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "DISABLED")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, "DISABLED", null), admin);
+
+        verify(refreshTokenRepository).revokeAllForUser(targetUserId);
+        verify(apiKeyRepository).revokeAllForUser(targetUserId);
+    }
+
+    @Test
+    void update_redundantDisabledResend_doesNotRevokeAgain() {
+        // The user was already DISABLED - re-sending the same status is not a fresh transition,
+        // matching this same method's existing "no actual change" audit-skip reasoning just above.
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "DISABLED");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "DISABLED")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, "DISABLED", null), admin);
+
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+        verify(apiKeyRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void update_statusChangeToSomethingOtherThanDisabled_doesNotRevoke() {
+        UUID targetUserId = UUID.randomUUID();
+        User existing = user(targetUserId, orgId, "VIEWER", "DISABLED");
+        when(userRepository.findById(targetUserId)).thenReturn(Optional.of(existing));
+        when(userRepository.updateRoleAndStatus(targetUserId, "VIEWER", "ACTIVE")).thenReturn(true);
+
+        controller.update(orgId, targetUserId, new UpdateUserRequest(null, "ACTIVE", null), admin);
+
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+        verify(apiKeyRepository, never()).revokeAllForUser(any());
     }
 
     @Test

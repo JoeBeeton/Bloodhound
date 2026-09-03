@@ -92,4 +92,16 @@ public class ApiKeyRepository {
                 id,
                 organizationId);
     }
+
+    /**
+     * A security review found disabling a user revoked their refresh tokens (so their next login
+     * attempt/refresh fails) but left any API key they'd created fully working for up to its full
+     * expiry (default 90 days) - {@link ApiKey#isActive} only ever checks revocation/expiry, never
+     * the creating user's live status. Called from OrgUserController#update whenever a status
+     * change lands on DISABLED, the same moment refresh tokens already get revoked.
+     */
+    public int revokeAllForUser(UUID userId) {
+        return jdbc.update(
+                "UPDATE api_keys SET revoked_at = now() WHERE created_by_user_id = ? AND revoked_at IS NULL", userId);
+    }
 }
