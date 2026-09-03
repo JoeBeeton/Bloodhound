@@ -50,6 +50,30 @@ public class ApiProxyController {
         this.centralServerClient = centralServerClient;
     }
 
+    /**
+     * A security review found /api/v1/auth/** (login/refresh/etc.) fell into the broad
+     * /api/v1/** wildcard below, so central-server's own raw-token-returning auth endpoints were
+     * reachable through webui's own origin too - alongside, not instead of, the intended cookie-
+     * based flow at /api/auth/** (see AuthProxyController). A browser script (or Swagger's own
+     * "Try it out", also proxied by this controller for the read-only API's docs) calling
+     * /api/v1/auth/login directly got the real refresh token back in a readable JSON response
+     * body - exactly what the httpOnly-cookie design the SPA itself uses exists to avoid.
+     * Mapped ahead of the broader wildcard so it wins for any overlapping match (Spring MVC
+     * prefers the more specific pattern) and 404s instead of proxying through.
+     */
+    @RequestMapping(
+            value = "/api/v1/auth/**",
+            method = {
+                RequestMethod.GET,
+                RequestMethod.POST,
+                RequestMethod.PATCH,
+                RequestMethod.PUT,
+                RequestMethod.DELETE
+            })
+    public ResponseEntity<Void> blockDirectAuthAccess() {
+        return ResponseEntity.notFound().build();
+    }
+
     @RequestMapping(
             value = {"/api/v1/**", "/scim/v2/**"},
             method = {
