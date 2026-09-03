@@ -104,6 +104,16 @@ public class NucleiFetcher {
                 "-disable-update-check",
                 "-t", TEMPLATES_DIR,
                 "-etags", "dos,fuzz",
+                // A security review found nuclei's full template corpus includes OAST/blind-
+                // injection templates that, absent this flag, auto-provision a random subdomain on
+                // ProjectDiscovery's own public Interactsh servers (oast.pro/oast.fun/etc.) and poll
+                // it for callbacks - meaning every deep scan run against a real, possibly sensitive
+                // customer target was silently sending that target's hostname/IP association to a
+                // third party. -no-interactsh disables OAST-based detection entirely rather than
+                // pointing at a self-hosted instance (a real follow-up, but a new always-on service
+                // this stack would need to run and keep reachable from the worker - out of scope for
+                // closing the actual leak here).
+                "-no-interactsh",
                 "-timeout", "8",
                 "-rate-limit", "50",
                 "-c", "25",
