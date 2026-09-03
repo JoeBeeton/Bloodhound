@@ -4,6 +4,7 @@ import { AdminSubNav } from "../components/AdminSubNav";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
+import { useAuth } from "../lib/useAuth";
 import type { RulesCatalogEntry, Severity } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -13,8 +14,12 @@ async function fetchRulesCatalog(): Promise<RulesCatalogEntry[]> {
   return res.json();
 }
 
-async function setRuleEnabled(ruleId: string, enabled: boolean): Promise<RulesCatalogEntry> {
-  const res = await apiFetch(`/api/v1/rules-catalog/${ruleId}`, {
+/** orgId-scoped now - a security review found the old bare /api/v1/rules-catalog/{ruleId} PATCH
+ * updated a single global row with no organization scoping at all, so any org's admin toggling a
+ * rule affected every tenant. See RulesCatalogController's own javadoc for the backend half of
+ * this fix (org_rule_overrides). */
+async function setRuleEnabled(orgId: string, ruleId: string, enabled: boolean): Promise<RulesCatalogEntry> {
+  const res = await apiFetch(`/api/v1/orgs/${orgId}/rules-catalog/${ruleId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -45,12 +50,14 @@ const SEVERITY_ACCENT: Record<Severity, string> = {
 /** Every check Bloodhound runs, grouped by category - in-product documentation of the whole rules catalog built up across Milestones 3-6b. */
 export function AdminRulesCatalogPage() {
   usePageTitle("Rules Catalog");
+  const { user } = useAuth();
+  const orgId = user?.organizationId ?? "";
   const rulesQuery = useQuery({ queryKey: ["rules-catalog"], queryFn: fetchRulesCatalog });
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const queryClient = useQueryClient();
 
   const toggleMutation = useMutation({
-    mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) => setRuleEnabled(ruleId, enabled),
+    mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) => setRuleEnabled(orgId, ruleId, enabled),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["rules-catalog"] }),
   });
 

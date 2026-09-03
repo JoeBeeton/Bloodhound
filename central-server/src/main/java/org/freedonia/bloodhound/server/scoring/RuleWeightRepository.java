@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.scoring;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -45,8 +46,20 @@ public class RuleWeightRepository {
      * a module's reported findings before reconciliation, so a disabled rule's findings are never
      * persisted (and its already-open findings from before it was disabled get resolved on the
      * next scan, the same way any finding not reported by ResultIngestionService anymore does).
+     *
+     * <p>A later security review found the first version of this fix filtered by the bare global
+     * rules_catalog.enabled column with no org scoping - any org's ADMIN toggling a rule affected
+     * every tenant's ingestion, not just their own. {@code org_rule_overrides} (see its own
+     * migration) is now the effective source of truth per org: a row there for (organizationId,
+     * rule_id) overrides the catalog's shipped default; no row means the catalog default applies,
+     * same as before this table existed.
      */
-    public Set<String> findDisabledRuleIds() {
-        return Set.copyOf(jdbc.queryForList("SELECT rule_id FROM rules_catalog WHERE enabled = FALSE", String.class));
+    public Set<String> findDisabledRuleIds(UUID organizationId) {
+        return Set.copyOf(jdbc.queryForList(
+                "SELECT rc.rule_id FROM rules_catalog rc "
+                        + "LEFT JOIN org_rule_overrides oro ON oro.rule_id = rc.rule_id AND oro.organization_id = ? "
+                        + "WHERE COALESCE(oro.enabled, rc.enabled) = FALSE",
+                String.class,
+                organizationId));
     }
 }
