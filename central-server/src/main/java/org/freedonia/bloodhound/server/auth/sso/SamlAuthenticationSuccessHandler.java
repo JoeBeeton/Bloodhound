@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.saml2.provider.service.authentication.Saml2AssertionAuthentication;
 import org.springframework.security.saml2.provider.service.authentication.Saml2Authentication;
 import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticatedPrincipal;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
@@ -56,7 +57,21 @@ public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHa
             throws IOException {
         Saml2Authentication samlAuth = (Saml2Authentication) authentication;
         Saml2AuthenticatedPrincipal principal = (Saml2AuthenticatedPrincipal) samlAuth.getPrincipal();
-        String registrationId = principal.getRelyingPartyRegistrationId();
+        // A security review verifying a filter-chain-ordering fix elsewhere (McpSecurityConfig)
+        // found SSO was ALSO broken independently of that, for a second, unrelated reason: this
+        // app's Spring Boot 3->4 migration moved from OpenSaml4AuthenticationProvider to
+        // OpenSaml5AuthenticationProvider, which stopped populating registrationId onto the
+        // *principal* (DefaultSaml2AuthenticatedPrincipal.getRelyingPartyRegistrationId() always
+        // returned null in practice - confirmed live, and confirmed via the library's own
+        // bytecode that nothing ever calls its setter) and instead carries it on the actual
+        // Saml2AssertionAuthentication object OpenSaml5AuthenticationProvider now constructs.
+        // Every real SAML login has been hitting the "unknown identity provider" error branch
+        // below since that migration - never caught because the filter-chain bug meant no
+        // assertion had reached this handler at all until just now, when fixing the first bug
+        // exposed the second one sitting right behind it.
+        String registrationId = authentication instanceof Saml2AssertionAuthentication assertionAuth
+                ? assertionAuth.getRelyingPartyRegistrationId()
+                : principal.getRelyingPartyRegistrationId();
 
         // Both of these were previously thrown as an unhandled IllegalStateException - a security/
         // UX review found that meant an admin mid-way through setting up SSO (the single most

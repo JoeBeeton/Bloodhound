@@ -156,6 +156,18 @@ public class UserRepository {
                 .findFirst();
     }
 
+    /** See findOrCreateSamlUser's own javadoc for why this fallback exists. */
+    private Optional<User> findByOrgIdentitySourceEmail(UUID organizationId, String identitySource, String email) {
+        return jdbc.query(
+                        "SELECT * FROM users WHERE organization_id = ? AND identity_source = ? AND email = ?",
+                        ROW_MAPPER,
+                        organizationId,
+                        identitySource,
+                        email)
+                .stream()
+                .findFirst();
+    }
+
     /**
      * JIT provisioning for a SAML-authenticated user: find-or-create keyed on
      * (org, identity_source, external_id) - the same unique key V1__init.sql
@@ -163,14 +175,29 @@ public class UserRepository {
      * an admin promotes via the existing role-management endpoints, same as
      * any other new user. Email/display name are re-synced on every login in
      * case the IdP-side profile changed.
+     *
+     * <p>A security/reliability review found the external_id lookup alone always missed for any
+     * IdP issuing a *transient* NameID - SAML's own spec-recommended default for privacy, a
+     * fresh, deliberately unlinkable identifier on every single login (confirmed live against
+     * this app's own bundled test IdP, which defaults to exactly that format). external_id
+     * differs on every login for such an IdP, so this always took the "not found" branch past the
+     * very first login ever, and the INSERT below then permanently 500'd on
+     * uq_users_org_email for every subsequent login by the same real person. Falling back to a
+     * lookup by email (same org + identity_source trust boundary the external_id lookup already
+     * had) finds that already-provisioned account and re-links it to whatever new transient id
+     * this login carries, instead of trying to create a second, colliding row for them.
      */
     public User findOrCreateSamlUser(UUID organizationId, String externalId, String email, String displayName) {
         Optional<User> existing = findByOrgIdentitySourceExternalId(organizationId, "SAML", externalId);
+        if (existing.isEmpty()) {
+            existing = findByOrgIdentitySourceEmail(organizationId, "SAML", email);
+        }
         if (existing.isPresent()) {
             jdbc.update(
-                    "UPDATE users SET email = ?, display_name = ?, updated_at = now() WHERE id = ?",
+                    "UPDATE users SET email = ?, display_name = ?, external_id = ?, updated_at = now() WHERE id = ?",
                     email,
                     displayName,
+                    externalId,
                     existing.get().id());
             return findById(existing.get().id()).orElseThrow();
         }

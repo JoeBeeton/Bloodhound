@@ -59,15 +59,25 @@ public class McpSecurityConfig {
     @Order(-10)
     public SecurityFilterChain mcpAuthorizationServerFilterChain(
             HttpSecurity http, LoginAttemptLimiter loginAttemptLimiter) throws Exception {
-        http.securityMatcher("/oauth2/**", "/.well-known/**", "/login", "/login/**")
+        // A security review found "/login/**" here shadowed the SAML ACS endpoint
+        // ("/login/saml2/sso/{slug}", see DbRelyingPartyRegistrationRepository) - Spring's
+        // FilterChainProxy dispatches to the FIRST @Order-matching chain, not the most specific
+        // one, and this chain's @Order(-10) runs before SecurityConfig's SAML chain at @Order(1).
+        // An inbound SAML assertion POST would have hit this formLogin/CSRF-protected chain
+        // instead of saml2Login, never actually validating the assertion - likely a 403 (no CSRF
+        // token on the IdP's POST) and SSO silently broken, not merely a theoretical ordering
+        // quirk. "/login" (exact) is all this chain's own login page needs; nothing under
+        // "/login/**" belongs to it - McpLoginConsentPageController only ever serves "/login"
+        // itself, and "?error" is a query string, not a path segment, so it doesn't need a
+        // wildcard either.
+        http.securityMatcher("/oauth2/**", "/.well-known/**", "/login")
                 // formLogin's own automatic permitAll-for-the-login-page only fires for its
                 // auto-generated default page - setting loginPage("/login") below to
                 // McpLoginConsentPageController's branded one turned that off (confirmed live: an
                 // unauthenticated GET /login started 302-redirecting to itself instead of
                 // rendering). Permitting it explicitly here is the documented Spring Security
                 // approach for a custom login page and doesn't depend on that automatic behavior.
-                .authorizeHttpRequests(
-                        auth -> auth.requestMatchers("/login", "/login/**").permitAll().anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/login").permitAll().anyRequest().authenticated())
                 // Dynamic Client Registration (RFC 7591) - lets an MCP client (e.g. claude.ai's
                 // connector UI) self-register a client_id/secret without an admin pre-creating one.
                 // Reachable with zero authentication by design (see DcrRateLimiter's javadoc for
