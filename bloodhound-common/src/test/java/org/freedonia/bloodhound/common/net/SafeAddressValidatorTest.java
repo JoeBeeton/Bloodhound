@@ -111,6 +111,54 @@ class SafeAddressValidatorTest {
     }
 
     @Test
+    void ipv4CompatibleIpv6_loopback_unsafe() throws Exception {
+        // A security review found this bypassed the guard entirely - confirmed live, on this
+        // project's own JDK, that isSafeToConnect() returned true (safe!) here before the fix.
+        // Unlike IPv4-MAPPED ("::ffff:a.b.c.d", which the JDK normalizes to a 4-byte Inet4Address
+        // before this validator ever sees it), IPv4-COMPATIBLE ("::a.b.c.d", the deprecated RFC
+        // 4291 form without "ffff:") stays a genuine 16-byte Inet6Address, so isLoopbackAddress()
+        // never matches it and the IPv4-only RFC1918/CGNAT checks never run either.
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("::127.0.0.1")));
+    }
+
+    @Test
+    void ipv4CompatibleIpv6_cloudMetadata_unsafe() throws Exception {
+        // The most severe form of the same gap: a real path to IMDS credential theft on a cloud
+        // deployment via a crafted AAAA record. Confirmed live returning true (safe!) before the
+        // fix - the exact same bypass as the loopback case above, just against 169.254.169.254
+        // instead of 127.0.0.1.
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("::169.254.169.254")));
+    }
+
+    @Test
+    void ipv4CompatibleIpv6_privateRange_unsafe() throws Exception {
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("::10.0.0.1")));
+    }
+
+    @Test
+    void ipv4CompatibleIpv6_publicAddress_stillSafe() throws Exception {
+        // Confirms the unwrap-and-recurse doesn't overcorrect into rejecting a genuinely public
+        // embedded address.
+        assertTrue(SafeAddressValidator.isSafeToConnect(ip("::8.8.8.8")));
+    }
+
+    @Test
+    void nat64_embeddedPrivateAddress_unsafe() throws Exception {
+        // 64:ff9b::/96 (RFC 6052) with 10.0.0.1 embedded in the last 4 bytes.
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("64:ff9b::a00:1")));
+    }
+
+    @Test
+    void nat64_embeddedPublicAddress_stillSafe() throws Exception {
+        assertTrue(SafeAddressValidator.isSafeToConnect(ip("64:ff9b::808:808")));
+    }
+
+    @Test
+    void requireSafeIfResolvable_ipv4CompatibleMetadataLiteral_throws() {
+        assertThrows(IOException.class, () -> SafeAddressValidator.requireSafeIfResolvable("::169.254.169.254"));
+    }
+
+    @Test
     void requireSafeIfResolvable_ipv6UlaLiteral_throws() {
         assertThrows(IOException.class, () -> SafeAddressValidator.requireSafeIfResolvable("fd00::1"));
     }

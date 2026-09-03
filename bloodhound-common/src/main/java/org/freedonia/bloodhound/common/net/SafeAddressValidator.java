@@ -96,8 +96,62 @@ public final class SafeAddressValidator {
             if ((first & 0xFE) == 0xFC) {
                 return false;
             }
+            // A security review found IPv4-compatible IPv6 (the deprecated "::a.b.c.d" form, RFC
+            // 4291) and NAT64 (RFC 6052's "64:ff9b::/96") both skip every IPv4 check above
+            // entirely - the RFC1918/CGNAT/"this network" logic only runs for a 4-byte address,
+            // and neither of these is one. Confirmed live, on this project's own JDK:
+            // isSafeToConnect() returned true (safe!) for both "::127.0.0.1" and
+            // "::169.254.169.254" - the latter being the AWS/GCP/Azure cloud metadata address, a
+            // real path to IMDS credential theft on a cloud deployment via a crafted AAAA record.
+            // IPv4-MAPPED ("::ffff:a.b.c.d") needs no handling here: confirmed live that
+            // InetAddress.getByName parses that specific textual form directly into a 4-byte
+            // Inet4Address, so it's already covered by the block above and never reaches this
+            // 16-byte branch at all. Recursing into the unwrapped embedded address (rather than
+            // duplicating the IPv4 checks here) means it inherits every one of them, including any
+            // added later.
+            byte[] embeddedIPv4 = embeddedIPv4Address(bytes);
+            if (embeddedIPv4 != null) {
+                try {
+                    return isSafeToConnect(InetAddress.getByAddress(embeddedIPv4));
+                } catch (UnknownHostException e) {
+                    // getByAddress only validates the array length (4 or 16 bytes) - embeddedIPv4
+                    // is always exactly 4, so this is unreachable in practice. Fails closed anyway.
+                    return false;
+                }
+            }
         }
         return true;
+    }
+
+    /**
+     * The last 4 bytes of {@code bytes} if it's a 16-byte IPv4-compatible address ("::a.b.c.d" -
+     * the first 12 bytes all zero) or a NAT64 address ("64:ff9b::/96" - RFC 6052's well-known
+     * prefix in the first 12 bytes, embedded IPv4 in the last 4) - null otherwise.
+     */
+    private static byte[] embeddedIPv4Address(byte[] bytes) {
+        boolean allZeroPrefix = true;
+        for (int i = 0; i < 12; i++) {
+            if (bytes[i] != 0) {
+                allZeroPrefix = false;
+                break;
+            }
+        }
+        if (allZeroPrefix) {
+            return Arrays.copyOfRange(bytes, 12, 16);
+        }
+        boolean nat64Prefix = (bytes[0] & 0xFF) == 0x00
+                && (bytes[1] & 0xFF) == 0x64
+                && (bytes[2] & 0xFF) == 0xFF
+                && (bytes[3] & 0xFF) == 0x9B
+                && bytes[4] == 0
+                && bytes[5] == 0
+                && bytes[6] == 0
+                && bytes[7] == 0
+                && bytes[8] == 0
+                && bytes[9] == 0
+                && bytes[10] == 0
+                && bytes[11] == 0;
+        return nat64Prefix ? Arrays.copyOfRange(bytes, 12, 16) : null;
     }
 
     public static boolean isUnsafeToConnect(InetAddress address) {
