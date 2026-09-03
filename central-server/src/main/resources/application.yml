@@ -64,6 +64,11 @@ bloodhound:
     # DbRelyingPartyRegistrationRepository's Javadoc for the full reasoning.
     sp-base-url: ${SAML_SP_BASE_URL:http://localhost:8080}
     webui-callback-url: ${SAML_WEBUI_CALLBACK_URL:http://localhost:8090/sso/callback}
+  sso:
+    # How often SsoHandoffCodeRepository#sweepExpired deletes expired, abandoned handoff codes -
+    # see its own javadoc. The codes themselves only ever live 60 seconds, so this doesn't need to
+    # run often; matches jobqueue.reaper-interval-ms's own "periodic background cleanup" shape.
+    handoff-sweep-interval-ms: ${SSO_HANDOFF_SWEEP_INTERVAL_MS:300000}
   notifications:
     # The browser-facing app's own address, for links inside Slack messages (e.g.
     # "View in Bloodhound") - deliberately a separate property from saml.sp-base-url
