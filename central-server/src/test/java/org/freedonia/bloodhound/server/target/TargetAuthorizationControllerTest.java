@@ -35,6 +35,10 @@ class TargetAuthorizationControllerTest {
         return new Target(targetId, orgId, "example.com", "OWN", authStatus, 3600, Instant.now(), true, Instant.now(), null);
     }
 
+    private Target target(String targetType, String authStatus) {
+        return new Target(targetId, orgId, "example.com", targetType, authStatus, 3600, Instant.now(), true, Instant.now(), null);
+    }
+
     @Test
     void get_targetInAnotherOrg_notFound() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
@@ -83,6 +87,34 @@ class TargetAuthorizationControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(201);
         assertThat(response.getBody().authorizationStatus()).isEqualTo("AUTHORIZED");
         verify(authorizationRepository).authorize(targetId, admin.userId(), "I own this domain");
+    }
+
+    @Test
+    void authorize_competitorTarget_forbidden_neverWritesAuthorization() {
+        // The actual point of this test: a security review found this endpoint - the gate Tier 2
+        // active scanning checks before it will ever touch a target - never checked targetType at
+        // all, letting an ANALYST/ADMIN attest and deep-scan a COMPETITOR or WATCHLIST target
+        // (i.e. a third party) despite the README/UI both treating Tier 2 as "OWN infrastructure
+        // only."
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(target("COMPETITOR", "UNAUTHORIZED")));
+
+        assertThatThrownBy(() -> controller.authorize(
+                        targetId, new TargetAuthorizationController.AuthorizeRequest("I own this domain"), admin))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(authorizationRepository, never()).authorize(any(), any(), any());
+    }
+
+    @Test
+    void authorize_watchlistTarget_forbidden() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId))
+                .thenReturn(Optional.of(target("WATCHLIST", "UNAUTHORIZED")));
+
+        assertThatThrownBy(() -> controller.authorize(
+                        targetId, new TargetAuthorizationController.AuthorizeRequest("I own this domain"), admin))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(authorizationRepository, never()).authorize(any(), any(), any());
     }
 
     @Test

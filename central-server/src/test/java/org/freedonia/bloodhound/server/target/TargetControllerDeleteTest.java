@@ -33,10 +33,11 @@ class TargetControllerDeleteTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final TargetController controller = new TargetController(
-            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository, auditLogRepository,
-            new TargetBulkCreateRateLimiter(), 100);
+            targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository,
+            targetAuthorizationRepository, auditLogRepository, new TargetBulkCreateRateLimiter(), 100);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

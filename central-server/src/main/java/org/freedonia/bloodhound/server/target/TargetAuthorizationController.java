@@ -57,6 +57,18 @@ public class TargetAuthorizationController {
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
         Target target = requireOwnedTarget(id, principal);
+        // A security review found this - the gate Tier 2 active scanning (nuclei/naabu/zgrab2/ZAP)
+        // checks before it will ever touch a target - never actually checked targetType. The
+        // README and UI both treat Tier 2 as "only against infrastructure you attested you may
+        // attack," but nothing server-side stopped an ANALYST from adding competitor.com as
+        // COMPETITOR, authorizing it with any attestation text, and deep-scanning it - or
+        // authorizing as OWN, then PATCHing the type to COMPETITOR afterward (see TargetController
+        // #update, which now revokes any existing authorization on exactly that transition, so
+        // this check alone isn't the only place this closes).
+        if (!"OWN".equals(target.targetType())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN, "only OWN targets may be authorized for Tier 2 active scanning");
+        }
         authorizationRepository.authorize(id, principal.userId(), request.attestationText());
         // This flow already keeps its own detailed history (target_authorizations, surfaced via
         // GET above) - a security review found it wasn't also visible from the org-wide Audit Log

@@ -52,6 +52,7 @@ public class TargetController {
     private final ScoreSnapshotRepository scoreSnapshotRepository;
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
+    private final TargetAuthorizationRepository targetAuthorizationRepository;
     private final AuditLogRepository auditLogRepository;
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter;
     private final int maxTargetsPerOrg;
@@ -62,6 +63,7 @@ public class TargetController {
             ScoreSnapshotRepository scoreSnapshotRepository,
             ScanRunRepository scanRunRepository,
             ScanJobRepository scanJobRepository,
+            TargetAuthorizationRepository targetAuthorizationRepository,
             AuditLogRepository auditLogRepository,
             TargetBulkCreateRateLimiter targetBulkCreateRateLimiter,
             @Value("${bloodhound.targets.max-per-org:100}") int maxTargetsPerOrg) {
@@ -70,6 +72,7 @@ public class TargetController {
         this.scoreSnapshotRepository = scoreSnapshotRepository;
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
+        this.targetAuthorizationRepository = targetAuthorizationRepository;
         this.auditLogRepository = auditLogRepository;
         this.targetBulkCreateRateLimiter = targetBulkCreateRateLimiter;
         this.maxTargetsPerOrg = maxTargetsPerOrg;
@@ -286,6 +289,17 @@ public class TargetController {
         }
         if (request.targetType() != null) {
             targetRepository.updateTargetType(id, request.targetType());
+            // A security review found Tier 2 authorization was never revoked when a target's type
+            // changed away from OWN - "authorize as OWN, then PATCH the type to COMPETITOR"
+            // left authorization_status (and therefore deepScanNow's own AUTHORIZED check) fully
+            // intact, bypassing TargetAuthorizationController#authorize's own now-added OWN-only
+            // check entirely, since that check only ever runs at authorize time, not retype time.
+            // revokeCurrent no-ops safely if there was nothing to revoke, so this is safe to call
+            // unconditionally on every non-OWN transition, not just ones that were actually
+            // authorized.
+            if (!"OWN".equals(request.targetType()) && !request.targetType().equals(before.targetType())) {
+                targetAuthorizationRepository.revokeCurrent(id, principal.userId());
+            }
         }
         // An audit/reliability review found this endpoint - the only way "Remove"/"Restore" on
         // the Targets page pauses or resumes an entire target's scanning - recorded nothing,
