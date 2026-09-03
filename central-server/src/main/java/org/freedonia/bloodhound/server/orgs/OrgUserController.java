@@ -5,6 +5,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import jakarta.validation.Valid;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
@@ -42,16 +43,19 @@ public class OrgUserController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final ApiKeyRepository apiKeyRepository;
     private final AuditLogRepository auditLogRepository;
 
     public OrgUserController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
+            ApiKeyRepository apiKeyRepository,
             AuditLogRepository auditLogRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.apiKeyRepository = apiKeyRepository;
         this.auditLogRepository = auditLogRepository;
     }
 
@@ -155,6 +159,18 @@ public class OrgUserController {
         if (!updated) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "cannot demote or deactivate the organization's last remaining admin");
+        }
+        // A security review found disabling a user here revoked nothing at all: refresh tokens
+        // stayed valid until their next use (the ACTIVE check only runs at refresh time, see
+        // AuthenticationService#refresh) and API keys - which have no such live check anywhere,
+        // see ApiKey#isActive - kept working for up to their full remaining expiry (default 90
+        // days). An offboarded, or compromised-then-disabled, user kept read access to this org's
+        // targets/findings/scans for as long as their existing tokens/keys happened to still be
+        // valid. Only fires on an actual transition INTO DISABLED, not every redundant re-send of
+        // the same status, matching this controller's own audit-logging condition just below.
+        if ("DISABLED".equals(newStatus) && !newStatus.equals(target.status())) {
+            refreshTokenRepository.revokeAllForUser(id);
+            apiKeyRepository.revokeAllForUser(id);
         }
         if (!newRole.equals(target.role()) || !newStatus.equals(target.status())) {
             auditLogRepository.record(
