@@ -23,10 +23,38 @@ class DocumentLinkDecisionLogicTest {
     }
 
     @Test
-    void absoluteLink_keptAsIs() {
+    void absoluteLink_sameSiteSubdomain_keptAsIs() {
         String html = "<a href=\"https://cdn.example.com/report.docx\">Report</a>";
         assertThat(DocumentLinkDecisionLogic.extractDocumentUrls(HOMEPAGE, html))
                 .containsExactly("https://cdn.example.com/report.docx");
+    }
+
+    @Test
+    void absoluteLink_genuinelyThirdPartyDomain_rejected() {
+        // A security review found this had no host restriction at all: any http(s) link with a
+        // document extension, anywhere on the internet, was downloaded and parsed by PDFBox/POI
+        // on the shared worker. This is the actual regression case.
+        String html = "<a href=\"https://attacker.example/malware.pdf\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls(HOMEPAGE, html)).isEmpty();
+    }
+
+    @Test
+    void absoluteLink_lookalikeDomainWithBaseHostAsPrefix_rejected() {
+        // "example.com.evil.com" must never be confused for a legitimate subdomain of
+        // "example.com" - the dot-anchored suffix check (not a bare endsWith/startsWith) is what
+        // prevents that specific confusion.
+        String html = "<a href=\"https://example.com.evil.com/malware.pdf\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls(HOMEPAGE, html)).isEmpty();
+    }
+
+    @Test
+    void absoluteLink_parentDomainOfASubdomainTarget_kept() {
+        // The reverse subdomain relationship also counts as the same site - a page on
+        // "blog.example.com" linking back to its own apex "example.com" is the same legitimate
+        // pattern in the other direction.
+        String html = "<a href=\"https://example.com/handbook.pdf\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls("https://blog.example.com/", html))
+                .containsExactly("https://example.com/handbook.pdf");
     }
 
     @Test

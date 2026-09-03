@@ -38,6 +38,7 @@ public final class DocumentLinkDecisionLogic {
         } catch (Exception e) {
             return List.of();
         }
+        String baseHost = base.getHost();
 
         Set<String> results = new LinkedHashSet<>();
         Matcher matcher = HREF_PATTERN.matcher(html);
@@ -52,12 +53,45 @@ public final class DocumentLinkDecisionLogic {
                 if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
                     continue;
                 }
+                // A security review found this had no host restriction at all: any http(s) link
+                // with a document extension, anywhere on the internet, got downloaded (up to
+                // MAX_DOCUMENTS_PER_HOST) and parsed by PDFBox/POI on the shared worker. The fetch
+                // itself is already SSRF-gated elsewhere, so this isn't internal SSRF - it's an
+                // untrusted-document-parser attack surface plus a bounded open fetch of arbitrary
+                // third-party URLs, both worth closing. isSameSite (not exact-host-equals) so a
+                // target's own CDN subdomain still works - a homepage linking its own documents
+                // from a different subdomain of the same site is the common, legitimate case this
+                // feature exists for; a genuinely unrelated third-party domain is not.
+                if (!isSameSite(resolved.getHost(), baseHost)) {
+                    continue;
+                }
                 results.add(resolved.toString());
             } catch (Exception e) {
                 // Malformed href attribute - skip it, not worth failing the whole page over.
             }
         }
         return List.copyOf(results);
+    }
+
+    /**
+     * True if one host is the other, or a subdomain of the other - checked as a proper
+     * dot-anchored suffix in both directions (never a bare {@code endsWith} on the unanchored
+     * string), so "example.com.evil.com" is correctly rejected as a link host for base host
+     * "example.com" rather than confused for a legitimate subdomain. Deliberately not a full
+     * eTLD+1/public-suffix comparison - that needs a maintained public suffix list this codebase
+     * doesn't otherwise depend on; this dot-anchored subdomain check covers the actual case this
+     * exists for (a homepage linking its own CDN/docs subdomain) without that dependency, at the
+     * cost of not treating two independent subdomains of a shared multi-part public suffix (e.g.
+     * "a.example.co.uk" and "b.example.co.uk") as the same site - a narrower, not broader, result
+     * than the eTLD+1 comparison would give.
+     */
+    private static boolean isSameSite(String linkHost, String baseHost) {
+        if (linkHost == null || baseHost == null) {
+            return false;
+        }
+        String a = linkHost.toLowerCase(Locale.ROOT);
+        String b = baseHost.toLowerCase(Locale.ROOT);
+        return a.equals(b) || a.endsWith("." + b) || b.endsWith("." + a);
     }
 
     private static String extensionOf(String href) {
