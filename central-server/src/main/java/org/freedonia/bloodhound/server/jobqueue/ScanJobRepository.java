@@ -95,6 +95,34 @@ public class ScanJobRepository {
                 .findFirst();
     }
 
+    /**
+     * The authorization check for {@link org.freedonia.bloodhound.server.jobqueue.JobLifecycleService#result}
+     * - a security review found that endpoint fetched the job via the plain, ownership-blind
+     * {@link #findById} and ingested findings/subdomains/fingerprints against its targetId BEFORE
+     * ever checking that the caller actually held this job's lease (the {@code claimed_by}/status
+     * check only happened at the very end, via {@link #complete}, by which point the ingest had
+     * already run). Since {@code workerId} is caller-supplied and every worker shares one
+     * {@code WORKER_API_KEY}, that meant anyone holding the key could ingest (including an empty
+     * findings list, which {@code FindingReconciler} treats as "resolve every currently-open
+     * finding") against ANY org's job by id, real claim or not.
+     *
+     * <p>{@code FOR UPDATE} - not a plain SELECT - so the row stays locked for the rest of the
+     * caller's transaction: nothing else (concurrently, the lease reaper reassigning an
+     * expired lease) can change this job's claimed_by/status between this check and the
+     * eventual {@link #complete} call, closing the narrower timing race a check-then-later-write
+     * without a held lock would still leave open.
+     */
+    public Optional<ScanJob> findByIdOwnedByForUpdate(UUID id, String workerId) {
+        return jdbc.query(
+                        "SELECT * FROM scan_jobs WHERE id = ? AND claimed_by = ? "
+                                + "AND status IN ('CLAIMED', 'RUNNING') FOR UPDATE",
+                        ROW_MAPPER,
+                        id,
+                        workerId)
+                .stream()
+                .findFirst();
+    }
+
     public List<ScanJob> findByScanRunId(UUID scanRunId) {
         return jdbc.query("SELECT * FROM scan_jobs WHERE scan_run_id = ? ORDER BY created_at", ROW_MAPPER, scanRunId);
     }

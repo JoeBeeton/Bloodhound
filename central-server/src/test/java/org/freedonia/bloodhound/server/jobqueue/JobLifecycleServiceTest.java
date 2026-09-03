@@ -77,15 +77,33 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_jobNotFound_throws404() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.empty());
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of(), List.of()))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
+    void result_notOwnedByThisWorker_throws404_neverIngests() {
+        // The vulnerability this test guards: a security review found result() used to fetch the
+        // job via the plain, ownership-blind findById and ingest against its targetId BEFORE ever
+        // checking that workerId actually held this job's lease - so anyone holding the one
+        // shared WORKER_API_KEY could ingest (including an empty findings list, which
+        // FindingReconciler treats as "resolve every currently-open finding") against ANY org's
+        // job by id, real claim or not. findByIdOwnedByForUpdate returning empty here is exactly
+        // what happens for a job that exists but this workerId never claimed (or claimed by a
+        // different worker, or already terminal) - ingest must never run in that case.
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(findingPayload()), Map.of(), List.of()))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(resultIngestionService, never()).ingest(any(), any(), any(), any());
+        verify(scanJobRepository, never()).complete(any(), any(), any());
+    }
+
+    @Test
     void result_subdomainEnumModule_routedThroughSubdomainIngestion() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("SUBDOMAIN_ENUM")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("SUBDOMAIN_ENUM")));
         List<FindingPayload> synthesized = List.of();
         when(subdomainIngestionService.ingestAndSynthesizeFindings(eq(targetId), any(), any())).thenReturn(synthesized);
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
@@ -99,7 +117,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_whoisModule_looksUpTargetHostname_routedThroughWhoisIngestion() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("WHOIS")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("WHOIS")));
         Target target = new Target(targetId, UUID.randomUUID(), "example.com", "OWN", "UNAUTHORIZED", 3600, Instant.now(), true, Instant.now(), null);
         when(targetRepository.findById(targetId)).thenReturn(Optional.of(target));
         when(whoisIngestionService.ingestAndSynthesizeFindings(eq(targetId), eq("example.com"), any(), any()))
@@ -113,7 +131,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_ctCheckModule_handledByCtCheckService_producesNoFindingsOfItsOwn() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("CT_CHECK")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("CT_CHECK")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         Map<String, Object> rawMetadata = Map.of("hostnames", List.of("new.example.com"));
 
@@ -125,7 +143,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_techFingerprintModule_ingestedViaFingerprintService() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("TECH_FINGERPRINT")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("TECH_FINGERPRINT")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         Map<String, Object> rawMetadata = Map.of("technologies", List.of());
 
@@ -136,7 +154,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_typosquatModule_ingestedForPersistence_butFindingsListPassedThroughUnmodified() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("TYPOSQUAT_MONITOR")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("TYPOSQUAT_MONITOR")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         FindingPayload payload = findingPayload();
         Map<String, Object> rawMetadata = Map.of("candidates", List.of());
@@ -149,7 +167,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_ordinaryModule_findingsPassedThroughUnmodified() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(true);
         FindingPayload payload = findingPayload();
 
@@ -164,7 +182,7 @@ class JobLifecycleServiceTest {
 
     @Test
     void result_success_completesAttemptAndClearsWorkerJobAndChecksRunCompletion() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.complete(jobId, workerId, "meta")).thenReturn(true);
 
         service.result(jobId, workerId, "meta", List.of(), Map.of(), List.of("line one", "line two"));
@@ -175,8 +193,13 @@ class JobLifecycleServiceTest {
     }
 
     @Test
-    void result_completeFails_stillThrows404_evenThoughIngestionAlreadyHappened() {
-        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
+    void result_ownershipVerifiedButCompleteStillFails_throws404_doesNotMarkAttemptSuccess() {
+        // Defensive path only, not the vulnerability the ownership check above closes: with the
+        // row locked (FOR UPDATE) from findByIdOwnedByForUpdate through to complete() in the same
+        // transaction, nothing else can change claimed_by/status in between in real usage - this
+        // just confirms the code still degrades safely (404, no SUCCESS attempt) if complete()
+        // ever returns false anyway.
+        when(scanJobRepository.findByIdOwnedByForUpdate(jobId, workerId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
         when(scanJobRepository.complete(jobId, workerId, null)).thenReturn(false);
 
         assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(), Map.of(), List.of()))
