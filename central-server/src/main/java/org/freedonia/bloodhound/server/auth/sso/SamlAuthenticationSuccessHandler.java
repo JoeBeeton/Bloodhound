@@ -6,8 +6,6 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
-import org.freedonia.bloodhound.server.auth.AuthResult;
-import org.freedonia.bloodhound.server.auth.AuthenticationService;
 import org.freedonia.bloodhound.server.orgs.User;
 import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.slf4j.Logger;
@@ -21,12 +19,12 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.stereotype.Component;
 
 /**
- * Runs once a SAML assertion has been validated. JIT-provisions the user,
- * mints real tokens via the same AuthenticationService.issueTokens local
- * login uses, then redirects the browser to webui with only a short-lived
- * one-time handoff code (see SsoHandoffCodeRepository) - never the real
- * tokens themselves, which would otherwise land in browser history and
- * server access logs.
+ * Runs once a SAML assertion has been validated. JIT-provisions the user, then redirects the
+ * browser to webui with only a short-lived one-time handoff code (see SsoHandoffCodeRepository)
+ * - never real tokens themselves, which would otherwise land in browser history and server
+ * access logs. Real tokens are minted at exchange time (SsoExchangeController), not here - see
+ * SsoHandoffCodeRepository's own javadoc for why this class used to mint them early and no
+ * longer does.
  */
 @Component
 public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
@@ -35,19 +33,16 @@ public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHa
 
     private final IdentityProviderRepository identityProviderRepository;
     private final UserRepository userRepository;
-    private final AuthenticationService authenticationService;
     private final SsoHandoffCodeRepository handoffCodeRepository;
     private final String webuiCallbackUrl;
 
     public SamlAuthenticationSuccessHandler(
             IdentityProviderRepository identityProviderRepository,
             UserRepository userRepository,
-            AuthenticationService authenticationService,
             SsoHandoffCodeRepository handoffCodeRepository,
             @Value("${bloodhound.saml.webui-callback-url}") String webuiCallbackUrl) {
         this.identityProviderRepository = identityProviderRepository;
         this.userRepository = userRepository;
-        this.authenticationService = authenticationService;
         this.handoffCodeRepository = handoffCodeRepository;
         this.webuiCallbackUrl = webuiCallbackUrl;
     }
@@ -115,8 +110,11 @@ public class SamlAuthenticationSuccessHandler implements AuthenticationSuccessHa
         }
         userRepository.touchLastLogin(user.id());
 
-        AuthResult tokens = authenticationService.issueTokens(user);
-        String code = handoffCodeRepository.create(user.id(), tokens.accessToken(), tokens.expiresIn(), tokens.refreshToken());
+        // A security review found this used to mint real tokens here and store them in
+        // sso_handoff_codes in plaintext until webui called exchange - see that repository's own
+        // javadoc. Tokens are minted only at exchange time now (SsoExchangeController); this just
+        // records which user the eventual exchange is for.
+        String code = handoffCodeRepository.create(user.id());
 
         response.sendRedirect(webuiCallbackUrl + "?code=" + code);
     }

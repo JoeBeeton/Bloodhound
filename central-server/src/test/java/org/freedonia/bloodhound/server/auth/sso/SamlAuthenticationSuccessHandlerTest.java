@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.freedonia.bloodhound.server.auth.AuthenticationService;
 import org.freedonia.bloodhound.server.orgs.User;
 import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -29,14 +28,9 @@ class SamlAuthenticationSuccessHandlerTest {
 
     private final IdentityProviderRepository identityProviderRepository = mock(IdentityProviderRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
-    private final AuthenticationService authenticationService = mock(AuthenticationService.class);
     private final SsoHandoffCodeRepository handoffCodeRepository = mock(SsoHandoffCodeRepository.class);
     private final SamlAuthenticationSuccessHandler handler = new SamlAuthenticationSuccessHandler(
-            identityProviderRepository,
-            userRepository,
-            authenticationService,
-            handoffCodeRepository,
-            "http://localhost:8090/sso/callback");
+            identityProviderRepository, userRepository, handoffCodeRepository, "http://localhost:8090/sso/callback");
 
     private IdentityProvider idp(String emailAttribute) {
         return new IdentityProvider(
@@ -101,7 +95,7 @@ class SamlAuthenticationSuccessHandlerTest {
     }
 
     @Test
-    void unknownRegistrationId_redirectsWithAnErrorParam_neverThrows_neverIssuesTokens() throws Exception {
+    void unknownRegistrationId_redirectsWithAnErrorParam_neverThrows_neverCreatesHandoffCode() throws Exception {
         when(identityProviderRepository.findByRegistrationId("stale-idp")).thenReturn(Optional.empty());
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -109,7 +103,7 @@ class SamlAuthenticationSuccessHandlerTest {
 
         assertThat(response.getRedirectedUrl()).startsWith("http://localhost:8090/sso/callback?error=");
         assertThat(decodedErrorParam(response)).contains("unrecognized identity provider");
-        verify(authenticationService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
+        verify(handoffCodeRepository, never()).create(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -125,7 +119,7 @@ class SamlAuthenticationSuccessHandlerTest {
 
         assertThat(response.getRedirectedUrl()).startsWith("http://localhost:8090/sso/callback?error=");
         assertThat(decodedErrorParam(response)).contains("missing the configured email attribute");
-        verify(authenticationService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
+        verify(handoffCodeRepository, never()).create(org.mockito.ArgumentMatchers.any());
     }
 
     private static String decodedErrorParam(MockHttpServletResponse response) {
