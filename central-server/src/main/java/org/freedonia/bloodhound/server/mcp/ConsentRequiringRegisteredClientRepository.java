@@ -31,6 +31,16 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
  * granting it here is exactly the RFC's "server decides" step, not a broadening of what any
  * client can get - a client that arrives with a non-empty scope set (a manually pre-registered
  * one, if this app ever adds that path) is left alone.
+ *
+ * <p>Also forces {@code requireProofKey(true)} (mandatory PKCE) on every client. A security
+ * review found DCR is reachable unauthenticated (rate-limited, see DcrRateLimiter, but not
+ * gated on identity) - an attacker can self-register a client named e.g. "Claude Desktop" and
+ * send a real user an authorize link for it. Consent being required (see above) already surfaces
+ * that this is a separate app the user is granting access to, but without mandatory PKCE, a code
+ * that leaked via referrer/browser history/logs after the user approved could still be redeemed
+ * by anyone who captured it, not just the party that generated the original request. Forcing it
+ * here, at the same save() choke point, closes it for every registration path regardless of
+ * what scope/PKCE settings the request itself specified.
  */
 public class ConsentRequiringRegisteredClientRepository implements RegisteredClientRepository {
 
@@ -55,6 +65,7 @@ public class ConsentRequiringRegisteredClientRepository implements RegisteredCli
         ClientSettings.Builder settings = ClientSettings.withSettings(
                 registeredClient.getClientSettings().getSettings());
         settings.requireAuthorizationConsent(true);
+        settings.requireProofKey(true);
         RegisteredClient.Builder builder = RegisteredClient.from(registeredClient)
                 .clientSettings(settings.build())
                 .clientName(cap(registeredClient.getClientName()));
