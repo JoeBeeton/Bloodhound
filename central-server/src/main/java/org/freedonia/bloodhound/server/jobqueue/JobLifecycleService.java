@@ -15,6 +15,7 @@ import org.freedonia.bloodhound.server.whois.WhoisIngestionService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Heartbeat/result/fail reporting for a job a worker currently holds the lease on. */
@@ -78,6 +79,19 @@ public class JobLifecycleService {
         workerRepository.heartbeat(workerId);
     }
 
+    /**
+     * A security review found this previously fetched the job via the plain, ownership-blind
+     * {@code findById} and ingested its findings/subdomains/fingerprints before ever checking
+     * that {@code workerId} actually held this job's lease - the claimed_by/status check only
+     * happened at the very end, via {@code complete}, by which point the ingest had already run.
+     * Since workerId is caller-supplied and every worker shares one WORKER_API_KEY, anyone
+     * holding the key could ingest (including an empty findings list, which FindingReconciler
+     * treats as "resolve every currently-open finding") against ANY org's job by id, real claim
+     * or not. {@code @Transactional} + {@link ScanJobRepository#findByIdOwnedByForUpdate} moves
+     * the ownership check to the very first thing that happens, and holds the row lock for the
+     * rest of this method so nothing else can change the job's claim state mid-ingest.
+     */
+    @Transactional
     public void result(
             UUID jobId,
             String workerId,
@@ -85,7 +99,9 @@ public class JobLifecycleService {
             List<FindingPayload> findings,
             Map<String, Object> rawMetadata,
             List<String> logLines) {
-        ScanJob job = scanJobRepository.findById(jobId).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
+        ScanJob job = scanJobRepository
+                .findByIdOwnedByForUpdate(jobId, workerId)
+                .orElseThrow(JobLifecycleService::notFoundOrNotOwned);
         // SUBDOMAIN_ENUM and WHOIS are the module types whose results need
         // more than the generic findings-reconciliation path: each carries
         // rawMetadata that only makes sense against this target's history
