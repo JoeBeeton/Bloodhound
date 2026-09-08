@@ -37,8 +37,11 @@ does so under a two-tier scanning model that keeps that legal:
 ## What it actually checks
 
 - **Subdomain hygiene** — continuous discovery (certificate transparency +
-  passive DNS sources), dangling-CNAME/subdomain-takeover detection,
-  stale/non-resolving subdomains.
+  passive DNS sources), dangling-CNAME and dangling-NS-delegation
+  subdomain-takeover detection (a subdomain independently delegated to a
+  cloud DNS provider whose hosted zone has since been deprovisioned —
+  claimable by anyone who notices, not just a single hostname's HTTP
+  response like a CNAME takeover), stale/non-resolving subdomains.
 - **DNS posture** — SPF/DMARC/DKIM, CAA, DNSSEC, MX/NS delegation health,
   zone-transfer exposure.
 - **TLS/certificates** — expiry, weak protocols/ciphers, HSTS, and
@@ -63,8 +66,9 @@ does so under a two-tier scanning model that keeps that legal:
 - **CVE correlation** — fingerprinted software versions cross-referenced
   against NVD, OSV, and CISA's Known Exploited Vulnerabilities catalog.
 - **Deep scan (Tier 2)** — full 1–65535 port discovery, best-effort service
-  identification, and OWASP ZAP active scanning (SQLi/XSS/path-traversal
-  probes) for authorized targets.
+  identification, cloud storage bucket brute-forcing (curated wordlists,
+  resumable across runs), and OWASP ZAP active scanning (SQLi/XSS/path-
+  traversal probes) for authorized targets.
 
 ![Open findings — severity, category, evidence, and score impact per finding](docs/screenshots/target-detail-findings.png)
 
@@ -76,6 +80,23 @@ findings diff (new / resolved / unchanged / severity-changed).
 ![Target detail — category score breakdown, trend chart, and Tier 2 authorization](docs/screenshots/target-detail-score.png)
 
 ![Compare — own domains plotted against competitor/watchlist targets on the same chart](docs/screenshots/compare.png)
+
+Findings across the whole org are also browsable two ways: a severity-ranked,
+filterable list for triage, and a **Live Feed** — a purely chronological,
+live-polling view (an activity histogram of when things spiked, day-by-day
+drill-down, and a non-disruptive "N new findings" banner rather than
+silently reflowing the list while you're reading) for "what's happening right
+now" instead of "what's most urgent".
+
+![Live Feed — chronological activity histogram and live-polling findings stream across the org](docs/screenshots/live-feed.png)
+
+Every tracked target, its discovered subdomains, and the platform's own
+components (central-server, Postgres, webui, live workers) also render as a
+force-directed **Attack Surface Map** — a single visual answer to "what does
+our footprint actually look like right now", with the currently-scanning
+target highlighted live.
+
+![Attack Surface Map — a force-directed graph of every tracked target, its subdomains, and the platform itself](docs/screenshots/map.png)
 
 ## Architecture
 
@@ -101,6 +122,27 @@ workers scale horizontally with no separate message broker.
 
 ![Scans — live worker status and scan history across every target](docs/screenshots/scans.png)
 
+Enterprise identity is handled the same way any of this app's other
+auth mechanisms are — a distinct, isolated path rather than a bolt-on:
+SAML SSO (any IdP, per-org configuration, admin-managed) for user login,
+and SCIM 2.0 for automated user provisioning/deprovisioning from an
+identity provider. Every admin action across the app — rule changes, user
+role/status changes, API key and SSO/SCIM config lifecycle — is written to
+a searchable, exportable audit log.
+
+## AI agent access (MCP)
+
+Bloodhound exposes a read-only [Model Context Protocol](https://modelcontextprotocol.io/)
+server so an AI agent (Claude, or any other MCP-capable client) can query an
+org's targets, findings, subdomains, and scan runs directly — the same
+data the read-only external API exposes, reachable by an agent instead of
+a script. Authentication is OAuth2 with Dynamic Client Registration
+(RFC 7591): a client self-registers and a human approves it via a normal
+consent screen, no admin has to hand-provision a client ID beforehand.
+Two independent kill switches (org-wide, and per-user) let an admin cut
+off MCP access instantly, and the admin MCP page lists every currently-
+connected client with a one-click revoke.
+
 ## Deploying it
 
 **Prerequisites:** Docker and Docker Compose.
@@ -114,15 +156,16 @@ cp .env.example .env
 Edit `.env` and generate real values for every `<generate-with-...>`
 placeholder (the file tells you the exact command for each, e.g.
 `openssl rand -base64 48`). Central-server refuses to start if
-`JWT_SIGNING_KEY` is missing or too short, and warns loudly on startup if
-any secret is still an example placeholder — don't ignore that warning in
-anything reachable beyond your own machine.
+`JWT_SIGNING_KEY` is missing or too short, and warns loudly — on startup,
+and as a banner in the UI itself for any admin who logs in — if any secret
+is still an example placeholder. Don't ignore that warning in anything
+reachable beyond your own machine.
 
 ```bash
 docker compose up -d --build
 ```
 
-This brings up Postgres, `central-server`, one `worker`, `webui`, and the
+This brings up Postgres, `central-server`, three `worker` replicas, `webui`, and the
 Tier 2 sidecars (`zap`, `screenshotter`). Postgres's schema is created
 automatically on first boot (Flyway), along with a bootstrap organization
 and admin user from the `BOOTSTRAP_*` variables in `.env`. The dev/test
