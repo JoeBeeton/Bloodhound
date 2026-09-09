@@ -14,12 +14,17 @@ async function fetchSecurityStatus(): Promise<SecurityStatus> {
  * values - meaning anyone who has ever seen this repository's .env.example can forge login tokens
  * or authenticate as a worker - previously only ever surfaced as a startup WARN in server logs. An
  * admin using the UI had no way to discover this short-of reading logs they might never look at.
- * ADMIN-only (matches the backend endpoint's own gate) and deliberately not dismissible - the risk
- * doesn't go away just because someone closed a banner once, and it stops showing entirely the
- * moment the actual misconfiguration is fixed.
+ * ADMIN-only (matches the backend endpoint's own gate).
+ *
+ * <p>Dismissible for the current login, but not permanently: `securityBannerDismissed` lives in
+ * authBridge's module-level state (see its own doc comment), not local component state - every
+ * page wraps its own fresh &lt;Shell&gt;, so local state here reset on every in-app navigation, not
+ * just at login, which is the exact bug a live report caught. The risk doesn't go away just
+ * because someone closed the banner once, and it still stops showing entirely the moment the
+ * actual misconfiguration is fixed (the two booleans below both go false).
  */
 export function SecurityStatusBanner() {
-  const { user } = useAuth();
+  const { user, securityBannerDismissed, dismissSecurityBanner } = useAuth();
   const query = useQuery({
     queryKey: ["admin-security-status"],
     queryFn: fetchSecurityStatus,
@@ -27,7 +32,7 @@ export function SecurityStatusBanner() {
     staleTime: 60_000,
   });
 
-  if (user?.role !== "ADMIN" || !query.data) {
+  if (user?.role !== "ADMIN" || !query.data || securityBannerDismissed) {
     return null;
   }
 
@@ -38,9 +43,20 @@ export function SecurityStatusBanner() {
 
   return (
     <div className="mx-6 mb-2 rounded-lg border border-severity-critical/50 bg-severity-critical/10 px-4 py-3">
-      <p className="font-mono text-xs font-bold uppercase tracking-widest text-severity-critical">
-        ⚠ Security: placeholder secret{jwtSigningKeyIsPlaceholder && workerApiKeyIsPlaceholder ? "s" : ""} still in use
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="font-mono text-xs font-bold uppercase tracking-widest text-severity-critical">
+          ⚠ Security: placeholder secret{jwtSigningKeyIsPlaceholder && workerApiKeyIsPlaceholder ? "s" : ""} still in
+          use
+        </p>
+        <button
+          type="button"
+          aria-label="Dismiss security warning"
+          onClick={dismissSecurityBanner}
+          className="shrink-0 font-mono text-xs text-severity-critical/70 transition hover:text-severity-critical"
+        >
+          ✕
+        </button>
+      </div>
       <ul className="mt-1 list-inside list-disc font-mono text-xs text-slate-300">
         {jwtSigningKeyIsPlaceholder && (
           <li>

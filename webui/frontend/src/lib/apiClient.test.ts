@@ -44,6 +44,7 @@ describe("apiFetch", () => {
       status: "authenticated",
       accessToken: "test-token-123",
       user: null,
+      securityBannerDismissed: false,
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
@@ -55,7 +56,7 @@ describe("apiFetch", () => {
   });
 
   it("sends no Authorization header when there is no token", async () => {
-    vi.spyOn(bridge, "getState").mockReturnValue({ status: "unauthenticated", accessToken: null, user: null });
+    vi.spyOn(bridge, "getState").mockReturnValue({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     await apiFetch("/api/v1/targets");
@@ -67,8 +68,8 @@ describe("apiFetch", () => {
 
   it("on a 401, attempts a silent refresh and retries once with the new token", async () => {
     vi.spyOn(bridge, "getState")
-      .mockReturnValueOnce({ status: "authenticated", accessToken: "stale-token", user: null })
-      .mockReturnValueOnce({ status: "authenticated", accessToken: "fresh-token", user: null });
+      .mockReturnValueOnce({ status: "authenticated", accessToken: "stale-token", user: null, securityBannerDismissed: false })
+      .mockReturnValueOnce({ status: "authenticated", accessToken: "fresh-token", user: null, securityBannerDismissed: false });
     vi.spyOn(bridge, "silentRefresh").mockResolvedValue("fresh-token");
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -84,7 +85,7 @@ describe("apiFetch", () => {
   });
 
   it("on a 401 with a failed silent refresh, returns the original 401 without retrying", async () => {
-    vi.spyOn(bridge, "getState").mockReturnValue({ status: "authenticated", accessToken: "stale-token", user: null });
+    vi.spyOn(bridge, "getState").mockReturnValue({ status: "authenticated", accessToken: "stale-token", user: null, securityBannerDismissed: false });
     vi.spyOn(bridge, "silentRefresh").mockResolvedValue(null);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 401 }));
 
@@ -95,7 +96,7 @@ describe("apiFetch", () => {
   });
 
   it("always sends credentials: include, for the httpOnly refresh cookie", async () => {
-    vi.spyOn(bridge, "getState").mockReturnValue({ status: "unauthenticated", accessToken: null, user: null });
+    vi.spyOn(bridge, "getState").mockReturnValue({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     await apiFetch("/api/v1/targets");
