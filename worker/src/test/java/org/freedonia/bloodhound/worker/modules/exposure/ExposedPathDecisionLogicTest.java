@@ -277,6 +277,32 @@ class ExposedPathDecisionLogicTest {
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).contains("EXPOSURE_ACTUATOR_HEALTH");
     }
 
+    /**
+     * A live finding showed the gap this closes: a bare {"status":"UP"} and a full component
+     * breakdown (disk paths, capacity, DB/SSL state) were both reported as the same INFO-severity
+     * EXPOSURE_ACTUATOR_HEALTH rule. A "components" breakdown only ever appears when the operator
+     * has explicitly set show-details to "always" (Spring Boot's own default is "never" for an
+     * unauthenticated caller) - real internal infrastructure disclosure, not just "the endpoint
+     * exists", so it's now its own MEDIUM-severity rule instead.
+     */
+    @Test
+    void actuatorHealth_detailedComponentsBreakdown_flaggedAsDistinctMediumRule() {
+        String body = "{\"status\":\"UP\",\"components\":{\"diskSpace\":{\"status\":\"UP\","
+                + "\"details\":{\"total\":751070851072,\"free\":551136649216,\"path\":\"/home/jboss/.\"}}}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ACTUATOR_HEALTH",
+                new ProbeResponse(200, "application/vnd.spring-boot.actuator.v3+json", (long) body.length(), body)));
+
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_ACTUATOR_HEALTH_DETAILS");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+        // Exclusive, not additive - one URL, one finding; the bare-status rule must not also fire.
+        assertThat(ruleIds(findings)).doesNotContain("EXPOSURE_ACTUATOR_HEALTH");
+    }
+
     @Test
     void actuatorInfo_actuatorContentType_flaggedInfo() {
         String body = "{\"build\":{\"version\":\"1.0.0\"}}";

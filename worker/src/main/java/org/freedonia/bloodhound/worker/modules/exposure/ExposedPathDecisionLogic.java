@@ -97,8 +97,24 @@ public final class ExposedPathDecisionLogic {
         // useful, and these two are reported at INFO severity precisely because they're near-universally
         // intentional (load balancer health checks, build-info banners), unlike the rest of the actuator
         // surface.
-        addIfMatches(findings, hostname, r, "EXPOSURE_ACTUATOR_HEALTH", baselineBody,
-                b -> isActuatorContentType(r.get("EXPOSURE_ACTUATOR_HEALTH")) || looksLikeActuatorHealthBody(b));
+        //
+        // /actuator/health is the one exception within that INFO-by-default pair: Spring Boot's own
+        // default for management.endpoint.health.show-details is "never", so an unauthenticated caller
+        // seeing a bare {"status":"UP"} tells you nothing an LB health check wouldn't already show. A
+        // "components" breakdown, though, only ever appears when the operator has explicitly set
+        // show-details to "always" (or an authorization check meant to gate "when-authorized" isn't
+        // actually being enforced for this caller) - and that breakdown routinely includes real internal
+        // state: absolute filesystem paths, disk free/total capacity, DB/SSL component status. That's a
+        // genuine information-disclosure step up from "the endpoint exists", so it's reported as its own,
+        // more severe rule rather than folded into the bare-status case.
+        ProbeResponse healthResponse = r.get("EXPOSURE_ACTUATOR_HEALTH");
+        if (matches(healthResponse, baselineBody,
+                b -> isActuatorContentType(healthResponse) || looksLikeActuatorHealthBody(b))) {
+            String healthRuleId = healthResponse.body().contains("\"components\"")
+                    ? "EXPOSURE_ACTUATOR_HEALTH_DETAILS"
+                    : "EXPOSURE_ACTUATOR_HEALTH";
+            findings.add(finding(healthRuleId, hostname, healthResponse));
+        }
         addIfMatches(findings, hostname, r, "EXPOSURE_ACTUATOR_INFO", baselineBody,
                 b -> isActuatorContentType(r.get("EXPOSURE_ACTUATOR_INFO")));
 
@@ -305,6 +321,15 @@ public final class ExposedPathDecisionLogic {
                     "Spring Boot Actuator health endpoint exposed",
                     "The /actuator/health endpoint is publicly reachable. This is commonly intentional (used by "
                             + "load balancers/orchestrators for health checks) and is reported for visibility only.")),
+            Map.entry("EXPOSURE_ACTUATOR_HEALTH_DETAILS", new RuleMeta(Severity.MEDIUM,
+                    "Spring Boot Actuator health endpoint discloses internal system details",
+                    "The /actuator/health endpoint returns a detailed component breakdown (e.g. absolute "
+                            + "filesystem paths, disk free/total capacity, database or SSL/certificate component "
+                            + "state) to an unauthenticated caller, rather than just the overall status. Spring "
+                            + "Boot's default for this is to show no component detail publicly, so this requires "
+                            + "an explicit show-details=always setting or an authorization check that isn't "
+                            + "actually being enforced - and it discloses real internal infrastructure detail "
+                            + "useful for reconnaissance, not just \"a health check exists\".")),
             Map.entry("EXPOSURE_ACTUATOR_INFO", new RuleMeta(Severity.INFO,
                     "Spring Boot Actuator info endpoint exposed",
                     "The /actuator/info endpoint is publicly reachable. This is commonly intentional (build/version "

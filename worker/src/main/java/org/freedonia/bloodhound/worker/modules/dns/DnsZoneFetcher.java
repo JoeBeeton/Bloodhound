@@ -5,12 +5,14 @@ import java.util.ArrayList;
 import java.util.List;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.xbill.DNS.ARecord;
+import org.xbill.DNS.DClass;
 import org.xbill.DNS.Lookup;
+import org.xbill.DNS.Message;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.NSRecord;
+import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
-import org.xbill.DNS.SOARecord;
 import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 import org.xbill.DNS.ZoneTransferException;
@@ -107,24 +109,27 @@ public class DnsZoneFetcher {
     }
 
     /**
-     * Queries the zone's SOA directly against a specific nameserver's IP
-     * (bypassing the public resolver entirely) and treats a real SOA answer
-     * for the exact zone as "authoritative". A timeout, refusal, or empty
-     * answer is treated as lame - but see DnsZoneDecisionLogic for how this
-     * is scored: a single unreachable NS from our vantage point is weaker
-     * evidence than the AXFR check's unambiguous "it transferred the zone"
-     * signal, so this stays Medium, not Critical.
+     * Queries the zone's SOA directly against a specific nameserver's IP (bypassing the public
+     * resolver entirely), inspecting the response's actual Rcode rather than going through
+     * dnsjava's {@code Lookup} class - see {@code NsTakeoverChecker#respondsAuthoritatively}'s own
+     * javadoc for the live false positive this same pattern produced there ({@code Lookup.run()}
+     * collapses REFUSED, a timeout, and any other network-level failure into the same
+     * {@code null}/"not authoritative" result). An explicit REFUSED is the only outcome treated as
+     * lame; a real SOA answer, any other Rcode, or an exception (timeout/network error) all count
+     * as "can't confirm lame here" - see DnsZoneDecisionLogic for how this is scored: a single
+     * unreachable NS from our vantage point is weaker evidence than the AXFR check's unambiguous
+     * "it transferred the zone" signal, so this stays Medium, not Critical, even once accurate.
      */
     private boolean respondsAuthoritatively(String hostname, String nsIp) {
         try {
             SimpleResolver directResolver = new SimpleResolver(nsIp);
             directResolver.setTimeout(TIMEOUT);
-            Lookup lookup = new Lookup(hostname, Type.SOA);
-            lookup.setResolver(directResolver);
-            Record[] records = lookup.run();
-            return records != null && records.length > 0 && records[0] instanceof SOARecord;
+            Name name = Name.fromString(hostname, Name.root);
+            Record question = Record.newRecord(name, Type.SOA, DClass.IN);
+            Message response = directResolver.send(Message.newQuery(question));
+            return response.getRcode() != Rcode.REFUSED;
         } catch (Exception e) {
-            return false;
+            return true;
         }
     }
 
