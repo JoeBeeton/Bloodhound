@@ -11,9 +11,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
-import org.xbill.DNS.Lookup;
+import org.xbill.DNS.DClass;
+import org.xbill.DNS.Message;
+import org.xbill.DNS.Name;
+import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
-import org.xbill.DNS.SOARecord;
 import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 
@@ -79,7 +81,28 @@ class NsTakeoverChecker {
         return new Result(false, null, null);
     }
 
-    /** Same mechanic as DnsZoneFetcher#respondsAuthoritatively - a real SOA answer for the exact zone means it's genuinely still hosted there. */
+    /**
+     * A live false positive (a genuinely live, correctly-configured Route53 zone flagged as
+     * dangling - confirmed by direct nameserver queries returning an authoritative SOA answer from
+     * every delegated nameserver) traced back to this method previously going through dnsjava's
+     * higher-level {@code Lookup} class and treating a {@code null}/empty result as "not
+     * authoritative". {@code Lookup.run()} collapses REFUSED, SERVFAIL, a timeout, and any other
+     * network-level failure into the same {@code null} - so a transient hiccup querying one of
+     * several nameservers was as good as a confirmed takeover, at CRITICAL severity.
+     *
+     * <p>The actual, specific signature of "this cloud DNS provider has no zone configured here"
+     * (confirmed live against Route53, and consistent with how Azure DNS/Google Cloud DNS/
+     * DigitalOcean's own authoritative-only nameservers behave for a query outside anything they
+     * host) is an explicit {@code REFUSED} response - these providers never do open/recursive
+     * resolution, so a query for a zone they don't have is rejected outright, not answered with
+     * NXDOMAIN or silence. Querying directly via {@code Message}/{@code Resolver#send} (not
+     * {@code Lookup}) makes that Rcode directly inspectable, rather than inferring it from whether
+     * dnsjava happened to hand back a non-empty record array. Only that explicit REFUSED is treated
+     * as confirmation; a real SOA answer, any other Rcode, and - critically - any exception
+     * (timeout, network error, malformed response) all fall through to "can't confirm a takeover
+     * here", same "don't let an inconclusive check produce a CRITICAL false positive" reasoning the
+     * SSRF-guard branch above already uses.
+     */
     private boolean respondsAuthoritatively(String hostname, String nsHostname) {
         try {
             InetAddress nsAddress = InetAddress.getByName(nsHostname);
@@ -93,12 +116,12 @@ class NsTakeoverChecker {
             }
             SimpleResolver directResolver = new SimpleResolver(nsAddress.getHostAddress());
             directResolver.setTimeout(TIMEOUT);
-            Lookup lookup = new Lookup(hostname, Type.SOA);
-            lookup.setResolver(directResolver);
-            Record[] records = lookup.run();
-            return records != null && records.length > 0 && records[0] instanceof SOARecord;
+            Name name = Name.fromString(hostname, Name.root);
+            Record question = Record.newRecord(name, Type.SOA, DClass.IN);
+            Message response = directResolver.send(Message.newQuery(question));
+            return response.getRcode() != Rcode.REFUSED;
         } catch (Exception e) {
-            return false;
+            return true;
         }
     }
 }
