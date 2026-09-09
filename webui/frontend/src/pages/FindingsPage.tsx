@@ -7,6 +7,8 @@ import { FindingsFilterBar, type FindingsFilterState } from "../components/Findi
 import { ScoreImpactBadge } from "../components/ScoreImpactBadge";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
+import { SEVERITY_ACCENT, SEVERITY_STYLES } from "../lib/severityStyles";
+import { fetchTargetsForFilter } from "../lib/targets";
 import type { FindingCategory, OrgFinding, Severity } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -33,6 +35,7 @@ export function orgFindingsFilterParams(filters: FindingsFilterState): URLSearch
   // deleted, not set, for any status other than exactly "RESOLVED".
   if (filters.status && filters.status !== "OPEN") params.set("status", filters.status);
   if (filters.search) params.set("search", filters.search);
+  if (filters.targetId) params.set("targetId", filters.targetId);
   return params;
 }
 
@@ -71,22 +74,6 @@ async function downloadOrgFindingsCsv(filters: FindingsFilterState): Promise<voi
   URL.revokeObjectURL(url);
 }
 
-const SEVERITY_STYLES: Record<Severity, string> = {
-  CRITICAL: "text-severity-critical",
-  HIGH: "text-severity-high",
-  MEDIUM: "text-severity-medium",
-  LOW: "text-severity-low",
-  INFO: "text-severity-info",
-};
-
-const SEVERITY_ACCENT: Record<Severity, string> = {
-  CRITICAL: "border-l-severity-critical",
-  HIGH: "border-l-severity-high",
-  MEDIUM: "border-l-severity-medium",
-  LOW: "border-l-severity-low",
-  INFO: "border-l-severity-info",
-};
-
 /**
  * Every open finding across every target in the org, filterable and paginated - previously the
  * only ways to see findings were one target at a time, or the dashboard's un-paginated top 10
@@ -102,6 +89,7 @@ export function FindingsPage() {
     categories: (searchParams.get("category")?.split(",").filter(Boolean) ?? []) as FindingCategory[],
     status: parseStatusParam(searchParams.get("status")),
     search: searchParams.get("search") ?? undefined,
+    targetId: searchParams.get("targetId") ?? undefined,
   };
   const setFilters = (next: FindingsFilterState) => {
     setSearchParams(
@@ -111,6 +99,7 @@ export function FindingsPage() {
         next.categories.length > 0 ? params.set("category", next.categories.join(",")) : params.delete("category");
         next.status && next.status !== "OPEN" ? params.set("status", next.status) : params.delete("status");
         next.search ? params.set("search", next.search) : params.delete("search");
+        next.targetId ? params.set("targetId", next.targetId) : params.delete("targetId");
         return params;
       },
       { replace: true },
@@ -123,6 +112,11 @@ export function FindingsPage() {
   const query = useQuery({
     queryKey: ["org-findings", filters, visibleCount],
     queryFn: () => fetchOrgFindings(filters, visibleCount),
+  });
+
+  const targetsQuery = useQuery({
+    queryKey: ["targets-for-findings-filter"],
+    queryFn: fetchTargetsForFilter,
   });
 
   const exportCsvMutation = useMutation({
@@ -161,13 +155,17 @@ export function FindingsPage() {
             setVisibleCount(PAGE_SIZE);
           }}
           resultCount={query.data?.totalCount}
+          targets={targetsQuery.data
+            ?.slice()
+            .sort((a, b) => a.hostname.localeCompare(b.hostname))
+            .map((t) => ({ id: t.id, hostname: t.hostname }))}
         />
 
         {query.isLoading && <p className="font-mono text-sm text-slate-400">Loading findings…</p>}
         {query.isError && <ErrorState message="Failed to load findings." onRetry={() => query.refetch()} />}
         {query.data?.totalCount === 0 && (
           <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-neon-cyan">
-            {filters.severities.length > 0 || filters.categories.length > 0 || filters.search
+            {filters.severities.length > 0 || filters.categories.length > 0 || filters.search || filters.targetId
               ? `No ${(filters.status ?? "OPEN").toLowerCase()} findings match the selected filters.`
               : filters.status === "RESOLVED"
                 ? "Nothing resolved yet."

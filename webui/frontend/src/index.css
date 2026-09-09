@@ -65,6 +65,44 @@ body {
   cursor: not-allowed;
 }
 
+/* Findings Feed: a small breathing dot next to "Live" signals active polling is on - purely
+   decorative, gated behind prefers-reduced-motion below like every other animation here. */
+@keyframes feed-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(0, 240, 255, 0.6);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 4px rgba(0, 240, 255, 0);
+  }
+}
+.animate-feed-pulse {
+  animation: feed-pulse-dot 2s ease-in-out infinite;
+}
+
+/* Findings Feed: a one-shot highlight for a finding that just arrived via live polling - fades
+   from a cyan-tinted glow back to the card's resting background, so a newly-surfaced item
+   visibly "lands" instead of silently appearing mid-scroll. */
+@keyframes feed-item-arrive {
+  from {
+    background-color: rgba(0, 240, 255, 0.18);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.animate-feed-arrive {
+  animation: feed-item-arrive 2.4s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-feed-pulse,
+  .animate-feed-arrive {
+    animation: none;
+  }
+}
+
 /* Every checkbox in the app (SSO/Slack admin settings) opts into this - same reasoning as
    .select-cyber above: the OS-default checkbox tint clashes with the rest of the cyan/pink
    chrome. accent-color is the standard, broadly-supported way to recolor a native checkbox

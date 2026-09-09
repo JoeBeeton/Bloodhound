@@ -9,7 +9,7 @@ const SEVERITY_ACTIVE_STYLES: Record<Severity, string> = {
   INFO: "border-severity-info bg-severity-info/15 text-severity-info",
 };
 
-const CATEGORY_LABELS: Record<FindingCategory, string> = {
+export const CATEGORY_LABELS: Record<FindingCategory, string> = {
   EXPOSURE: "Exposure",
   TLS: "TLS",
   DNS: "DNS",
@@ -32,6 +32,8 @@ export interface FindingsFilterState {
   status?: "OPEN" | "RESOLVED" | "DISMISSED";
   /** Case-insensitive substring match against title OR description (server-side, see FindingRepository#appendSearchClause) - omitted/blank means no search filter. */
   search?: string;
+  /** Org-wide Findings page only (see `targets` prop below) - omitted/undefined means every target. */
+  targetId?: string;
 }
 
 function toggle<T>(list: T[], value: T): T[] {
@@ -49,12 +51,15 @@ export function FindingsFilterBar({
   value,
   onChange,
   resultCount,
+  targets,
 }: {
   value: FindingsFilterState;
   onChange: (next: FindingsFilterState) => void;
   resultCount: number | undefined;
+  /** Only passed by the org-wide Findings page - the target-detail and subdomain-detail pages that also render this bar are already scoped to one target, so a target picker there would be meaningless. */
+  targets?: { id: string; hostname: string }[];
 }) {
-  const hasFilters = value.severities.length > 0 || value.categories.length > 0 || !!value.search;
+  const hasFilters = value.severities.length > 0 || value.categories.length > 0 || !!value.search || !!value.targetId;
   const status = value.status ?? "OPEN";
 
   // Local, debounced copy of the search text - value.search is server-driving (every callsite's
@@ -91,6 +96,24 @@ export function FindingsFilterBar({
           className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-muted focus:border-neon-cyan"
         />
       </div>
+      {targets && targets.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Target</span>
+          <select
+            aria-label="Filter by target"
+            value={value.targetId ?? ""}
+            onChange={(e) => onChange({ ...value, targetId: e.target.value || undefined })}
+            className="select-cyber rounded border border-slate-700 bg-void px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-slate-200 outline-none focus:border-neon-cyan"
+          >
+            <option value="">All targets</option>
+            {targets.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.hostname}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Status</span>
         {(["OPEN", "RESOLVED", "DISMISSED"] as const).map((s) => (
@@ -153,7 +176,9 @@ export function FindingsFilterBar({
             // silently snap the view back to Open too (a real bug this fixed: the original
             // version dropped status entirely here, defaulting it back to OPEN). search IS
             // cleared here, same as severities/categories - it's a narrowing filter like them.
-            onClick={() => onChange({ severities: [], categories: [], status: value.status, search: undefined })}
+            onClick={() =>
+              onChange({ severities: [], categories: [], status: value.status, search: undefined, targetId: undefined })
+            }
             className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta transition hover:text-neon-magenta/70"
           >
             Clear filters ✕

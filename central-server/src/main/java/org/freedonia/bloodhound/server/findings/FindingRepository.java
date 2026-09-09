@@ -3,8 +3,11 @@ package org.freedonia.bloodhound.server.findings;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -324,7 +327,7 @@ public class FindingRepository {
 
     /** Org-wide findings for the dashboard's "top open findings" widget - joined with hostname since these span multiple targets. */
     public List<OrgFinding> findOpenByOrganization(UUID organizationId, List<String> severities, int limit) {
-        return findOpenByOrganization(organizationId, severities, List.of(), "OPEN", null, limit, 0);
+        return findOpenByOrganization(organizationId, severities, List.of(), "OPEN", null, null, limit, 0);
     }
 
     /**
@@ -337,6 +340,11 @@ public class FindingRepository {
      * they don't use. status defaults to OPEN when null/blank, same convention as {@link
      * #findByTargetDetailed} already uses for the identical "what does the caller mean by
      * omitting this" question.
+     *
+     * <p>targetId narrows this org-wide list down to one target - a product gap found live: the
+     * Findings page had no way to look at just one target's findings without leaving it for the
+     * per-target view, even though every other filter (severity/category/status/search) already
+     * worked across the whole org. Null/absent behaves exactly as before (every target in the org).
      */
     public List<OrgFinding> findOpenByOrganization(
             UUID organizationId,
@@ -344,6 +352,7 @@ public class FindingRepository {
             List<String> categories,
             String status,
             String search,
+            UUID targetId,
             int limit,
             int offset) {
         StringBuilder sql = new StringBuilder(
@@ -360,6 +369,10 @@ public class FindingRepository {
         args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        if (targetId != null) {
+            sql.append(" AND f.target_id = ?");
+            args.add(targetId);
+        }
         appendSearchClause(sql, args, search);
         sql.append(" ORDER BY CASE f.severity "
                 + "WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, "
@@ -371,7 +384,7 @@ public class FindingRepository {
 
     /** Unpaginated total matching {@link #findOpenByOrganization}'s filters - lets a caller show "showing N of TOTAL". */
     public int countOpenByOrganizationFiltered(
-            UUID organizationId, List<String> severities, List<String> categories, String status, String search) {
+            UUID organizationId, List<String> severities, List<String> categories, String status, String search, UUID targetId) {
         StringBuilder sql = new StringBuilder(
                 "SELECT COUNT(*) FROM findings f JOIN targets t ON t.id = f.target_id "
                         + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
@@ -380,6 +393,10 @@ public class FindingRepository {
         args.add(status != null && !status.isBlank() ? status : "OPEN");
         appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
         appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        if (targetId != null) {
+            sql.append(" AND f.target_id = ?");
+            args.add(targetId);
+        }
         appendSearchClause(sql, args, search);
         Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
         return count != null ? count : 0;
@@ -395,16 +412,124 @@ public class FindingRepository {
      * CRITICAL/HIGH-only) but that's still worth surfacing here.
      */
     public List<OrgFinding> findRecentByOrganization(UUID organizationId, int limit) {
-        String sql = "SELECT f.*, t.hostname AS target_hostname, "
-                + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
-                + "rc.remediation_advice AS remediation_advice "
-                + "FROM findings f "
-                + "JOIN targets t ON t.id = f.target_id "
-                + "LEFT JOIN scan_runs sr ON sr.id = f.first_detected_scan_run_id "
-                + "LEFT JOIN rules_catalog rc ON rc.rule_id = f.rule_id "
-                + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = 'OPEN' "
-                + "ORDER BY f.created_at DESC LIMIT ?";
-        return jdbc.query(sql, ORG_FINDING_MAPPER, organizationId, limit);
+        return findRecentByOrganization(organizationId, List.of(), List.of(), null, null, null, null, limit, 0);
+    }
+
+    /**
+     * Filterable, paginated version of the 2-arg overload above - backs the dedicated Findings
+     * Feed page (a product/UX review found the dashboard's fixed top-10 "recent findings" widget
+     * was the only chronological view anywhere in the app, with no way to page further back or
+     * narrow by severity/category/status/search/target/day the way the org-wide /findings page
+     * already could, plus a day-drill-down its own activity histogram needs). Same pure "most
+     * recent first" ordering throughout; status defaults to OPEN when null/blank, same convention
+     * {@link #findOpenByOrganization} already uses. {@code day} (nullable) narrows to findings
+     * created on that one calendar day - the activity histogram's click-to-filter.
+     */
+    public List<OrgFinding> findRecentByOrganization(
+            UUID organizationId,
+            List<String> severities,
+            List<String> categories,
+            String status,
+            String search,
+            UUID targetId,
+            LocalDate day,
+            int limit,
+            int offset) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT f.*, t.hostname AS target_hostname, "
+                        + "COALESCE(sr.completed_at, sr.started_at) AS first_seen_at, "
+                        + "rc.remediation_advice AS remediation_advice "
+                        + "FROM findings f "
+                        + "JOIN targets t ON t.id = f.target_id "
+                        + "LEFT JOIN scan_runs sr ON sr.id = f.first_detected_scan_run_id "
+                        + "LEFT JOIN rules_catalog rc ON rc.rule_id = f.rule_id "
+                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(organizationId);
+        args.add(status != null && !status.isBlank() ? status : "OPEN");
+        appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
+        appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        if (targetId != null) {
+            sql.append(" AND f.target_id = ?");
+            args.add(targetId);
+        }
+        if (day != null) {
+            sql.append(" AND f.created_at::date = ?");
+            args.add(day);
+        }
+        appendSearchClause(sql, args, search);
+        sql.append(" ORDER BY f.created_at DESC LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return jdbc.query(sql.toString(), ORG_FINDING_MAPPER, args.toArray());
+    }
+
+    /** Unpaginated total matching {@link #findRecentByOrganization}'s filters - lets the Findings Feed page show "showing N of TOTAL". */
+    public int countRecentByOrganization(
+            UUID organizationId,
+            List<String> severities,
+            List<String> categories,
+            String status,
+            String search,
+            UUID targetId,
+            LocalDate day) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT COUNT(*) FROM findings f JOIN targets t ON t.id = f.target_id "
+                        + "WHERE t.organization_id = ? AND t.is_active = true AND f.status = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(organizationId);
+        args.add(status != null && !status.isBlank() ? status : "OPEN");
+        appendInClause(sql, args, "f.severity", severities == null || severities.isEmpty() ? null : String.join(",", severities));
+        appendInClause(sql, args, "f.category", categories == null || categories.isEmpty() ? null : String.join(",", categories));
+        if (targetId != null) {
+            sql.append(" AND f.target_id = ?");
+            args.add(targetId);
+        }
+        if (day != null) {
+            sql.append(" AND f.created_at::date = ?");
+            args.add(day);
+        }
+        appendSearchClause(sql, args, search);
+        Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
+        return count != null ? count : 0;
+    }
+
+    public record FindingActivityBucket(LocalDate day, int critical, int high, int medium, int low, int info) {}
+
+    /**
+     * Daily finding-creation counts per severity for the last {@code days} days (including
+     * today) - backs the Findings Feed page's activity histogram ("when did things spike"), not
+     * "what's open now": deliberately counts every finding created in the window regardless of
+     * its current status, since a since-resolved finding was still real activity on the day it
+     * was first detected. Zero-filled in Java (not SQL) for every day and every severity in the
+     * window, including days/severities with no rows at all, so the chart never has to guess
+     * whether an absent key means zero or "we didn't ask."
+     */
+    public List<FindingActivityBucket> findDailyActivity(UUID organizationId, int days) {
+        String sql = "SELECT date_trunc('day', f.created_at)::date AS day, f.severity, COUNT(*) AS cnt "
+                + "FROM findings f JOIN targets t ON t.id = f.target_id "
+                + "WHERE t.organization_id = ? AND f.created_at >= now() - (? || ' days')::interval "
+                + "GROUP BY day, f.severity";
+        Map<LocalDate, Map<String, Integer>> bySeverity = new HashMap<>();
+        jdbc.query(sql, rs -> {
+            LocalDate day = rs.getDate("day").toLocalDate();
+            bySeverity.computeIfAbsent(day, d -> new HashMap<>()).put(rs.getString("severity"), rs.getInt("cnt"));
+        }, organizationId, days);
+
+        List<FindingActivityBucket> buckets = new ArrayList<>();
+        LocalDate start = LocalDate.now().minusDays(days - 1L);
+        for (int i = 0; i < days; i++) {
+            LocalDate day = start.plusDays(i);
+            Map<String, Integer> counts = bySeverity.getOrDefault(day, Map.of());
+            buckets.add(new FindingActivityBucket(
+                    day,
+                    counts.getOrDefault("CRITICAL", 0),
+                    counts.getOrDefault("HIGH", 0),
+                    counts.getOrDefault("MEDIUM", 0),
+                    counts.getOrDefault("LOW", 0),
+                    counts.getOrDefault("INFO", 0)));
+        }
+        return buckets;
     }
 
     /** Unbounded count backing the dashboard's stat tiles - findOpenByOrganization above is display-limited, this isn't. */

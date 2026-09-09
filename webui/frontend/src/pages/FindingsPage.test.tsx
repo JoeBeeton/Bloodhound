@@ -31,4 +31,17 @@ describe("orgFindingsFilterParams / parseStatusParam", () => {
     expect(parseStatusParam(null)).toBe("OPEN");
     expect(parseStatusParam("garbage")).toBe("OPEN");
   });
+
+  // A product gap found live: the org-wide Findings page had no way to narrow down to one
+  // target's findings even though the backing endpoint's other filters all worked org-wide -
+  // see FindingRepository#findOpenByOrganization's own javadoc on the new targetId parameter.
+  it("forwards targetId in the outgoing query params when set", () => {
+    const params = orgFindingsFilterParams({ severities: [], categories: [], targetId: "t1" });
+    expect(params.get("targetId")).toBe("t1");
+  });
+
+  it("omits targetId entirely when unset - every target, same as before this filter existed", () => {
+    const params = orgFindingsFilterParams({ severities: [], categories: [] });
+    expect(params.has("targetId")).toBe(false);
+  });
 });

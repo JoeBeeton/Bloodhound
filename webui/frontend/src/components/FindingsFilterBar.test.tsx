@@ -155,4 +155,72 @@ describe("FindingsFilterBar", () => {
 
     await waitFor(() => expect(screen.getByLabelText(/search findings by keyword/i)).toHaveValue(""));
   });
+
+  // Only the org-wide Findings page passes `targets` - the target-detail/subdomain-detail pages
+  // that also render this bar are already scoped to one target, so no dropdown should ever
+  // appear for them (see the `targets` prop's own doc comment).
+  const TARGETS = [
+    { id: "t1", hostname: "barclays.co.uk" },
+    { id: "t2", hostname: "americanexpress.com" },
+  ];
+
+  it("does not render a target dropdown when no targets prop is passed", () => {
+    render(<FindingsFilterBar value={EMPTY} onChange={vi.fn()} resultCount={0} />);
+    expect(screen.queryByLabelText(/filter by target/i)).not.toBeInTheDocument();
+  });
+
+  it("does not render a target dropdown for an empty targets list", () => {
+    render(<FindingsFilterBar value={EMPTY} onChange={vi.fn()} resultCount={0} targets={[]} />);
+    expect(screen.queryByLabelText(/filter by target/i)).not.toBeInTheDocument();
+  });
+
+  it("renders every target as an option, plus an 'All targets' default", () => {
+    render(<FindingsFilterBar value={EMPTY} onChange={vi.fn()} resultCount={0} targets={TARGETS} />);
+    const select = screen.getByLabelText(/filter by target/i);
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("option", { name: "All targets" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "barclays.co.uk" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "americanexpress.com" })).toBeInTheDocument();
+  });
+
+  it("selecting a target calls onChange with its id", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<FindingsFilterBar value={EMPTY} onChange={onChange} resultCount={0} targets={TARGETS} />);
+
+    await user.selectOptions(screen.getByLabelText(/filter by target/i), "t1");
+
+    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [], targetId: "t1" });
+  });
+
+  it("selecting 'All targets' clears targetId back to undefined", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <FindingsFilterBar value={{ severities: [], categories: [], targetId: "t1" }} onChange={onChange} resultCount={0} targets={TARGETS} />,
+    );
+
+    await user.selectOptions(screen.getByLabelText(/filter by target/i), "All targets");
+
+    expect(onChange).toHaveBeenCalledWith({ severities: [], categories: [], targetId: undefined });
+  });
+
+  it("shows 'Clear filters' once a target is selected, and clearing resets it too", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <FindingsFilterBar value={{ severities: [], categories: [], targetId: "t1" }} onChange={onChange} resultCount={0} targets={TARGETS} />,
+    );
+
+    expect(screen.getByText(/clear filters/i)).toBeInTheDocument();
+    await user.click(screen.getByText(/clear filters/i));
+
+    expect(onChange).toHaveBeenCalledWith({
+      severities: [],
+      categories: [],
+      status: undefined,
+      search: undefined,
+      targetId: undefined,
+    });
+  });
 });
