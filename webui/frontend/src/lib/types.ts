@@ -324,6 +324,16 @@ export interface OrgFinding {
   scoreImpact: ScoreImpact | null;
 }
 
+/** One day's finding-creation counts per severity - backs the Findings Feed page's activity histogram. `day` is an ISO date (YYYY-MM-DD), not a full timestamp. */
+export interface FindingActivityBucket {
+  day: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+}
+
 export interface RecentActivity {
   id: string;
   targetId: string;

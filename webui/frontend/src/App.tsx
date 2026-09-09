@@ -18,6 +18,7 @@ const SsoCallbackPage = lazy(() => import("./pages/SsoCallbackPage").then((m) =>
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const TargetsPage = lazy(() => import("./pages/TargetsPage").then((m) => ({ default: m.TargetsPage })));
 const FindingsPage = lazy(() => import("./pages/FindingsPage").then((m) => ({ default: m.FindingsPage })));
+const FindingsFeedPage = lazy(() => import("./pages/FindingsFeedPage").then((m) => ({ default: m.FindingsFeedPage })));
 const TargetDetailPage = lazy(() => import("./pages/TargetDetailPage").then((m) => ({ default: m.TargetDetailPage })));
 const SubdomainsPage = lazy(() => import("./pages/SubdomainsPage").then((m) => ({ default: m.SubdomainsPage })));
 const SubdomainDetailPage = lazy(() =>
@@ -84,6 +85,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <FindingsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/findings/feed"
+            element={
+              <RequireAuth>
+                <FindingsFeedPage />
               </RequireAuth>
             }
           />

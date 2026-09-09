@@ -10,6 +10,7 @@ import { ScoreTrendChart } from "../components/ScoreTrendChart";
 import { Shell } from "../components/Shell";
 import { StatTile } from "../components/StatTile";
 import { apiFetch } from "../lib/apiClient";
+import { SEVERITY_ACCENT } from "../lib/severityStyles";
 import { useAuth } from "../lib/useAuth";
 import type { DashboardSummary, OrgFinding, ScoreSnapshot, Severity, Target } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
@@ -32,18 +33,6 @@ const SEVERITY_STYLES: Record<Severity, string> = {
   MEDIUM: "border-severity-medium/50 text-severity-medium",
   LOW: "border-severity-low/50 text-severity-low",
   INFO: "border-severity-info/50 text-severity-info",
-};
-
-/** Same bold left-edge accent as FindingCard - only used on "Top open findings" below, which
- * (like FindingCard) is severity-ranked. "Recent findings" deliberately stays neutral-bordered
- * (see the comment at its own render site) since it mixes in INFO-level items not meant to read
- * as alarming, so it doesn't get this treatment. */
-const SEVERITY_ACCENT: Record<Severity, string> = {
-  CRITICAL: "border-l-severity-critical",
-  HIGH: "border-l-severity-high",
-  MEDIUM: "border-l-severity-medium",
-  LOW: "border-l-severity-low",
-  INFO: "border-l-severity-info",
 };
 
 /** Own-target scores averaged for the header gauge - null while none of them have a
@@ -151,6 +140,9 @@ export function DashboardPage() {
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2">
+                    {/* SEVERITY_ACCENT (the left-edge border) is only ever applied here, not on "Recent
+                        findings" below - that list mixes in INFO-level items not meant to read as
+                        alarming, so it deliberately stays neutral-bordered. */}
                     {dashboard.topFindings.map((f) => (
                       <button
                         key={f.id}
@@ -180,7 +172,17 @@ export function DashboardPage() {
                   different lens from "Top open findings" (severity-ranked, Critical/High only):
                   this answers "what's new since I last looked", not "what's most urgent". */}
               <section>
-                <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Recent findings</h2>
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">Recent findings</h2>
+                  {/* This widget is a fixed top-10 snapshot - the Live Feed is the same chronological
+                      lens with pagination, filters, and live polling for "what's happening right now". */}
+                  <Link
+                    to="/findings/feed"
+                    className="font-mono text-[10px] uppercase tracking-widest text-neon-cyan transition hover:text-neon-cyan/70"
+                  >
+                    Live Feed →
+                  </Link>
+                </div>
                 {dashboard.recentFindings.length === 0 ? (
                   <p className="rounded-lg border border-neon-cyan/10 bg-panel/40 p-4 font-mono text-sm text-slate-400">
                     No findings recorded yet.

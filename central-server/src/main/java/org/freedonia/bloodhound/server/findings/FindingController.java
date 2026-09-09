@@ -92,6 +92,7 @@ public class FindingController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) UUID targetId,
             @RequestParam(defaultValue = "20") int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -100,7 +101,7 @@ public class FindingController {
         int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
         int boundedOffset = Math.max(offset, 0);
         List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
-                principal.organizationId(), severities, categories, status, search, boundedLimit, boundedOffset);
+                principal.organizationId(), severities, categories, status, search, targetId, boundedLimit, boundedOffset);
 
         var ruleWeights = ruleWeightRepository.findAllWeights();
         Map<UUID, Set<UUID>> displayedIdsByTarget = orgFindings.stream()
@@ -111,8 +112,8 @@ public class FindingController {
 
         List<OrgFindingSummary> page = orgFindings.stream()
                 .map(orgFinding -> {
-                    UUID targetId = orgFinding.finding().targetId();
-                    Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(targetId, id -> {
+                    UUID findingTargetId = orgFinding.finding().targetId();
+                    Map<UUID, ScoreImpact> impacts = impactsByTarget.computeIfAbsent(findingTargetId, id -> {
                         var allOpen = findingRepository.findOpenForScoring(id);
                         return ScoreImpactCalculator.computeFor(allOpen, displayedIdsByTarget.get(id), ruleWeights);
                     });
@@ -121,8 +122,50 @@ public class FindingController {
                 })
                 .toList();
         int totalCount = findingRepository.countOpenByOrganizationFiltered(
-                principal.organizationId(), severities, categories, status, search);
+                principal.organizationId(), severities, categories, status, search, targetId);
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
+    }
+
+    /**
+     * Backs the dedicated Findings Feed page - a product/UX review found the dashboard's fixed
+     * top-10 "recent findings" widget was the only chronological (as opposed to severity-ranked)
+     * view anywhere in the app, with no way to page further back or narrow by severity/category/
+     * target the way the org-wide /findings page already could. Deliberately skips score-impact
+     * computation (unlike {@link #forOrganization}): the feed is meant to be lightweight and
+     * frequently repolled for a "live" feel, and "what would fixing this improve" is a triage
+     * affordance that belongs on the deliberate severity-ranked page, not an ambient activity feed.
+     */
+    @GetMapping("/api/v1/findings/feed")
+    public ResponseEntity<List<OrgFindingSummary>> feed(
+            @RequestParam(required = false) String severity,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) UUID targetId,
+            @RequestParam(required = false) LocalDate day,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(defaultValue = "0") int offset,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        List<String> severities = severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
+        List<String> categories = category == null || category.isBlank() ? List.of() : List.of(category.split(","));
+        int boundedLimit = Math.clamp(limit, 1, MAX_FINDINGS_LIMIT);
+        int boundedOffset = Math.max(offset, 0);
+        List<OrgFinding> recent = findingRepository.findRecentByOrganization(
+                principal.organizationId(), severities, categories, status, search, targetId, day, boundedLimit, boundedOffset);
+        List<OrgFindingSummary> page = recent.stream()
+                .map(of -> OrgFindingSummary.from(of, parseEvidence(of.finding().evidenceJson()), null))
+                .toList();
+        int totalCount = findingRepository.countRecentByOrganization(
+                principal.organizationId(), severities, categories, status, search, targetId, day);
+        return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
+    }
+
+    /** The activity histogram at the top of the Findings Feed page - "when did things spike", see {@link FindingRepository#findDailyActivity}. */
+    @GetMapping("/api/v1/findings/feed/activity")
+    public ResponseEntity<List<FindingRepository.FindingActivityBucket>> feedActivity(
+            @RequestParam(defaultValue = "14") int days, @AuthenticationPrincipal JwtPrincipal principal) {
+        int boundedDays = Math.clamp(days, 1, 90);
+        return ResponseEntity.ok(findingRepository.findDailyActivity(principal.organizationId(), boundedDays));
     }
 
     /**
@@ -138,11 +181,12 @@ public class FindingController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) UUID targetId,
             @AuthenticationPrincipal JwtPrincipal principal) {
         List<String> severities = severity == null || severity.isBlank() ? List.of() : List.of(severity.split(","));
         List<String> categories = category == null || category.isBlank() ? List.of() : List.of(category.split(","));
         List<OrgFinding> orgFindings = findingRepository.findOpenByOrganization(
-                principal.organizationId(), severities, categories, status, search, MAX_EXPORT_LIMIT, 0);
+                principal.organizationId(), severities, categories, status, search, targetId, MAX_EXPORT_LIMIT, 0);
         List<OrgFindingSummary> summaries = orgFindings.stream()
                 .map(of -> OrgFindingSummary.from(of, parseEvidence(of.finding().evidenceJson()), null))
                 .toList();
