@@ -46,7 +46,7 @@ describe("authBridge", () => {
 
     await bridge.bootstrap();
 
-    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "tok", user });
+    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "tok", user, securityBannerDismissed: false });
   });
 
   it("bootstrap transitions to unauthenticated when refresh returns null (no valid session)", async () => {
@@ -55,7 +55,7 @@ describe("authBridge", () => {
 
     await bridge.bootstrap();
 
-    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null });
+    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
   });
 
   it("bootstrap transitions to unauthenticated when refresh throws", async () => {
@@ -64,7 +64,7 @@ describe("authBridge", () => {
 
     await bridge.bootstrap();
 
-    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null });
+    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
   });
 
   it("bootstrap only calls authClient.refresh once even if invoked multiple times", async () => {
@@ -82,7 +82,7 @@ describe("authBridge", () => {
 
     await bridge.login("test@example.com", "hunter2");
 
-    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "tok", user });
+    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "tok", user, securityBannerDismissed: false });
     expect(authClient.login).toHaveBeenCalledWith("test@example.com", "hunter2");
   });
 
@@ -92,7 +92,7 @@ describe("authBridge", () => {
 
     await bridge.logout();
 
-    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null });
+    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
   });
 
   it("silentRefresh updates state and returns the new token on success", async () => {
@@ -102,7 +102,7 @@ describe("authBridge", () => {
     const token = await bridge.silentRefresh();
 
     expect(token).toBe("new-tok");
-    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "new-tok", user });
+    expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "new-tok", user, securityBannerDismissed: false });
   });
 
   it("silentRefresh clears state and returns null when the session can't be renewed", async () => {
@@ -112,7 +112,60 @@ describe("authBridge", () => {
     const token = await bridge.silentRefresh();
 
     expect(token).toBeNull();
-    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null });
+    expect(bridge.getState()).toEqual({ status: "unauthenticated", accessToken: null, user: null, securityBannerDismissed: false });
+  });
+
+  // The actual live bug this covers: dismissing the security banner used to be local component
+  // state, which reset on every in-app navigation (every page wraps its own fresh <Shell>), not
+  // just at login. It has to survive bootstrap/silentRefresh (continuing the same session across
+  // a reload or a background token refresh) and reset only on a genuine next login.
+  describe("securityBannerDismissed", () => {
+    it("dismissSecurityBanner sets it without disturbing the rest of the state", async () => {
+      const { authClient, bridge } = await freshBridge();
+      vi.mocked(authClient.refresh).mockResolvedValue({ accessToken: "tok", expiresIn: 900, user });
+      await bridge.bootstrap();
+
+      bridge.dismissSecurityBanner();
+
+      expect(bridge.getState()).toEqual({ status: "authenticated", accessToken: "tok", user, securityBannerDismissed: true });
+    });
+
+    it("bootstrap preserves an already-dismissed banner across a page reload", async () => {
+      const { authClient, bridge } = await freshBridge();
+      vi.mocked(authClient.refresh).mockResolvedValue({ accessToken: "tok", expiresIn: 900, user });
+      await bridge.bootstrap();
+      bridge.dismissSecurityBanner();
+
+      // bootstrap() itself only ever runs once per module lifetime, so this simulates the
+      // preservation logic directly the way silentRefresh (which can genuinely run again) does.
+      const token = await bridge.silentRefresh();
+
+      expect(token).toBe("tok");
+      expect(bridge.getState().securityBannerDismissed).toBe(true);
+    });
+
+    it("login resets a previously-dismissed banner - the whole point of dismissal being per-login", async () => {
+      const { authClient, bridge } = await freshBridge();
+      vi.mocked(authClient.login).mockResolvedValue({ accessToken: "tok", expiresIn: 900, user });
+      await bridge.login("test@example.com", "hunter2");
+      bridge.dismissSecurityBanner();
+      expect(bridge.getState().securityBannerDismissed).toBe(true);
+
+      await bridge.login("test@example.com", "hunter2");
+
+      expect(bridge.getState().securityBannerDismissed).toBe(false);
+    });
+
+    it("logout resets a previously-dismissed banner", async () => {
+      const { authClient, bridge } = await freshBridge();
+      vi.mocked(authClient.login).mockResolvedValue({ accessToken: "tok", expiresIn: 900, user });
+      await bridge.login("test@example.com", "hunter2");
+      bridge.dismissSecurityBanner();
+
+      await bridge.logout();
+
+      expect(bridge.getState().securityBannerDismissed).toBe(false);
+    });
   });
 
   it("subscribe notifies listeners on every state change, and unsubscribe stops future notifications", async () => {

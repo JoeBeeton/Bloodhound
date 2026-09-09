@@ -10,5 +10,11 @@ export function useAuth() {
     }
   }, [state.status]);
 
-  return { ...state, login: bridge.login, logout: bridge.logout, completeSsoLogin: bridge.completeSsoLogin };
+  return {
+    ...state,
+    login: bridge.login,
+    logout: bridge.logout,
+    completeSsoLogin: bridge.completeSsoLogin,
+    dismissSecurityBanner: bridge.dismissSecurityBanner,
+  };
 }
