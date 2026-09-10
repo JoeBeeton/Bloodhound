@@ -239,7 +239,12 @@ public final class ExposedPathDecisionLogic {
         findings.add(finding(
                 "EXPOSURE_LIVE_SECRET_DETECTED",
                 hostname + " (" + fileLabel + ")",
-                Map.of("sourceFile", fileLabel, "patternsFound", patternNames, "matchCount", matches.size(), "previews", previews)));
+                Map.of(
+                        "sourceFile", fileLabel,
+                        "patternsFound", patternNames,
+                        "matchCount", matches.size(),
+                        "previews", previews,
+                        "url", response.url() == null ? "" : response.url())));
     }
 
     private static void addAltPortIfMatches(
@@ -277,11 +282,17 @@ public final class ExposedPathDecisionLogic {
     }
 
     private static RawFinding finding(String ruleId, String affectedAsset, ProbeResponse evidenceSource) {
+        // "url" - a live report asked for exactly this: the finding said an API schema was
+        // exposed but gave no way to see where, forcing a manual guess-and-check of every
+        // Swagger/actuator/etc. path this module actually probes. evidenceSource.url() is the
+        // exact request URL that produced this response, always present for anything that got
+        // as far as an HTTP response (see ProbeResponse's own doc comment).
         Map<String, Object> evidence = evidenceSource == null
                 ? Map.of()
                 : Map.of(
                         "status", evidenceSource.status(),
-                        "contentType", evidenceSource.contentType() == null ? "" : evidenceSource.contentType());
+                        "contentType", evidenceSource.contentType() == null ? "" : evidenceSource.contentType(),
+                        "url", evidenceSource.url() == null ? "" : evidenceSource.url());
         return finding(ruleId, affectedAsset, evidence);
     }
 

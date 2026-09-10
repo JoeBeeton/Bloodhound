@@ -54,6 +54,24 @@ class ExposedPathDecisionLogicTest {
     }
 
     /**
+     * A live report: the finding said an API schema was exposed but gave no way to see where,
+     * forcing a manual guess-and-check of every path this module probes. The evidence must carry
+     * the exact URL the positive response actually came from.
+     */
+    @Test
+    void exposedFinding_evidenceIncludesTheExactUrlProbed() {
+        String body = "{\"propertySources\":[{\"name\":\"applicationConfig\"}]}";
+        String probedUrl = "https://" + HOST + "/actuator/env";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404,
+                Map.of("EXPOSURE_ACTUATOR_ENV", new ProbeResponse(200, "application/json", (long) body.length(), body, probedUrl)));
+
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+
+        assertThat(findings).anySatisfy(f -> assertThat(f.evidence()).containsEntry("url", probedUrl));
+    }
+
+    /**
      * The critical correctness requirement: a soft-404 site that 200s every path with an identical
      * catch-all body must never produce a finding, even if that catch-all body happens to contain
      * text that would otherwise satisfy a rule's positive signature.
