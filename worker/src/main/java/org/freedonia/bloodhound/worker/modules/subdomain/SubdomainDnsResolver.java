@@ -30,6 +30,25 @@ import org.xbill.DNS.Type;
  * responses are small (unlike the large TXT record sets that forced TCP
  * there), so plain UDP is fine and considerably faster across many parallel
  * lookups.
+ *
+ * <p>A live false negative: every subdomain of a real target came back with
+ * an empty IP list here - marking all of them inactive and leaving
+ * HostFanOut with nothing to scan but the (legitimately non-resolving) apex
+ * - even though one of those subdomains demonstrably resolves (confirmed
+ * both via the host's own normal resolver and via this exact container's
+ * embedded DNS at 127.0.0.11/getent). Root cause: this machine's VPN routes
+ * 1.1.1.1 through its tunnel and applies DNS-leak-protection to it, which
+ * silently drops direct UDP/53 queries to public resolvers - the very thing
+ * this class exists to bypass local-resolver problems with. dnsjava's
+ * {@code Lookup} collapses that into the same empty result as a genuine
+ * NXDOMAIN, so there was no way to tell "really no record" from "that
+ * specific query got eaten in transit" from here. {@link #systemResolver} is
+ * a second attempt against whatever this environment's own default resolver
+ * chain resolves to (its own doc comment on why that's viable now, unlike
+ * being the sole resolver) - only consulted when the direct-to-1.1.1.1
+ * attempt comes back empty, so a genuinely correct NXDOMAIN just costs one
+ * harmless extra query, while a leak-protection-eaten query gets a real
+ * second chance instead of silently marking a live host as dead.
  */
 public class SubdomainDnsResolver {
 
@@ -38,6 +57,7 @@ public class SubdomainDnsResolver {
     private static final Duration PER_LOOKUP_TIMEOUT = Duration.ofSeconds(5);
 
     private final Resolver resolver;
+    private final Resolver systemResolver;
 
     public SubdomainDnsResolver() {
         try {
@@ -47,6 +67,19 @@ public class SubdomainDnsResolver {
         } catch (UnknownHostException e) {
             throw new IllegalStateException("failed to configure DNS resolver " + PUBLIC_RESOLVER, e);
         }
+        // No-arg SimpleResolver reads whatever this environment's own platform DNS config points
+        // at (this container's /etc/resolv.conf - Docker's embedded 127.0.0.11 here) - see this
+        // class's own doc comment for why a second, independent resolver is now worth having
+        // rather than trusting the direct public-resolver query alone.
+        Resolver fallback;
+        try {
+            SimpleResolver systemSimpleResolver = new SimpleResolver();
+            systemSimpleResolver.setTimeout(Duration.ofSeconds(3));
+            fallback = systemSimpleResolver;
+        } catch (UnknownHostException e) {
+            fallback = null;
+        }
+        this.systemResolver = fallback;
     }
 
     public Map<String, List<String>> resolveAll(Collection<String> hostnames) {
@@ -142,9 +175,17 @@ public class SubdomainDnsResolver {
     }
 
     private List<String> resolveNsOne(String hostname) {
+        List<String> primary = nsRecords(hostname, resolver);
+        if (!primary.isEmpty() || systemResolver == null) {
+            return primary;
+        }
+        return nsRecords(hostname, systemResolver);
+    }
+
+    private List<String> nsRecords(String hostname, Resolver r) {
         try {
             Lookup lookup = new Lookup(hostname, Type.NS);
-            lookup.setResolver(resolver);
+            lookup.setResolver(r);
             Record[] records = lookup.run();
             if (records == null) {
                 return List.of();
@@ -162,9 +203,17 @@ public class SubdomainDnsResolver {
     }
 
     private String resolveCnameOne(String hostname) {
+        String primary = cnameRecord(hostname, resolver);
+        if (primary != null || systemResolver == null) {
+            return primary;
+        }
+        return cnameRecord(hostname, systemResolver);
+    }
+
+    private String cnameRecord(String hostname, Resolver r) {
         try {
             Lookup lookup = new Lookup(hostname, Type.CNAME);
-            lookup.setResolver(resolver);
+            lookup.setResolver(r);
             Record[] records = lookup.run();
             if (records == null || records.length == 0) {
                 return null;
@@ -178,13 +227,26 @@ public class SubdomainDnsResolver {
     private List<String> resolveOne(String hostname) {
         List<String> ips = new ArrayList<>(queryAddresses(hostname, Type.A));
         ips.addAll(queryAddresses(hostname, Type.AAAA));
-        return ips;
+        if (!ips.isEmpty() || systemResolver == null) {
+            return ips;
+        }
+        // Direct-to-1.1.1.1 came back with nothing for both record types - see this class's own
+        // doc comment: that's ambiguous between "really nothing here" and "that query got eaten
+        // in transit", so it's worth one more attempt against this environment's own resolver
+        // before concluding the host is unreachable.
+        List<String> fallbackIps = new ArrayList<>(addressRecords(hostname, Type.A, systemResolver));
+        fallbackIps.addAll(addressRecords(hostname, Type.AAAA, systemResolver));
+        return fallbackIps;
     }
 
     private List<String> queryAddresses(String hostname, int type) {
+        return addressRecords(hostname, type, resolver);
+    }
+
+    private List<String> addressRecords(String hostname, int type, Resolver r) {
         try {
             Lookup lookup = new Lookup(hostname, type);
-            lookup.setResolver(resolver);
+            lookup.setResolver(r);
             Record[] records = lookup.run();
             if (records == null) {
                 return List.of();
