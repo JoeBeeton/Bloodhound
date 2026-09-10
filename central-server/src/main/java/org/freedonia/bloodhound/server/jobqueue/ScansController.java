@@ -72,6 +72,23 @@ public class ScansController {
                 .toList();
     }
 
+    /**
+     * Per-module-type caps on how many jobs of that type can be CLAIMED/RUNNING at once,
+     * independent of worker count - currently just ZAP_ACTIVE_SCAN (see ScanJobRepository#claim's
+     * own javadoc for why: a single shared zap sidecar, not scaled per worker). A live report
+     * ("workers 2 and 3 sit idle while a scan is running") turned out to be this cap working as
+     * intended, not a claim bug - {@link #active} already shows a capped job sitting PENDING
+     * alongside a RUNNING one of the same module_type, but gives no way to tell "queued because
+     * nothing else claimed it yet" from "queued because this module type is deliberately
+     * throttled". Kept as its own tiny endpoint rather than folded into {@link #active}'s
+     * per-run/ETA shape, and returned as a flat module_type -> limit map so a future second capped
+     * module type needs no frontend contract change, just a new entry here.
+     */
+    @GetMapping("/queue-limits")
+    public Map<String, Integer> queueLimits() {
+        return Map.of("ZAP_ACTIVE_SCAN", scanJobRepository.zapMaxConcurrentScans());
+    }
+
     private static final int MAX_RECENT_LIMIT = 200;
 
     /**

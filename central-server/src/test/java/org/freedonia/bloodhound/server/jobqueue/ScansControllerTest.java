@@ -80,6 +80,15 @@ class ScansControllerTest {
     }
 
     @Test
+    void queueLimits_returnsZapCapFromRepository() {
+        when(scanJobRepository.zapMaxConcurrentScans()).thenReturn(1);
+
+        Map<String, Integer> result = controller.queueLimits();
+
+        assertThat(result).containsExactly(Map.entry("ZAP_ACTIVE_SCAN", 1));
+    }
+
+    @Test
     void recent_mapsOrgScanRunsToRecentScanRecords_includingTerminalStatuses() {
         UUID targetId = UUID.randomUUID();
         UUID runId = UUID.randomUUID();
