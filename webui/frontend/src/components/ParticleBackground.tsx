@@ -233,7 +233,35 @@ export function ParticleBackground() {
       canvas!.style.width = `${width}px`;
       canvas!.style.height = `${height}px`;
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
-      particles = createParticles(width, height);
+
+      if (particles.length === 0) {
+        particles = createParticles(width, height);
+        return;
+      }
+      // A resize (common on a tiling WM, where switching workspaces or a layout change fires a
+      // real window.resize event) used to discard and recreate the whole field from scratch -
+      // which silently threw away any particle mid-formation, contradicting the "every particle
+      // is permanent, never removed" guarantee this component exists to uphold (see the Particle
+      // type's own doc comment). Reposition anything now outside the new bounds and only grow/
+      // shrink the pool to match the new viewport's own budget, instead of wiping it.
+      for (const p of particles) {
+        if (p.x > width) p.x = Math.random() * width;
+        if (p.y > height) p.y = Math.random() * height;
+      }
+      const targetCount = Math.min(MAX_PARTICLES, Math.round((width * height) / AREA_PER_PARTICLE));
+      if (particles.length < targetCount) {
+        const extra = Array.from({ length: targetCount - particles.length }, () =>
+          makeParticle(Math.random() * width, Math.random() * height, COLORS[Math.floor(Math.random() * COLORS.length)]),
+        );
+        particles.push(...extra);
+      } else if (particles.length > targetCount) {
+        // Only ever trims toward a smaller viewport's own density budget, and only from
+        // particles not currently part of a formation - never as a way of ending the wordmark
+        // effect itself.
+        const removable = particles.filter((p) => !p.formationTarget);
+        const toRemove = new Set(removable.slice(0, particles.length - targetCount));
+        particles = particles.filter((p) => !toRemove.has(p));
+      }
     }
 
     /**
