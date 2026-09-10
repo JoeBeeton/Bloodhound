@@ -34,6 +34,11 @@ public class ScanJobRepository {
     @Value("${bloodhound.zap.max-concurrent-scans:1}")
     private int zapMaxConcurrentScans = 1;
 
+    /** Exposes the configured cap so the UI can explain (not just show) a queued ZAP_ACTIVE_SCAN job - see ScansController#queueLimits. */
+    public int zapMaxConcurrentScans() {
+        return zapMaxConcurrentScans;
+    }
+
     private static final RowMapper<ScanJob> ROW_MAPPER = (rs, rowNum) -> new ScanJob(
             UUID.fromString(rs.getString("id")),
             UUID.fromString(rs.getString("scan_run_id")),

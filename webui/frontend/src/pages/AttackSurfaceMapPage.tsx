@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { AttackSurfaceGraph } from "../components/AttackSurfaceGraph";
 import { ErrorState } from "../components/ErrorState";
+import { JobQueuePanel } from "../components/JobQueuePanel";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { buildGraph, SUBDOMAINS_PER_TARGET_CAP } from "../lib/attackSurfaceGraph";
@@ -94,6 +95,12 @@ export function AttackSurfaceMapPage() {
         {isLoading && <p className="font-mono text-sm text-slate-400">Mapping your attack surface…</p>}
         {hasError && <ErrorState message="Failed to load the attack surface map." onRetry={() => targetsQuery.refetch()} />}
         {!isLoading && !hasError && graph && <AttackSurfaceGraph data={graph} />}
+
+        {/* The graph shows which worker is scanning which target right now - this answers the
+            question that naturally follows ("why are the other two idle?"): what's actually
+            queued, and whether an idle worker means "nothing to do" or "waiting behind a
+            deliberate per-module concurrency cap" (see JobQueuePanel's own doc comment). */}
+        <JobQueuePanel pollIntervalMs={WORKER_POLL_INTERVAL_MS} />
       </div>
     </Shell>
   );

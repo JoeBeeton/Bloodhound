@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { WorkerPanel } from "../components/WorkerPanel";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
+import { MODULE_STATUS_STYLES } from "../lib/moduleStatusStyles";
 import type { ActiveScan, ActiveScanModule, RecentScan } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -195,18 +196,6 @@ function RecentScansSection() {
 
 // This page is specifically about "what's happening right now" - it should feel live.
 const POLL_INTERVAL_MS = 4_000;
-
-const MODULE_STATUS_STYLES: Record<string, string> = {
-  PENDING: "bg-slate-700 text-slate-400",
-  CLAIMED: "bg-neon-amber/20 text-neon-amber",
-  RUNNING: "bg-neon-amber/20 text-neon-amber animate-pulse",
-  COMPLETE: "bg-neon-cyan/20 text-neon-cyan",
-  FAILED: "bg-severity-critical/20 text-severity-critical",
-  // A cancelled run drops out of this active-scans list within one poll cycle, so this is a
-  // narrow window - added anyway for the same reason every other status-style map in this sweep
-  // got it: an undefined entry falls back to the exact same style PENDING gets below.
-  CANCELLED: "bg-slate-800 text-muted",
-};
 
 function formatElapsed(startedAt: string): string {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
