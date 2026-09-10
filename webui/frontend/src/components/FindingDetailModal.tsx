@@ -24,6 +24,15 @@ async function reopenFinding(id: string): Promise<void> {
   if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to reopen finding."));
 }
 
+/** True for any evidence value worth rendering as a clickable link rather than plain text - e.g.
+ * ExposedPathDecisionLogic's "url" (the exact endpoint a finding was probed at) or
+ * BucketBruteForceModule's "checkUrl". Every such value here is a URL this app's own worker
+ * constructed and requested against an already-tracked target, not arbitrary attacker text, and
+ * the http(s):// prefix check rules out a javascript: URI. */
+function isLinkableUrl(value: unknown): value is string {
+  return typeof value === "string" && /^https?:\/\//.test(value);
+}
+
 const SEVERITY_TEXT: Record<Severity, string> = {
   CRITICAL: "text-severity-critical",
   HIGH: "text-severity-high",
@@ -201,7 +210,15 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
               <div key={key} className="flex gap-2 font-mono text-xs">
                 <dt className="shrink-0 text-slate-500">{key}:</dt>
                 <dd className="break-all text-slate-300">
-                  {typeof value === "object" ? JSON.stringify(value) : String(value)}
+                  {isLinkableUrl(value) ? (
+                    <a href={value} target="_blank" rel="noopener noreferrer" className="text-neon-cyan hover:underline">
+                      {value}
+                    </a>
+                  ) : typeof value === "object" ? (
+                    JSON.stringify(value)
+                  ) : (
+                    String(value)
+                  )}
                 </dd>
               </div>
             ))}

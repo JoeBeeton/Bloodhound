@@ -56,6 +56,26 @@ function renderModal(f: Finding, onClose = vi.fn()) {
   return { onClose, queryClient };
 }
 
+describe("FindingDetailModal - evidence", () => {
+  it("renders a URL-shaped evidence value as a clickable link", () => {
+    renderModal(finding({ evidence: { status: 200, url: "https://example.com/v3/api-docs" } }));
+
+    const link = screen.getByRole("link", { name: "https://example.com/v3/api-docs" });
+    expect(link).toHaveAttribute("href", "https://example.com/v3/api-docs");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    // A non-URL value in the same evidence blob stays plain text, not a link.
+    expect(screen.queryByRole("link", { name: "200" })).not.toBeInTheDocument();
+  });
+
+  it("does not linkify a non-http(s) string even if evidence calls it a url", () => {
+    renderModal(finding({ evidence: { url: "javascript:alert(1)" } }));
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
+  });
+});
+
 describe("FindingDetailModal - dismiss/reopen", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -154,7 +154,8 @@ public class ExposedPathFetcher {
                     response.statusCode(),
                     response.headers().firstValue("content-type").orElse(null),
                     contentLength(response),
-                    "");
+                    "",
+                    uri.toString());
         }
 
         HttpResponse<InputStream> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
@@ -165,7 +166,7 @@ public class ExposedPathFetcher {
         }
         String body = new String(buf, 0, read, StandardCharsets.UTF_8);
         return new ProbeResponse(
-                response.statusCode(), response.headers().firstValue("content-type").orElse(null), (long) read, body);
+                response.statusCode(), response.headers().firstValue("content-type").orElse(null), (long) read, body, uri.toString());
     }
 
     private Long contentLength(HttpResponse<?> response) {
