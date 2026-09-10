@@ -206,7 +206,7 @@ export function DashboardPage() {
                         <p className="font-mono text-sm text-slate-200">{f.title}</p>
                         <div className="mt-1 flex items-center justify-between gap-2">
                           <span className="font-mono text-[10px] text-muted">{f.displayId}</span>
-                          <span className="font-mono text-[11px] text-slate-500">{new Date(f.createdAt).toLocaleString()}</span>
+                          <span className="font-mono text-[11px] text-slate-500">{new Date(f.lastSeenAt).toLocaleString()}</span>
                         </div>
                       </button>
                     ))}
