@@ -66,6 +66,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Every other long-running service in this file already has this (central-server, worker,
+    # webui, juice-shop) - postgres was the one glaring exception, found only after a host reboot
+    # (which sends every container a SIGTERM) left it stopped for ~10 minutes until something
+    # that depends_on it happened to start it back up. Nothing should ever depend on a human
+    # noticing that in time.
+    restart: unless-stopped
     networks:
       - db_net
 
@@ -216,6 +222,14 @@ services:
     networks:
       - scan_net
       - targets_net
+    # A live incident: a host reboot SIGTERM'd every container, and this one (unlike
+    # central-server/worker/webui/postgres above) had no restart policy at all, so it just stayed
+    # stopped - silently, since nothing here depends_on it - until a Tier 2 scan burned all 3 of
+    # its retry attempts against a real target and an admin had to notice and restart it by hand.
+    # The zaproxy image already ships its own healthcheck (`docker inspect` confirms it, hitting
+    # its own :8080), so this alone is enough to self-heal after any future SIGTERM/crash without
+    # a manual `docker compose up`.
+    restart: unless-stopped
     # See central-server's own comment for the general finding this fixes. zap is the most
     # memory-hungry service in this whole stack by a wide margin (a live `docker stats` check
     # found it already at ~7.7GB after 42h uptime and multiple active scans, vs. low hundreds of
@@ -246,6 +260,20 @@ services:
       TOKEN: ${SCREENSHOTTER_API_KEY}
     networks:
       - scan_net
+    # Same incident as zap's own comment above - this had neither a restart policy nor a
+    # healthcheck, so a `docker compose ps` after it silently died gave no signal at all (not even
+    # a stale "healthy"/"unhealthy" - browserless/chromium defines no HEALTHCHECK of its own,
+    # confirmed via `docker inspect`). /pressure is its own lightweight status endpoint (load,
+    # queue depth, whether it's accepting more work), confirmed live to return 200 with real data
+    # once the TOKEN query param is supplied - the same token this container already requires for
+    # every other request.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/pressure?token=${SCREENSHOTTER_API_KEY}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
     # See central-server's own comment for the general finding. Headless Chrome rendering a real
     # (or candidate-typosquat) external page has its own pathological-content risk (a page that
     # never finishes loading, an intentionally huge one) - 1G is generous over the ~550MB observed
