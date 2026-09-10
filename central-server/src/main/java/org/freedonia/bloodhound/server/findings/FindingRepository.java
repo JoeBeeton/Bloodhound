@@ -420,10 +420,17 @@ public class FindingRepository {
      * Feed page (a product/UX review found the dashboard's fixed top-10 "recent findings" widget
      * was the only chronological view anywhere in the app, with no way to page further back or
      * narrow by severity/category/status/search/target/day the way the org-wide /findings page
-     * already could, plus a day-drill-down its own activity histogram needs). Same pure "most
-     * recent first" ordering throughout; status defaults to OPEN when null/blank, same convention
-     * {@link #findOpenByOrganization} already uses. {@code day} (nullable) narrows to findings
-     * created on that one calendar day - the activity histogram's click-to-filter.
+     * already could, plus a day-drill-down its own activity histogram needs). Ordered by
+     * updated_at ("last seen" - see the findings table's own doc comment: it's bumped every time
+     * a reproduced finding is touched, not just at creation), not created_at - a live report
+     * caught this ordering by created_at instead, which made a finding that keeps getting
+     * reconfirmed scan after scan drop out of a "what's happening right now" feed forever after
+     * its first appearance, while looking like a severity-based sort whenever one module (e.g.
+     * CVE correlation) happens to run last in every scan and so always produces the newest rows.
+     * status defaults to OPEN when null/blank, same convention {@link #findOpenByOrganization}
+     * already uses. {@code day} (nullable) narrows to findings created on that one calendar day -
+     * the activity histogram's click-to-filter, which counts by created_at (see
+     * {@link #findDailyActivity}), so this filters on the same column for consistency with it.
      */
     public List<OrgFinding> findRecentByOrganization(
             UUID organizationId,
@@ -458,7 +465,7 @@ public class FindingRepository {
             args.add(day);
         }
         appendSearchClause(sql, args, search);
-        sql.append(" ORDER BY f.created_at DESC LIMIT ? OFFSET ?");
+        sql.append(" ORDER BY f.updated_at DESC LIMIT ? OFFSET ?");
         args.add(limit);
         args.add(offset);
         return jdbc.query(sql.toString(), ORG_FINDING_MAPPER, args.toArray());

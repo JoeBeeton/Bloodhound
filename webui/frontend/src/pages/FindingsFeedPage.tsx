@@ -59,7 +59,10 @@ function dayBucketLabel(iso: string): string {
 function groupByDayBucket(items: OrgFinding[]): [string, OrgFinding[]][] {
   const groups: [string, OrgFinding[]][] = [];
   for (const item of items) {
-    const label = dayBucketLabel(item.createdAt);
+    // lastSeenAt, not createdAt - the feed is ordered by last-seen (see
+    // FindingRepository#findRecentByOrganization's own doc comment), so grouping by a different
+    // timestamp would produce out-of-order/non-contiguous day headers.
+    const label = dayBucketLabel(item.lastSeenAt);
     const lastGroup = groups[groups.length - 1];
     if (lastGroup && lastGroup[0] === label) {
       lastGroup[1].push(item);
@@ -278,9 +281,9 @@ export function FindingsFeedPage() {
                     </span>
                     <span
                       className="whitespace-nowrap font-mono text-[10px] uppercase tracking-widest text-slate-500"
-                      title={new Date(f.createdAt).toLocaleString()}
+                      title={new Date(f.lastSeenAt).toLocaleString()}
                     >
-                      {relativeTime(f.createdAt)}
+                      {relativeTime(f.lastSeenAt)}
                     </span>
                   </div>
                   <p className="font-mono text-sm text-slate-200">{f.title}</p>
