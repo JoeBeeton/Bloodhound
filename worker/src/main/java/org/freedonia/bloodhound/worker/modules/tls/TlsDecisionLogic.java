@@ -95,6 +95,14 @@ public final class TlsDecisionLogic {
             findings.addAll(hstsFindings(hostname, r.hstsHeaderValue()));
         }
 
+        if (r.certDnsNames() != null && !r.certDnsNames().isEmpty() && !certCovers(hostname, r.certDnsNames())) {
+            findings.add(finding(
+                    "TLS_CERT_HOSTNAME_MISMATCH",
+                    Severity.HIGH,
+                    hostname,
+                    Map.of("hostname", hostname, "certificateNames", r.certDnsNames())));
+        }
+
         if (r.certIssuer() != null && !isKnownIssuer(r.certIssuer())) {
             findings.add(finding(
                     "TLS_CT_UNEXPECTED_ISSUER", Severity.MEDIUM, hostname, Map.of("issuer", r.certIssuer())));
@@ -109,6 +117,28 @@ public final class TlsDecisionLogic {
                 Severity.HIGH,
                 hostname + ": " + protocol,
                 Map.of("hostname", hostname, "protocol", protocol));
+    }
+
+    /**
+     * RFC 6125 matching as browsers do it: exact match, or a wildcard whose single {@code *} is
+     * the entire left-most label matching exactly one label ({@code *.example.com} covers
+     * {@code a.example.com} but not {@code a.b.example.com} or {@code example.com}).
+     */
+    static boolean certCovers(String hostname, List<String> certNames) {
+        String host = hostname.toLowerCase(Locale.ROOT);
+        for (String name : certNames) {
+            if (name.equals(host)) {
+                return true;
+            }
+            if (name.startsWith("*.")) {
+                String suffix = name.substring(1); // ".example.com"
+                int firstDot = host.indexOf('.');
+                if (firstDot > 0 && host.substring(firstDot).equals(suffix)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     static boolean isKnownIssuer(String issuerDn) {
@@ -170,6 +200,14 @@ public final class TlsDecisionLogic {
                     new String[] {
                         "Weak HSTS policy",
                         "The Strict-Transport-Security header's max-age is under 6 months and/or missing includeSubDomains."
+                    },
+            "TLS_CERT_HOSTNAME_MISMATCH",
+                    new String[] {
+                        "TLS certificate does not match hostname",
+                        "The certificate presented for this host is not valid for its name - none of its Subject "
+                                + "Alternative Names cover it. Every browser and API client will refuse the connection "
+                                + "(or users will be trained to click through warnings); the host is typically serving "
+                                + "another site's certificate through a shared load balancer or a copy-pasted config."
                     },
             "TLS_CT_UNEXPECTED_ISSUER",
                     new String[] {
