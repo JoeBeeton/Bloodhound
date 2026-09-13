@@ -13,6 +13,8 @@ import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Wraps the {@code nuclei} binary (MIT-licensed, ProjectDiscovery - same
@@ -49,6 +51,8 @@ import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
  * no runtime dependency on GitHub being reachable during a scan.
  */
 public class NucleiFetcher {
+
+    private static final Logger log = LoggerFactory.getLogger(NucleiFetcher.class);
 
     // Live-verified against scanme.nmap.org: a full-corpus scan took 487s (81% of the
     // previous 600s budget) against a fairly simple two-service host - a busier real
@@ -174,9 +178,19 @@ public class NucleiFetcher {
             // findings worth ingesting. Blank output plus a non-zero exit is the "couldn't run"
             // case and must fail the job rather than masquerade as a clean scan.
             stderrDrain.join(2000);
-            if (reaped && process.exitValue() != 0 && output.isBlank()) {
-                throw new ScanModuleException("nuclei exited " + process.exitValue() + " with no output for "
-                        + hostname + ": " + stderrTail.text());
+            if (reaped && process.exitValue() != 0) {
+                if (output.isBlank()) {
+                    throw new ScanModuleException("nuclei exited " + process.exitValue() + " with no output for "
+                            + hostname + ": " + stderrTail.text());
+                }
+                // Partial results are still ingested, but a run that died part-way must not look
+                // like a clean one in the job log - this is what tells "few findings" apart from
+                // "few findings because nuclei fell over halfway through".
+                log.warn(
+                        "nuclei exited {} after producing output for {} - ingesting partial results; stderr: {}",
+                        process.exitValue(),
+                        hostname,
+                        stderrTail.text());
             }
             return output;
         } catch (IOException e) {

@@ -106,4 +106,23 @@ class ZapAlertMapperTest {
         assertThat(findings.get(0).title()).contains("999");
         assertThat(findings.get(0).description()).isEmpty();
     }
+
+    /** The ids in ZapNoiseRules were the top ZAP producers in the live findings table and carry no signal. */
+    @Test
+    void noiseOnlyPluginIds_areDroppedRegardlessOfRisk() {
+        List<RawFinding> findings = ZapAlertMapper.map(List.of(
+                alert("10104", "Informational", "http://juiceshop.local/a"), // User Agent Fuzzer
+                alert("10109", "Informational", "http://juiceshop.local/a"), // Modern Web Application
+                alert("10096", "Low", "http://juiceshop.local/a"), // Timestamp Disclosure
+                alert("10038", "Medium", "http://juiceshop.local/a"))); // CSP header not set - real
+
+        assertThat(findings).extracting(RawFinding::ruleId).containsExactly("ZAP_ALERT_10038");
+    }
+
+    @Test
+    void everyDisabledScannerIdIsAlsoIgnoredAtMapping() {
+        assertThat(ZapNoiseRules.IGNORED_PLUGIN_IDS)
+                .containsAll(ZapNoiseRules.ACTIVE_SCANNER_IDS)
+                .containsAll(ZapNoiseRules.PASSIVE_SCANNER_IDS);
+    }
 }

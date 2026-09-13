@@ -87,6 +87,7 @@ public class ZapScanRunner {
     public String runFullScan(String hostname) throws ScanModuleException {
         requireSafeHost(hostname);
         Instant deadline = Instant.now().plus(TOTAL_BUDGET);
+        disableNoiseScanners();
 
         // HTTPS first, HTTP fallback - the same order every other HTTP-fetching module in this
         // codebase already uses (see HttpHeaderFetcher), not followed here previously: this
@@ -117,6 +118,21 @@ public class ZapScanRunner {
         }
 
         return callRaw("/JSON/core/view/alerts/", Map.of("baseurl", targetUrl));
+    }
+
+    /**
+     * Before the spider, not just before ascan: passive rules evaluate every response ZAP sees,
+     * spidered ones included. Best-effort - ZapAlertMapper drops these ids anyway, so a failed
+     * call here costs wasted ZAP time, not wrong findings, and isn't worth failing the scan over.
+     * Idempotent, so it's simply repeated per run rather than tracked per ZAP instance.
+     */
+    private void disableNoiseScanners() {
+        try {
+            call("/JSON/pscan/action/disableScanners/", Map.of("ids", String.join(",", ZapNoiseRules.PASSIVE_SCANNER_IDS)));
+            call("/JSON/ascan/action/disableScanners/", Map.of("ids", String.join(",", ZapNoiseRules.ACTIVE_SCANNER_IDS)));
+        } catch (ScanModuleException e) {
+            log.warn("could not disable ZAP noise scanners - their alerts will be dropped at mapping instead: {}", e.getMessage());
+        }
     }
 
     private record SpiderResult(String targetUrl, boolean reachable) {}
