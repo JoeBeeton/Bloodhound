@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.findings.FindingPayload;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -35,6 +37,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class SubdomainIngestionService {
 
+    private static final Logger log = LoggerFactory.getLogger(SubdomainIngestionService.class);
+    static final int RESOLVER_OUTAGE_MIN_HOSTS = 10;
+
     private final SubdomainRepository subdomainRepository;
 
     public SubdomainIngestionService(SubdomainRepository subdomainRepository) {
@@ -45,6 +50,15 @@ public class SubdomainIngestionService {
             UUID targetId, Map<String, Object> rawMetadata, List<FindingPayload> reportedFindings) {
         List<Map<String, Object>> discovered = extractSubdomainList(rawMetadata);
         Set<String> existingHostnames = subdomainRepository.findHostnames(targetId);
+        Set<String> everResolved = subdomainRepository.findHostnamesEverResolved(targetId);
+        boolean resolverOutage = looksLikeResolverOutage(discovered, everResolved);
+        if (resolverOutage) {
+            log.warn(
+                    "SUBDOMAIN_ENUM for target {}: none of its {} previously-resolving hostnames resolved this run - "
+                            + "treating as a resolver outage, not a mass decommission; no stale findings, liveness unchanged",
+                    targetId,
+                    everResolved.size());
+        }
 
         List<FindingPayload> combined = new ArrayList<>(reportedFindings);
         for (Map<String, Object> entry : discovered) {
@@ -59,15 +73,16 @@ public class SubdomainIngestionService {
             String cnameTarget = entry.get("cnameTarget") == null ? null : String.valueOf(entry.get("cnameTarget"));
             String danglingService = entry.get("danglingService") == null ? null : String.valueOf(entry.get("danglingService"));
 
-            subdomainRepository.upsert(targetId, hostname, source, ipAddresses, danglingConfirmed ? cnameTarget : null);
+            subdomainRepository.upsert(
+                    targetId, hostname, source, ipAddresses, danglingConfirmed ? cnameTarget : null, !resolverOutage);
 
-            if (!isNew && ipAddresses.isEmpty()) {
-                // Already-known hostname; this run's own resolution attempt (not
-                // merely "an enumeration source didn't rediscover it" - see the
-                // upsert() javadoc) came back with nothing. Reproducing every
-                // run keeps this OPEN via the normal reconciler dedup; a later
-                // scan where it resolves again lets it resolve itself, exactly
-                // like SUBDOMAIN_DANGLING_CNAME's "reconfirmed or it closes" behavior.
+            if (!resolverOutage && everResolved.contains(hostname) && ipAddresses.isEmpty()) {
+                // A hostname that HAS resolved on a past run (last_resolved_at - see V54; not
+                // merely "is in the table", which every never-resolving CT artifact also is)
+                // and whose resolution attempt this run came back with nothing. Reproducing
+                // every run keeps this OPEN via the normal reconciler dedup; a later scan where
+                // it resolves again lets it resolve itself, exactly like
+                // SUBDOMAIN_DANGLING_CNAME's "reconfirmed or it closes" behavior.
                 combined.add(new FindingPayload(
                         "SUBDOMAIN_STALE_NOT_RESOLVING",
                         "LOW",
@@ -137,6 +152,29 @@ public class SubdomainIngestionService {
         return combined;
     }
 
+    /**
+     * A resolver outage looks like every host that has ever resolved going dark in the same run.
+     * Real estates don't do that; broken DNS on the worker does (seen live: a VPN silently eating
+     * the worker's DNS produced ~112,000 false "no longer resolving" findings on one target over
+     * a few days, then ~112,000 resolutions once it was fixed). Below the floor there isn't
+     * enough signal to call it either way, so the run is trusted.
+     */
+    static boolean looksLikeResolverOutage(List<Map<String, Object>> discovered, Set<String> everResolved) {
+        int previouslyResolvingSeen = 0;
+        int resolvedNow = 0;
+        for (Map<String, Object> entry : discovered) {
+            String hostname = String.valueOf(entry.get("hostname"));
+            if (!everResolved.contains(hostname)) {
+                continue;
+            }
+            previouslyResolvingSeen++;
+            if (!extractIpAddresses(entry.get("ipAddresses")).isEmpty()) {
+                resolvedNow++;
+            }
+        }
+        return previouslyResolvingSeen >= RESOLVER_OUTAGE_MIN_HOSTS && resolvedNow == 0;
+    }
+
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractSubdomainList(Map<String, Object> rawMetadata) {
         if (rawMetadata == null) {
@@ -156,7 +194,7 @@ public class SubdomainIngestionService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<String> extractIpAddresses(Object raw) {
+    private static List<String> extractIpAddresses(Object raw) {
         if (!(raw instanceof List<?> list)) {
             return List.of();
         }

@@ -35,12 +35,13 @@ class SubdomainIngestionServiceTest {
 
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).ruleId()).isEqualTo("SUBDOMAIN_NEW_UNEXPECTED");
-        verify(repository).upsert(eq(targetId), eq("new.example.com"), eq("CRTSH"), any(), isNull());
+        verify(repository).upsert(eq(targetId), eq("new.example.com"), eq("CRTSH"), any(), isNull(), eq(true));
     }
 
     @Test
     void alreadyKnownHostnameStillResolving_synthesizesNoNewFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("known.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("known.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -51,12 +52,13 @@ class SubdomainIngestionServiceTest {
                 List.of());
 
         assertThat(findings).isEmpty();
-        verify(repository).upsert(eq(targetId), eq("known.example.com"), eq("SUBFINDER"), any(), isNull());
+        verify(repository).upsert(eq(targetId), eq("known.example.com"), eq("SUBFINDER"), any(), isNull(), eq(true));
     }
 
     @Test
     void alreadyKnownHostnameNoLongerResolving_synthesizesStaleFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("known.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("known.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -95,6 +97,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void confirmedDanglingCnameSynthesizesFindingAndPersistsTarget() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("stale.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("stale.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -120,8 +123,7 @@ class SubdomainIngestionServiceTest {
         assertThat(finding.affectedAsset()).isEqualTo("stale.example.com");
         assertThat(finding.evidence()).containsEntry("cnameTarget", "old-bucket.s3.amazonaws.com");
 
-        verify(repository).upsert(
-                eq(targetId), eq("stale.example.com"), eq("CRTSH"), any(), eq("old-bucket.s3.amazonaws.com"));
+        verify(repository).upsert(eq(targetId), eq("stale.example.com"), eq("CRTSH"), any(), eq("old-bucket.s3.amazonaws.com"), eq(true));
     }
 
     @Test
@@ -210,6 +212,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void cnameMatchedButNotConfirmedDangling_noFindingAndTargetColumnStaysNull() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("claimed.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("claimed.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -226,6 +229,81 @@ class SubdomainIngestionServiceTest {
         // SUBDOMAIN_STALE_NOT_RESOLVING correctly fires alongside its absence.
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).ruleId()).isEqualTo("SUBDOMAIN_STALE_NOT_RESOLVING");
-        verify(repository).upsert(eq(targetId), eq("claimed.example.com"), eq("CRTSH"), any(), isNull());
+        verify(repository).upsert(eq(targetId), eq("claimed.example.com"), eq("CRTSH"), any(), isNull(), eq(true));
+    }
+
+    /**
+     * The 41,000-finding case: a hostname that is in the table only because a CT log once
+     * mentioned it, and has never resolved, is not "no longer resolving" - it never was.
+     */
+    @Test
+    void knownButNeverResolvedHostname_isNotStale() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("ct-artifact.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of());
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "ct-artifact.example.com", "ipAddresses", List.of(), "source", "CRTSH"))),
+                List.of());
+
+        assertThat(findings).isEmpty();
+        verify(repository).upsert(eq(targetId), eq("ct-artifact.example.com"), eq("CRTSH"), any(), isNull(), eq(true));
+    }
+
+    /** Every previously-resolving host dark in one run is the resolver, not the estate: no findings, liveness untouched. */
+    @Test
+    void everyPreviouslyResolvingHostDarkAtOnce_isTreatedAsResolverOutage() {
+        Set<String> hosts = new java.util.HashSet<>();
+        List<Map<String, Object>> entries = new java.util.ArrayList<>();
+        for (int i = 0; i < SubdomainIngestionService.RESOLVER_OUTAGE_MIN_HOSTS; i++) {
+            String h = "h" + i + ".example.com";
+            hosts.add(h);
+            entries.add(Map.of("hostname", h, "ipAddresses", List.of(), "source", "SUBFINDER"));
+        }
+        when(repository.findHostnames(targetId)).thenReturn(hosts);
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(hosts);
+
+        List<FindingPayload> findings =
+                service.ingestAndSynthesizeFindings(targetId, Map.of("subdomains", entries), List.of());
+
+        assertThat(findings).isEmpty();
+        verify(repository).upsert(eq(targetId), eq("h0.example.com"), eq("SUBFINDER"), any(), isNull(), eq(false));
+    }
+
+    /** One host resolving is enough to prove DNS works - the rest going dark is then a real (if large) decommission. */
+    @Test
+    void oneHostStillResolving_meansTheRestAreGenuinelyStale() {
+        Set<String> hosts = new java.util.HashSet<>();
+        List<Map<String, Object>> entries = new java.util.ArrayList<>();
+        for (int i = 0; i < SubdomainIngestionService.RESOLVER_OUTAGE_MIN_HOSTS; i++) {
+            String h = "h" + i + ".example.com";
+            hosts.add(h);
+            entries.add(Map.of("hostname", h, "ipAddresses", i == 0 ? List.of("203.0.113.5") : List.of(), "source", "SUBFINDER"));
+        }
+        when(repository.findHostnames(targetId)).thenReturn(hosts);
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(hosts);
+
+        List<FindingPayload> findings =
+                service.ingestAndSynthesizeFindings(targetId, Map.of("subdomains", entries), List.of());
+
+        assertThat(findings).hasSize(SubdomainIngestionService.RESOLVER_OUTAGE_MIN_HOSTS - 1);
+        assertThat(findings).allMatch(f -> f.ruleId().equals("SUBDOMAIN_STALE_NOT_RESOLVING"));
+    }
+
+    /** Below the floor there isn't enough signal to call an outage - a tiny estate going dark is reported as seen. */
+    @Test
+    void fewHostsAllDark_isBelowTheOutageFloorAndReportedNormally() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("a.example.com", "b.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("a.example.com", "b.example.com"));
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(
+                        Map.of("hostname", "a.example.com", "ipAddresses", List.of(), "source", "SUBFINDER"),
+                        Map.of("hostname", "b.example.com", "ipAddresses", List.of(), "source", "SUBFINDER"))),
+                List.of());
+
+        assertThat(findings).hasSize(2);
     }
 }

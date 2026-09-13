@@ -41,6 +41,18 @@ public class SubdomainRepository {
     }
 
     /**
+     * Hostnames that have resolved to an address on at least one past run - the only ones that
+     * can meaningfully be reported as "no longer resolving". See V54 for the CT-artifact flood
+     * this distinction stops.
+     */
+    public Set<String> findHostnamesEverResolved(UUID targetId) {
+        return new HashSet<>(jdbc.queryForList(
+                "SELECT hostname FROM subdomains WHERE target_id = ? AND last_resolved_at IS NOT NULL",
+                String.class,
+                targetId));
+    }
+
+    /**
      * Hostnames to include in a fanned-out scan payload, capped at {@code
      * limit} - ordered so subdomains never yet included in a fanout payload
      * (last_scanned_at is null) come first, then least-recently-included
@@ -120,14 +132,49 @@ public class SubdomainRepository {
      * finding this state transition drives.
      */
     public void upsert(UUID targetId, String hostname, String source, List<String> ipAddresses, String danglingCnameTarget) {
+        upsert(targetId, hostname, source, ipAddresses, danglingCnameTarget, true);
+    }
+
+    /**
+     * @param trustResolution false when the caller has decided this run's DNS results are not to
+     *     be believed (every previously-resolving host came back empty at once - a resolver
+     *     outage, see SubdomainIngestionService): the row is still touched (last_seen_at, source,
+     *     dangling state) but its liveness columns are left exactly as they were, so one bad run
+     *     doesn't mark a target's whole estate dead and starve the Tier 1/2 fan-out of hosts.
+     */
+    public void upsert(
+            UUID targetId,
+            String hostname,
+            String source,
+            List<String> ipAddresses,
+            String danglingCnameTarget,
+            boolean trustResolution) {
         boolean isActive = !ipAddresses.isEmpty();
+        if (!trustResolution) {
+            jdbc.update(
+                    """
+                    INSERT INTO subdomains (id, target_id, hostname, source, current_ip_addresses, is_active, dangling_cname_target)
+                    VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
+                    ON CONFLICT (target_id, hostname) DO UPDATE
+                    SET last_seen_at = now(), source = EXCLUDED.source, dangling_cname_target = EXCLUDED.dangling_cname_target
+                    """,
+                    UUID.randomUUID(),
+                    targetId,
+                    hostname,
+                    source,
+                    writeIps(ipAddresses),
+                    isActive,
+                    danglingCnameTarget);
+            return;
+        }
         jdbc.update(
                 """
-                INSERT INTO subdomains (id, target_id, hostname, source, current_ip_addresses, is_active, dangling_cname_target)
-                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
+                INSERT INTO subdomains (id, target_id, hostname, source, current_ip_addresses, is_active, dangling_cname_target, last_resolved_at)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, CASE WHEN ? THEN now() END)
                 ON CONFLICT (target_id, hostname) DO UPDATE
                 SET last_seen_at = now(), current_ip_addresses = EXCLUDED.current_ip_addresses, is_active = EXCLUDED.is_active,
-                    source = EXCLUDED.source, dangling_cname_target = EXCLUDED.dangling_cname_target
+                    source = EXCLUDED.source, dangling_cname_target = EXCLUDED.dangling_cname_target,
+                    last_resolved_at = COALESCE(EXCLUDED.last_resolved_at, subdomains.last_resolved_at)
                 """,
                 UUID.randomUUID(),
                 targetId,
@@ -135,7 +182,8 @@ public class SubdomainRepository {
                 source,
                 writeIps(ipAddresses),
                 isActive,
-                danglingCnameTarget);
+                danglingCnameTarget,
+                isActive);
     }
 
     /**
