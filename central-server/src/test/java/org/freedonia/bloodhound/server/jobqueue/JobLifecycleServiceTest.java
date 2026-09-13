@@ -97,7 +97,7 @@ class JobLifecycleServiceTest {
 
         assertThatThrownBy(() -> service.result(jobId, workerId, null, List.of(findingPayload()), Map.of(), List.of()))
                 .isInstanceOf(ResponseStatusException.class);
-        verify(resultIngestionService, never()).ingest(any(), any(), any(), any());
+        verify(resultIngestionService, never()).ingest(any(), any(), any(), any(), any());
         verify(scanJobRepository, never()).complete(any(), any(), any());
     }
 
@@ -112,7 +112,7 @@ class JobLifecycleServiceTest {
 
         verify(subdomainIngestionService).ingestAndSynthesizeFindings(eq(targetId), any(), any());
         verify(whoisIngestionService, never()).ingestAndSynthesizeFindings(any(), any(), any(), any());
-        verify(resultIngestionService).ingest(scanRunId, targetId, "SUBDOMAIN_ENUM", synthesized);
+        verify(resultIngestionService).ingest(scanRunId, targetId, "SUBDOMAIN_ENUM", null, synthesized);
     }
 
     @Test
@@ -138,7 +138,7 @@ class JobLifecycleServiceTest {
         service.result(jobId, workerId, null, List.of(), rawMetadata, List.of());
 
         verify(ctCheckResultService).handle(targetId, rawMetadata);
-        verify(resultIngestionService).ingest(scanRunId, targetId, "CT_CHECK", List.of());
+        verify(resultIngestionService).ingest(scanRunId, targetId, "CT_CHECK", null, List.of());
     }
 
     @Test
@@ -162,7 +162,7 @@ class JobLifecycleServiceTest {
         service.result(jobId, workerId, null, List.of(payload), rawMetadata, List.of());
 
         verify(typosquatIngestionService).ingest(targetId, rawMetadata);
-        verify(resultIngestionService).ingest(scanRunId, targetId, "TYPOSQUAT_MONITOR", List.of(payload));
+        verify(resultIngestionService).ingest(scanRunId, targetId, "TYPOSQUAT_MONITOR", null, List.of(payload));
     }
 
     @Test
@@ -173,7 +173,7 @@ class JobLifecycleServiceTest {
 
         service.result(jobId, workerId, null, List.of(payload), Map.of(), List.of());
 
-        verify(resultIngestionService).ingest(scanRunId, targetId, "HTTP_HEADERS", List.of(payload));
+        verify(resultIngestionService).ingest(scanRunId, targetId, "HTTP_HEADERS", null, List.of(payload));
     }
 
     private FindingPayload findingPayload() {
