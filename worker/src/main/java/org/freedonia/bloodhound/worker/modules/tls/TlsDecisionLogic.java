@@ -76,7 +76,17 @@ public final class TlsDecisionLogic {
             findings.add(legacyProtocol(hostname, "TLSv1.1"));
         }
 
-        if (r.cipherSuite() != null && isWeakCipher(r.cipherSuite())) {
+        // Two sources, one finding: the suite our own (strong-only) client negotiated can only be
+        // weak if the server has nothing better; the WeakCipherProbe result is the direct test of
+        // "will it accept a weak one if offered" and is what actually fires in practice - see
+        // WeakCipherProbe for why the first check alone had never fired.
+        if (r.weakCipherNegotiated() != null) {
+            findings.add(finding(
+                    "TLS_WEAK_CIPHER_SUITE",
+                    Severity.MEDIUM,
+                    hostname,
+                    Map.of("cipherSuite", r.weakCipherNegotiated(), "offeredOnlyWeakSuites", true)));
+        } else if (r.cipherSuite() != null && isWeakCipher(r.cipherSuite())) {
             findings.add(finding(
                     "TLS_WEAK_CIPHER_SUITE", Severity.MEDIUM, hostname, Map.of("cipherSuite", r.cipherSuite())));
         }
@@ -150,7 +160,9 @@ public final class TlsDecisionLogic {
                     new String[] {"Legacy TLS protocol supported", "The server accepted a handshake using a deprecated TLS protocol version."},
             "TLS_WEAK_CIPHER_SUITE",
                     new String[] {
-                        "Weak TLS cipher suite negotiated", "The server negotiated a cipher suite using a known-weak algorithm."
+                        "Weak TLS cipher suite accepted",
+                        "The server is willing to negotiate a cipher suite using a known-weak algorithm (RC4, DES/3DES, "
+                                + "export-grade, NULL encryption, or anonymous key exchange) when a client offers it."
                     },
             "TLS_NO_HSTS",
                     new String[] {"Missing HSTS header", "The response has no Strict-Transport-Security header."},
