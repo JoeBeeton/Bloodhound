@@ -4,15 +4,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.worker.modules.common.FallbackDnsLookup;
 import org.xbill.DNS.ARecord;
 import org.xbill.DNS.DClass;
-import org.xbill.DNS.Lookup;
 import org.xbill.DNS.Message;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.NSRecord;
 import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
-import org.xbill.DNS.Resolver;
 import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 import org.xbill.DNS.ZoneTransferException;
@@ -27,18 +26,10 @@ import org.xbill.DNS.ZoneTransferIn;
  */
 public class DnsZoneFetcher {
 
-    private static final String PUBLIC_RESOLVER = "1.1.1.1";
     private static final Duration TIMEOUT = Duration.ofSeconds(6);
 
-    private final Resolver publicResolver;
-
-    public DnsZoneFetcher() {
-        try {
-            this.publicResolver = new SimpleResolver(PUBLIC_RESOLVER);
-        } catch (java.net.UnknownHostException e) {
-            throw new IllegalStateException("failed to configure DNS resolver " + PUBLIC_RESOLVER, e);
-        }
-    }
+    /** NS/A discovery only - the AXFR and SOA probes below connect to each nameserver directly, by design. */
+    private final FallbackDnsLookup dns = new FallbackDnsLookup(false);
 
     public record NsCheckResult(String nameserver, boolean axfrAllowed, int axfrRecordCount, boolean answeredAuthoritatively) {}
 
@@ -77,35 +68,20 @@ public class DnsZoneFetcher {
 
     private List<String> queryNsHostnames(String hostname) {
         List<String> hostnames = new ArrayList<>();
-        try {
-            Lookup lookup = new Lookup(hostname, Type.NS);
-            lookup.setResolver(publicResolver);
-            Record[] records = lookup.run();
-            if (records != null) {
-                for (Record record : records) {
-                    if (record instanceof NSRecord ns) {
-                        hostnames.add(ns.getTarget().toString(true));
-                    }
-                }
+        for (Record record : dns.lookup(hostname, Type.NS).records()) {
+            if (record instanceof NSRecord ns) {
+                hostnames.add(ns.getTarget().toString(true));
             }
-        } catch (Exception ignored) {
-            // no NS records resolvable - empty list, no findings from this check
         }
         return hostnames;
     }
 
     private String resolveA(String hostname) {
-        try {
-            Lookup lookup = new Lookup(hostname, Type.A);
-            lookup.setResolver(publicResolver);
-            Record[] records = lookup.run();
-            if (records == null || records.length == 0) {
-                return null;
-            }
-            return ((ARecord) records[0]).getAddress().getHostAddress();
-        } catch (Exception e) {
+        List<Record> records = dns.lookup(hostname, Type.A).records();
+        if (records.isEmpty() || !(records.get(0) instanceof ARecord a)) {
             return null;
         }
+        return a.getAddress().getHostAddress();
     }
 
     /**
