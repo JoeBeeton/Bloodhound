@@ -9,6 +9,8 @@ import org.freedonia.bloodhound.common.scanmodule.ScanContext;
 import org.freedonia.bloodhound.common.scanmodule.ScanModule;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.common.scanmodule.ScanTier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,6 +23,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class DnsPostureModule implements ScanModule {
+
+    private static final Logger log = LoggerFactory.getLogger(DnsPostureModule.class);
 
     private final DnsRecordFetcher fetcher = new DnsRecordFetcher();
     private final DnsZoneFetcher zoneFetcher = new DnsZoneFetcher();
@@ -40,8 +44,21 @@ public class DnsPostureModule implements ScanModule {
         try {
             DnsRecords records = fetcher.fetch(context.hostname());
             List<RawFinding> findings = new ArrayList<>(DnsPostureParser.parse(context.hostname(), records));
-            findings.addAll(DnsZoneDecisionLogic.decide(zoneFetcher.fetch(context.hostname())));
-            return new ModuleResult(findings, Map.of());
+            List<DnsZoneFetcher.NsCheckResult> zoneChecks = zoneFetcher.fetch(context.hostname());
+            findings.addAll(DnsZoneDecisionLogic.decide(zoneChecks));
+            // Coverage, not findings: the AXFR/lame-delegation checks need direct TCP/53 to each
+            // nameserver, which some deployment networks block outright. Recorded so an operator
+            // can tell "no zone findings" apart from "zone checks couldn't run" - see NsCheckResult.
+            long unreachable = zoneChecks.stream().filter(r -> !r.reachable()).count();
+            if (unreachable > 0 && unreachable == zoneChecks.size()) {
+                log.warn(
+                        "none of {}'s {} nameservers accept TCP/53 from this worker - zone transfer and lame "
+                                + "delegation checks could not run (outbound port 53 blocked?)",
+                        context.hostname(),
+                        zoneChecks.size());
+            }
+            return new ModuleResult(
+                    findings, Map.of("nameserversChecked", zoneChecks.size(), "nameserversUnreachable", unreachable));
         } catch (Exception e) {
             throw new ScanModuleException("DNS posture check failed for " + context.hostname(), e);
         }
