@@ -86,4 +86,39 @@ class RulesCatalogControllerTest {
         verify(auditLogRepository)
                 .record(orgId, admin.userId(), admin.email(), "RULE_ENABLED", "RULE", "DNS_SPF_MISSING", null);
     }
+
+    /**
+     * ZAP_ALERT_* / NUCLEI_* ids have no catalog row (V55 dropped the FK that made that fatal):
+     * the disable must still write the org-scoped override and be audited, so an admin can switch
+     * off e.g. ZAP's User Agent Fuzzer - the largest rule in the findings table with no switch.
+     */
+    @Test
+    void setEnabled_passThroughRuleNotInCatalog_stillWritesOverrideAndAudits() {
+        when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq("ZAP_ALERT_10104"))).thenReturn(0);
+        when(jdbc.query(any(String.class), any(RowMapper.class), eq(orgId), eq(orgId), eq(orgId)))
+                .thenReturn(java.util.List.of(entry("ZAP_ALERT_10104", false)));
+
+        RulesCatalogEntry result = controller.setEnabled(
+                orgId, "ZAP_ALERT_10104", new RulesCatalogController.UpdateRuleEnabledRequest(false), admin);
+
+        assertThat(result.ruleId()).isEqualTo("ZAP_ALERT_10104");
+        assertThat(result.enabled()).isFalse();
+        verify(jdbc)
+                .update(
+                        org.mockito.ArgumentMatchers.contains("INSERT INTO org_rule_overrides"),
+                        eq(orgId),
+                        eq("ZAP_ALERT_10104"),
+                        eq(false));
+        verify(auditLogRepository)
+                .record(orgId, admin.userId(), admin.email(), "RULE_DISABLED", "RULE", "ZAP_ALERT_10104", null);
+    }
+
+    @Test
+    void passThroughRuleIdShape_isOnlyTheTwoScannerPrefixes() {
+        assertThat(RulesCatalogController.isPassThroughRuleId("ZAP_ALERT_10104")).isTrue();
+        assertThat(RulesCatalogController.isPassThroughRuleId("NUCLEI_deprecated-tls")).isTrue();
+        assertThat(RulesCatalogController.isPassThroughRuleId("DNS_SPF_MISSING")).isFalse();
+        assertThat(RulesCatalogController.isPassThroughRuleId("ANYTHING_ELSE")).isFalse();
+        assertThat(RulesCatalogController.isPassThroughRuleId(null)).isFalse();
+    }
 }
