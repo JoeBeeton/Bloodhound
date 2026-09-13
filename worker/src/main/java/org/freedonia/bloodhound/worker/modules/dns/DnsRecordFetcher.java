@@ -8,12 +8,10 @@ import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
-import org.xbill.DNS.Lookup;
+import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.freedonia.bloodhound.worker.modules.common.FallbackDnsLookup;
 import org.xbill.DNS.Record;
-import org.xbill.DNS.Resolver;
-import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.TXTRecord;
-import org.xbill.DNS.TextParseException;
 import org.xbill.DNS.Type;
 
 /**
@@ -21,22 +19,18 @@ import org.xbill.DNS.Type;
  * interpretation - see DnsPostureParser for that. Uses dnsjava rather than
  * raw JNDI DNS contexts (simpler API, no native deps).
  *
- * <p>Queries go directly to a public recursive resolver (Cloudflare's
- * 1.1.1.1) over TCP, rather than whatever DNS is configured in the
- * container/host. Discovered against a real target (github.com): its apex
- * TXT set is large enough (SPF plus several site-verification records) that
- * a plain UDP query through Docker's embedded DNS resolver (127.0.0.11) came
- * back SERVFAIL rather than transparently retrying over TCP itself, and a
- * DNSKEY query through the same embedded resolver came back NOTIMP - a
- * simple forwarding proxy, not a full recursive resolver. A scanning tool
- * needs complete, correct answers for every record type regardless of the
- * deployment environment's local stub resolver, so querying a known-good
- * public resolver directly is the reliable choice; TCP has no response-size
- * limit, at the cost of a few extra milliseconds per lookup.
+ * <p>Queries go to a public recursive resolver over TCP first, falling back to
+ * the platform resolver - see {@link FallbackDnsLookup} for why both halves
+ * matter. TCP because a real target's apex TXT set (github.com: SPF plus
+ * many site-verification records) can exceed what a UDP answer carries.
+ *
+ * <p>{@link #fetch} refuses to run when DNS itself is unreachable: every
+ * rule DnsPostureParser derives from this data is an absence check, so an
+ * empty answer set caused by a dead resolver would - and, before this guard,
+ * did - fire every one of them at once on domains that publish all of it.
+ * Failing the job is honest; a sheet of false "missing" findings is not.
  */
 public class DnsRecordFetcher {
-
-    private static final String PUBLIC_RESOLVER = "1.1.1.1";
 
     /**
      * Common DKIM selector names, per every ASM/security-scanner's shared
@@ -49,22 +43,22 @@ public class DnsRecordFetcher {
     private static final List<String> COMMON_DKIM_SELECTORS =
             List.of("default", "google", "selector1", "selector2", "k1", "dkim");
 
-    private final Resolver resolver;
+    private final FallbackDnsLookup dns = new FallbackDnsLookup(true);
     private final HttpClient httpClient;
 
     public DnsRecordFetcher() {
-        try {
-            SimpleResolver simpleResolver = new SimpleResolver(PUBLIC_RESOLVER);
-            simpleResolver.setTCP(true);
-            this.resolver = simpleResolver;
-        } catch (java.net.UnknownHostException e) {
-            throw new IllegalStateException("failed to configure DNS resolver " + PUBLIC_RESOLVER, e);
-        }
         this.httpClient =
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     }
 
-    public DnsRecords fetch(String hostname) {
+    public DnsRecords fetch(String hostname) throws ScanModuleException {
+        // Canary: an NS query for the target. Any answer at all (records, NXDOMAIN, NODATA) proves
+        // a resolver is reachable; only a resolver-level failure on both paths fails the job.
+        if (!dns.lookup(hostname, Type.NS).answered()) {
+            throw new ScanModuleException(
+                    "DNS resolvers unreachable - cannot assess DNS posture for " + hostname
+                            + " (refusing to report every record as missing)");
+        }
         List<String> txt = queryTxt(hostname);
         List<String> dmarcTxt = queryTxt("_dmarc." + hostname);
         boolean caaPresent = !queryRecords(hostname, Type.CAA).isEmpty();
@@ -132,16 +126,8 @@ public class DnsRecordFetcher {
         return values;
     }
 
+    /** A lookup that fails on both resolvers after the canary passed is a transient blip, logged by FallbackDnsLookup - treated as empty. */
     private List<Record> queryRecords(String name, int type) {
-        try {
-            Lookup lookup = new Lookup(name, type);
-            lookup.setResolver(resolver);
-            Record[] records = lookup.run();
-            return records == null ? List.of() : List.of(records);
-        } catch (TextParseException | IllegalArgumentException e) {
-            // Malformed name (e.g. "_dmarc." + an already-invalid hostname)
-            // or no resolver available - treat as "no records", not a hard failure.
-            return List.of();
-        }
+        return dns.lookup(name, type).records();
     }
 }
