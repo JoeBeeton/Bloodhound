@@ -5,6 +5,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
 import org.freedonia.bloodhound.worker.jobpoll.JobLogCaptureInstaller;
+import org.freedonia.bloodhound.worker.modules.tls.LegacyTlsProbeSupport;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -18,6 +19,9 @@ import org.springframework.web.client.RestClient;
 public class WorkerApplication {
 
     public static void main(String[] args) {
+        // Before SpringApplication.run: the JDK freezes its TLS protocol availability the first time
+        // any SSL class loads, and Spring's startup does plenty of that. See LegacyTlsProbeSupport.
+        LegacyTlsProbeSupport.enableLegacyProtocolProbing();
         SpringApplication.run(WorkerApplication.class, args);
     }
 

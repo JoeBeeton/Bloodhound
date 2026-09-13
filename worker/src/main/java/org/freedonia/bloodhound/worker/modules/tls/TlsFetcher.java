@@ -8,9 +8,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.SecureRandom;
-import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
@@ -23,6 +23,8 @@ import javax.net.ssl.X509TrustManager;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Raw socket/TLS work for the TLS analysis module - no interpretation, see
@@ -43,7 +45,7 @@ public class TlsFetcher {
     private static final int PORT = 443;
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int SOCKET_TIMEOUT_MS = 5000;
-    private static final String DISABLED_ALGORITHMS_PROPERTY = "jdk.tls.disabledAlgorithms";
+    private static final Logger log = LoggerFactory.getLogger(TlsFetcher.class);
 
     private static final X509TrustManager PERMISSIVE_TRUST_MANAGER = new X509TrustManager() {
         @Override
@@ -119,42 +121,37 @@ public class TlsFetcher {
     }
 
     /**
-     * Attempts a handshake restricted to exactly one legacy protocol. Modern
-     * JDKs disable TLSv1/TLSv1.1 client-side by default via the
-     * jdk.tls.disabledAlgorithms security property - without relaxing it
-     * here, every server would appear to reject these protocols regardless
-     * of what it actually supports. Relaxed only for the duration of this
-     * probe and restored in the finally block.
+     * Attempts a handshake restricted to exactly one legacy protocol. Whether the JDK will even
+     * offer TLSv1/TLSv1.1 is decided once, at JVM startup, by LegacyTlsProbeSupport (called from
+     * WorkerApplication.main) - this method used to relax jdk.tls.disabledAlgorithms itself, per
+     * probe, under a class-wide lock, and that never worked: the JDK had already frozen protocol
+     * availability during the permissive handshake that precedes this, so every probe failed with
+     * "No appropriate protocol" and the finding was dead. If startup config is ever missing again,
+     * {@code getEnabledProtocols()} comes back empty and the guard below logs it loudly instead of
+     * silently reporting "no legacy TLS" for every host.
      *
-     * <p>This mutates a JVM-wide Security property. TlsAnalysisModule now
-     * fans this fetcher out across a target's root hostname and its
-     * subdomains <em>concurrently</em> (see HostFanOut), so two threads
-     * probing two different hosts at once could otherwise race on this same
-     * global property - one thread's "restore" could clobber another's
-     * "relax" mid-handshake, corrupting both probes' results. Synchronized
-     * on the JVM-wide property itself (via this class's monitor) to keep the
-     * relax-probe-restore sequence atomic across all concurrently-fanned-out
-     * hosts; a different approach (e.g. an isolated process) would be needed
-     * if this ever needed to scale beyond one JVM's worth of concurrency.
+     * <p>setEnabledProtocols pins the probe to the one version asked for: the JDK's "TLSv1.1"
+     * context enables TLSv1.1 <em>and</em> TLSv1, so without it a TLSv1-only server would be
+     * reported as supporting TLSv1.1 as well. The negotiated version is checked for the same reason.
      */
     private boolean probeLegacyProtocol(String hostname, String protocol) {
-        synchronized (TlsFetcher.class) {
-            String original = Security.getProperty(DISABLED_ALGORITHMS_PROPERTY);
-            try {
-                String relaxed = original == null ? "" : original.replaceAll("(?i)TLSv1(\\.1)?,?\\s*", "");
-                Security.setProperty(DISABLED_ALGORITHMS_PROPERTY, relaxed);
-
-                SSLContext ctx = SSLContext.getInstance(protocol);
-                ctx.init(null, new TrustManager[] {PERMISSIVE_TRUST_MANAGER}, new SecureRandom());
-                try (SSLSocket socket = openSocket(ctx, hostname)) {
-                    socket.startHandshake();
-                    return true;
+        try {
+            SSLContext ctx = SSLContext.getInstance(protocol);
+            ctx.init(null, new TrustManager[] {PERMISSIVE_TRUST_MANAGER}, new SecureRandom());
+            try (SSLSocket socket = openSocket(ctx, hostname)) {
+                if (!Arrays.asList(socket.getEnabledProtocols()).contains(protocol)) {
+                    log.warn(
+                            "{} is not available in this JVM - LegacyTlsProbeSupport was not applied before TLS "
+                                    + "initialised; TLS_WEAK_PROTOCOL_SUPPORTED cannot fire",
+                            protocol);
+                    return false;
                 }
-            } catch (Exception e) {
-                return false;
-            } finally {
-                Security.setProperty(DISABLED_ALGORITHMS_PROPERTY, original == null ? "" : original);
+                socket.setEnabledProtocols(new String[] {protocol});
+                socket.startHandshake();
+                return protocol.equals(socket.getSession().getProtocol());
             }
+        } catch (Exception e) {
+            return false;
         }
     }
 
