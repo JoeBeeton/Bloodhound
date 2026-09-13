@@ -62,20 +62,38 @@ public class FindingRepository {
         this.objectMapper = objectMapper;
     }
 
-    public List<OpenFindingKey> findOpenKeys(UUID targetId, String moduleType) {
+    /**
+     * The open findings a job's results are reconciled against. {@code scanScope} is the host a
+     * per-host Tier 2 job was responsible for (see V53's migration comment for the flapping bug
+     * this scoping fixes), or null for a whole-target module. A scoped lookup also picks up
+     * NULL-scope rows of the same module: those are pre-V53 legacy findings the backfill couldn't
+     * attribute to a host, and the alternative - never resolving them by anything - is worse than
+     * one final flap that re-creates them under the right scope.
+     */
+    public List<OpenFindingKey> findOpenKeys(UUID targetId, String moduleType, String scanScope) {
+        if (scanScope == null) {
+            return jdbc.query(
+                    "SELECT id, rule_id, affected_asset FROM findings WHERE target_id = ? AND module_type = ? "
+                            + "AND status = 'OPEN' AND scan_scope IS NULL",
+                    KEY_MAPPER,
+                    targetId,
+                    moduleType);
+        }
         return jdbc.query(
-                "SELECT id, rule_id, affected_asset FROM findings WHERE target_id = ? AND module_type = ? AND status = 'OPEN'",
+                "SELECT id, rule_id, affected_asset FROM findings WHERE target_id = ? AND module_type = ? "
+                        + "AND status = 'OPEN' AND (scan_scope = ? OR scan_scope IS NULL)",
                 KEY_MAPPER,
                 targetId,
-                moduleType);
+                moduleType,
+                scanScope);
     }
 
-    public void insert(UUID scanRunId, UUID targetId, String moduleType, FindingPayload payload) {
+    public void insert(UUID scanRunId, UUID targetId, String moduleType, String scanScope, FindingPayload payload) {
         String displayId = nextDisplayId(targetId);
         jdbc.update(
                 "INSERT INTO findings (id, display_id, scan_run_id, target_id, module_type, rule_id, severity, category, "
-                        + "title, description, evidence, affected_asset, first_detected_scan_run_id) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)",
+                        + "title, description, evidence, affected_asset, first_detected_scan_run_id, scan_scope) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)",
                 UUID.randomUUID(),
                 displayId,
                 scanRunId,
@@ -88,7 +106,8 @@ public class FindingRepository {
                 payload.description(),
                 writeJson(payload.evidence()),
                 payload.affectedAsset(),
-                scanRunId);
+                scanRunId,
+                scanScope);
     }
 
     /**

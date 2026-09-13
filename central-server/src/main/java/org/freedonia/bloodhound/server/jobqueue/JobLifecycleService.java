@@ -159,7 +159,17 @@ public class JobLifecycleService {
         // Ingest before marking complete: if reconciliation throws, the job
         // stays CLAIMED/RUNNING and the lease reaper will retry it, rather
         // than silently completing a job whose findings never landed.
-        resultIngestionService.ingest(job.scanRunId(), job.targetId(), job.moduleType(), effectiveFindings);
+        //
+        // The scope is the per-host job's own host (null for every whole-target job): a
+        // NUCLEI_SCAN job for host A must only reconcile against host A's open findings, or it
+        // resolves every sibling host's findings on the way through - the Tier 2 flapping bug
+        // described in V53__findings_scan_scope.sql.
+        resultIngestionService.ingest(
+                job.scanRunId(),
+                job.targetId(),
+                job.moduleType(),
+                JobPayloadHost.extract(job.payloadJson()),
+                effectiveFindings);
         if (!scanJobRepository.complete(jobId, workerId, resultMetadataJson)) {
             throw notFoundOrNotOwned();
         }

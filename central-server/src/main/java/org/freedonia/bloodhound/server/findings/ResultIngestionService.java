@@ -29,7 +29,16 @@ public class ResultIngestionService {
         this.targetRepository = targetRepository;
     }
 
-    public void ingest(UUID scanRunId, UUID targetId, String moduleType, List<FindingPayload> reported) {
+    /**
+     * @param scanScope the single host this batch of results covers, when the job was one of the
+     *     per-host Tier 2 jobs ScanRunService#createDeepScan fans out - or null when the results
+     *     speak for the whole target. Findings outside the scope are neither touched nor resolved:
+     *     a per-host job reporting nothing about host B says nothing about host B. Before this
+     *     existed, every Tier 2 finding flapped RESOLVED/re-OPEN on every deep scan as sibling
+     *     host jobs completed - see V53__findings_scan_scope.sql.
+     */
+    public void ingest(
+            UUID scanRunId, UUID targetId, String moduleType, String scanScope, List<FindingPayload> reported) {
         // A product/AppSec review found rules_catalog.enabled was completely inert - not
         // checked anywhere. Filtering here (before reconciliation, not after) means a disabled
         // rule's findings are never persisted at all, AND any of its findings already open from
@@ -52,10 +61,10 @@ public class ResultIngestionService {
         List<FindingPayload> allowed =
                 disabledRuleIds.isEmpty() ? reported : reported.stream().filter(f -> !disabledRuleIds.contains(f.ruleId())).toList();
 
-        List<OpenFindingKey> currentlyOpen = findingRepository.findOpenKeys(targetId, moduleType);
+        List<OpenFindingKey> currentlyOpen = findingRepository.findOpenKeys(targetId, moduleType, scanScope);
         ReconciliationPlan plan = FindingReconciler.reconcile(currentlyOpen, allowed);
 
-        plan.toInsert().forEach(payload -> insertTolerant(scanRunId, targetId, moduleType, payload));
+        plan.toInsert().forEach(payload -> insertTolerant(scanRunId, targetId, moduleType, scanScope, payload));
         if (!plan.toTouch().isEmpty()) {
             findingRepository.touch(plan.toTouch(), scanRunId);
         }
@@ -74,9 +83,10 @@ public class ResultIngestionService {
      * already landed the exact row this one was trying to create, which is exactly the outcome
      * this insert wanted, so it's swallowed rather than failing the whole ingest.
      */
-    private void insertTolerant(UUID scanRunId, UUID targetId, String moduleType, FindingPayload payload) {
+    private void insertTolerant(
+            UUID scanRunId, UUID targetId, String moduleType, String scanScope, FindingPayload payload) {
         try {
-            findingRepository.insert(scanRunId, targetId, moduleType, payload);
+            findingRepository.insert(scanRunId, targetId, moduleType, scanScope, payload);
         } catch (DuplicateKeyException e) {
             log.debug(
                     "duplicate OPEN finding for target={} rule={} asset={} - already inserted by a concurrent ingest",

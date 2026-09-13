@@ -43,7 +43,7 @@ public class CompoundRiskAnalysisService {
         List<Finding> openFindings = findingRepository.findOpenForScoring(targetId);
         List<CompoundMatch> matches = CompoundRiskEngine.evaluate(openFindings);
         List<FindingPayload> payloads = matches.stream().map(this::toPayload).toList();
-        resultIngestionService.ingest(scanRunId, targetId, "COMPOUND_ANALYSIS", payloads);
+        resultIngestionService.ingest(scanRunId, targetId, "COMPOUND_ANALYSIS", null, payloads);
     }
 
     private FindingPayload toPayload(CompoundMatch match) {
