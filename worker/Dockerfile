@@ -93,7 +93,16 @@ RUN curl -fsSL -O \
 # created) - that flag is only appropriate for the runtime scan invocation
 # (see NucleiFetcher) to skip nuclei's own update check on every scan, not
 # for this one-time template-install step.
-RUN ./nuclei -update-templates -ud /tmp/nuclei-templates
+#
+# The chmod matters: nuclei writes the corpus with 0700 directories, so after the non-root
+# USER switch below the worker's uid 1000 couldn't read a single template. nuclei then died
+# with "FTL Could not run nuclei: no templates provided for scan" - to stderr, which
+# NucleiFetcher used to discard - and every NUCLEI_SCAN job "completed" with 0 findings for
+# two weeks before the live data (hosts with confirmed deprecated TLS, zero nuclei hits)
+# gave it away. Done in the same layer as the download so the final image doesn't carry
+# the corpus twice.
+RUN ./nuclei -update-templates -ud /tmp/nuclei-templates \
+    && chmod -R a+rX /tmp/nuclei-templates
 
 FROM ghcr.io/graalvm/jdk-community:21
 WORKDIR /app

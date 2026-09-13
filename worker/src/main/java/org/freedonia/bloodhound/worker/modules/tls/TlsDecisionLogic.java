@@ -64,11 +64,16 @@ public final class TlsDecisionLogic {
             findings.add(finding("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN", Severity.HIGH, hostname, Map.of()));
         }
 
+        // "<host>: <protocol>" (the cookie rules' "<host>: <name>" convention), not the bare protocol
+        // name this used to emit: findings dedupe on (rule, affected_asset) per target, so with the
+        // hostname only in evidence, a second host in the same target supporting TLSv1 was silently
+        // dropped as a duplicate of the first. Went unnoticed because the rule had never fired at all
+        // until the probe itself was fixed (see LegacyTlsProbeSupport).
         if (r.tls1Supported()) {
-            findings.add(finding("TLS_WEAK_PROTOCOL_SUPPORTED", Severity.HIGH, "TLSv1", Map.of("hostname", hostname)));
+            findings.add(legacyProtocol(hostname, "TLSv1"));
         }
         if (r.tls11Supported()) {
-            findings.add(finding("TLS_WEAK_PROTOCOL_SUPPORTED", Severity.HIGH, "TLSv1.1", Map.of("hostname", hostname)));
+            findings.add(legacyProtocol(hostname, "TLSv1.1"));
         }
 
         if (r.cipherSuite() != null && isWeakCipher(r.cipherSuite())) {
@@ -86,6 +91,14 @@ public final class TlsDecisionLogic {
         }
 
         return findings;
+    }
+
+    private static RawFinding legacyProtocol(String hostname, String protocol) {
+        return finding(
+                "TLS_WEAK_PROTOCOL_SUPPORTED",
+                Severity.HIGH,
+                hostname + ": " + protocol,
+                Map.of("hostname", hostname, "protocol", protocol));
     }
 
     static boolean isKnownIssuer(String issuerDn) {

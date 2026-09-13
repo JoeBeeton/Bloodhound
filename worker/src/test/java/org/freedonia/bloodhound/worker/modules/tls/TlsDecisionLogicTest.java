@@ -59,15 +59,17 @@ class TlsDecisionLogicTest {
         assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).contains("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN");
     }
 
+    /** Host in the asset, not just evidence: two hosts in one target must not dedupe into one finding. */
     @Test
-    void tls1Supported_flaggedWithProtocolAsAffectedAsset() {
+    void tls1Supported_flaggedWithHostAndProtocolAsAffectedAsset() {
         TlsFetchResult r = new TlsFetchResult(
                 NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", true, false, true,
                 "max-age=31536000; includeSubDomains", KNOWN_ISSUER);
         List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("TLS_WEAK_PROTOCOL_SUPPORTED");
-            assertThat(f.affectedAsset()).isEqualTo("TLSv1");
+            assertThat(f.affectedAsset()).isEqualTo("example.com: TLSv1");
+            assertThat(f.evidence()).containsEntry("hostname", "example.com").containsEntry("protocol", "TLSv1");
         });
     }
 

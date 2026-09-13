@@ -1,6 +1,9 @@
 package org.freedonia.bloodhound.worker.modules.nuclei;
 
-import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -68,6 +71,16 @@ public class NucleiFetcher {
      */
     private static final int MAX_OUTPUT_BYTES = 10_000_000;
 
+    /**
+     * nuclei's fatal errors ("FTL Could not run nuclei: ...") go to stderr, and it exits 1 without
+     * writing a single JSONL line. This used to be drained straight to nullOutputStream and the exit
+     * code never checked, so a nuclei that couldn't even start looked identical to a clean scan
+     * with nothing to report - which is exactly how a template-directory permission regression
+     * (see the Dockerfile) went unnoticed for two weeks of "0 findings" scans. Keeping the last
+     * few KB of stderr is enough to put the real reason in the job's error_detail.
+     */
+    private static final int STDERR_TAIL_BYTES = 4096;
+
     private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "nuclei-watchdog");
         thread.setDaemon(true);
@@ -125,10 +138,11 @@ public class NucleiFetcher {
         try {
             final Process started = pb.start();
             process = started;
+            StderrTail stderrTail = new StderrTail();
             Thread stderrDrain = new Thread(() -> {
                 try {
-                    started.getErrorStream().transferTo(OutputStream.nullOutputStream());
-                } catch (java.io.IOException ignored) {
+                    stderrTail.drain(started.getErrorStream());
+                } catch (IOException ignored) {
                 }
             });
             stderrDrain.setDaemon(true);
@@ -148,14 +162,24 @@ public class NucleiFetcher {
                 deadline.cancel(false);
             }
             // Reap only - see Zgrab2Fetcher's identical comment for why this should return near-
-            // instantly regardless of which path got here.
-            process.waitFor(2, TimeUnit.SECONDS);
+            // instantly regardless of which path got here. The reaped check guards exitValue(),
+            // which throws on a still-alive process.
+            boolean reaped = process.waitFor(2, TimeUnit.SECONDS);
             if (timedOut.get()) {
                 throw new ScanModuleException(
                         "nuclei scan of " + hostname + " exceeded the hard " + HARD_TIMEOUT_SECONDS + "s timeout");
             }
+            // stderr is only consulted when nuclei produced nothing at all: a scan that emitted
+            // real findings and then exited non-zero (a late template error, say) still has
+            // findings worth ingesting. Blank output plus a non-zero exit is the "couldn't run"
+            // case and must fail the job rather than masquerade as a clean scan.
+            stderrDrain.join(2000);
+            if (reaped && process.exitValue() != 0 && output.isBlank()) {
+                throw new ScanModuleException("nuclei exited " + process.exitValue() + " with no output for "
+                        + hostname + ": " + stderrTail.text());
+            }
             return output;
-        } catch (java.io.IOException e) {
+        } catch (IOException e) {
             throw new ScanModuleException("failed to invoke nuclei for " + hostname, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -164,6 +188,37 @@ public class NucleiFetcher {
             if (process != null && process.isAlive()) {
                 process.destroyForcibly();
             }
+        }
+    }
+
+    /**
+     * Bounded stderr capture: keeps only the last {@link #STDERR_TAIL_BYTES} so a chatty nuclei
+     * (it logs every template error at -v) can't grow this without limit, while the final fatal
+     * line - always the last thing written - is guaranteed to survive.
+     */
+    static final class StderrTail {
+        private final byte[] ring = new byte[STDERR_TAIL_BYTES];
+        private int written = 0;
+
+        void drain(InputStream stderr) throws IOException {
+            byte[] buf = new byte[1024];
+            int n;
+            while ((n = stderr.read(buf)) != -1) {
+                for (int i = 0; i < n; i++) {
+                    ring[written++ % ring.length] = buf[i];
+                }
+            }
+        }
+
+        /** Only meaningful after the draining thread has been joined - no locking, the join is the happens-before. */
+        String text() {
+            int len = Math.min(written, ring.length);
+            ByteArrayOutputStream out = new ByteArrayOutputStream(len);
+            int start = written > ring.length ? written % ring.length : 0;
+            for (int i = 0; i < len; i++) {
+                out.write(ring[(start + i) % ring.length]);
+            }
+            return out.toString(StandardCharsets.UTF_8).strip();
         }
     }
 }
