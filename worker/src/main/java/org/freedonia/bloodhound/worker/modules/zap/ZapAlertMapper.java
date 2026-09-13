@@ -34,6 +34,9 @@ public final class ZapAlertMapper {
         List<RawFinding> findings = new java.util.ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (ZapAlert alert : alerts) {
+            if (ZapNoiseRules.IGNORED_PLUGIN_IDS.contains(alert.pluginId())) {
+                continue;
+            }
             String dedupKey = alert.pluginId() + "|" + alert.url();
             if (!seen.add(dedupKey)) {
                 continue;
