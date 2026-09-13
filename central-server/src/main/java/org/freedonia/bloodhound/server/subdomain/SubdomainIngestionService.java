@@ -21,9 +21,9 @@ import org.springframework.stereotype.Service;
  * ordinary FindingPayloads and merged into the module's (normally empty)
  * reported-findings list before the standard FindingReconciler
  * dedup/resolution path runs on them - so a SUBDOMAIN_NEW_UNEXPECTED finding
- * that isn't reproduced next run (because the hostname is now already in the
- * table, so no longer "new") resolves itself automatically, matching its
- * Info/one-time-notification intent. SUBDOMAIN_DANGLING_CNAME findings work
+ * that isn't reproduced next run (because the hostname now has a
+ * last_resolved_at, so is no longer newly live) resolves itself
+ * automatically, matching its Info/one-time-notification intent. SUBDOMAIN_DANGLING_CNAME findings work
  * the same way but their "still true" condition is different: the worker
  * re-confirms takeover-eligibility live on every scan (unlike "new", which
  * is a one-time database fact), so a dangling finding only keeps
@@ -49,7 +49,6 @@ public class SubdomainIngestionService {
     public List<FindingPayload> ingestAndSynthesizeFindings(
             UUID targetId, Map<String, Object> rawMetadata, List<FindingPayload> reportedFindings) {
         List<Map<String, Object>> discovered = extractSubdomainList(rawMetadata);
-        Set<String> existingHostnames = subdomainRepository.findHostnames(targetId);
         Set<String> everResolved = subdomainRepository.findHostnamesEverResolved(targetId);
         boolean resolverOutage = looksLikeResolverOutage(discovered, everResolved);
         if (resolverOutage) {
@@ -67,7 +66,6 @@ public class SubdomainIngestionService {
                 continue;
             }
             List<String> ipAddresses = extractIpAddresses(entry.get("ipAddresses"));
-            boolean isNew = !existingHostnames.contains(hostname);
             String source = entry.get("source") == null ? "UNKNOWN" : String.valueOf(entry.get("source"));
             boolean danglingConfirmed = Boolean.TRUE.equals(entry.get("danglingConfirmed"));
             String cnameTarget = entry.get("cnameTarget") == null ? null : String.valueOf(entry.get("cnameTarget"));
@@ -94,7 +92,14 @@ public class SubdomainIngestionService {
                         Map.of("source", source)));
             }
 
-            if (isNew) {
+            // "New" means newly LIVE: the first run in which this name has ever resolved (see
+            // last_resolved_at / V54), not the first run it appeared in an enumeration source.
+            // A name that resolves to nothing is, overwhelmingly, a certificate-transparency
+            // artifact of a host that no longer exists - 78,000 of the 102,000 findings this
+            // rule had produced in this deployment were exactly that (41,267 of github.com's
+            // 41,698 "new subdomains" never resolved). Those still land in the subdomains
+            // inventory as inactive; if one later comes to life it fires then, as new surface.
+            if (!everResolved.contains(hostname) && !ipAddresses.isEmpty()) {
                 combined.add(new FindingPayload(
                         "SUBDOMAIN_NEW_UNEXPECTED",
                         "INFO",
