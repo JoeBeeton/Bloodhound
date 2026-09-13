@@ -192,4 +192,47 @@ class TlsDecisionLogicTest {
         });
         assertThat(findings.stream().filter(f -> f.ruleId().equals("TLS_WEAK_CIPHER_SUITE")).count()).isEqualTo(1);
     }
+
+    private static TlsFetchResult withCertNames(List<String> names) {
+        return new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, names);
+    }
+
+    /** The live case: a cert for one name served on a sibling hostname. */
+    @Test
+    void certificateNotCoveringHostname_flaggedHigh() {
+        List<RawFinding> findings = TlsDecisionLogic.decide(
+                "svc-v1-0.prod.example.com", withCertNames(List.of("svc.prod.example.com")), NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_CERT_HOSTNAME_MISMATCH");
+            assertThat(f.evidence()).containsEntry("certificateNames", List.of("svc.prod.example.com"));
+        });
+    }
+
+    @Test
+    void certificateCoveringHostnameExactlyOrByWildcard_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("www.example.com", withCertNames(List.of("example.com", "www.example.com")), NOW)))
+                .doesNotContain("TLS_CERT_HOSTNAME_MISMATCH");
+        assertThat(ruleIds(TlsDecisionLogic.decide("api.example.com", withCertNames(List.of("*.example.com")), NOW)))
+                .doesNotContain("TLS_CERT_HOSTNAME_MISMATCH");
+    }
+
+    /** RFC 6125: a wildcard matches exactly one label, and never the bare parent. */
+    @Test
+    void wildcardMatchesOneLabelOnly() {
+        assertThat(TlsDecisionLogic.certCovers("a.example.com", List.of("*.example.com"))).isTrue();
+        assertThat(TlsDecisionLogic.certCovers("a.b.example.com", List.of("*.example.com"))).isFalse();
+        assertThat(TlsDecisionLogic.certCovers("example.com", List.of("*.example.com"))).isFalse();
+        assertThat(TlsDecisionLogic.certCovers("A.EXAMPLE.COM", List.of("*.example.com"))).isTrue();
+    }
+
+    /** No certificate names known (weak-suite-only path, or legacy result shape) - no verdict, no finding. */
+    @Test
+    void unknownCertificateNames_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", withCertNames(null), NOW)))
+                .doesNotContain("TLS_CERT_HOSTNAME_MISMATCH");
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_CERT_HOSTNAME_MISMATCH");
+    }
 }

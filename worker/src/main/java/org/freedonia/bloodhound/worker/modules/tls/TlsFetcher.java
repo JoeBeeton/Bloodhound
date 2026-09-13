@@ -8,10 +8,16 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.SecureRandom;
+import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
@@ -97,7 +103,8 @@ public class TlsFetcher {
                 hsts.reachable(),
                 hsts.headerValue(),
                 capture.issuer(),
-                weakCipher);
+                weakCipher,
+                capture.dnsNames());
     }
 
     /** The one connection that must succeed - if we can't even complete a permissive handshake, the module fails outright. */
@@ -114,7 +121,8 @@ public class TlsFetcher {
                         leaf.getNotAfter().toInstant(),
                         session.getCipherSuite(),
                         issuer,
-                        socket.getInetAddress().getHostAddress());
+                        socket.getInetAddress().getHostAddress(),
+                        dnsNames(leaf));
             }
         } catch (Exception e) {
             throw new ScanModuleException("TLS handshake failed for " + hostname + ":" + PORT, e);
@@ -233,8 +241,39 @@ public class TlsFetcher {
         }
     }
 
+    /**
+     * The names this certificate is valid for: SAN dNSName entries (type 2), falling back to the
+     * subject CN only when there are none at all (a pre-2017 legacy shape; browsers ignore CN
+     * when a SAN extension is present, and so does this check).
+     */
+    static List<String> dnsNames(X509Certificate leaf) {
+        List<String> names = new ArrayList<>();
+        try {
+            Collection<List<?>> sans = leaf.getSubjectAlternativeNames();
+            if (sans != null) {
+                for (List<?> san : sans) {
+                    if (san.size() >= 2 && Integer.valueOf(2).equals(san.get(0)) && san.get(1) instanceof String name) {
+                        names.add(name.toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+        } catch (CertificateParsingException ignored) {
+            // unparseable SAN extension - fall through to CN
+        }
+        if (names.isEmpty()) {
+            Matcher cn = CN_PATTERN.matcher(leaf.getSubjectX500Principal().getName());
+            if (cn.find()) {
+                names.add(cn.group(1).toLowerCase(Locale.ROOT));
+            }
+        }
+        return names;
+    }
+
+    private static final Pattern CN_PATTERN = Pattern.compile("(?:^|,)CN=([^,]+)");
+
     /** connectedAddress: the SafeAddressValidator-resolved IP this handshake actually used - reused by the zgrab2 probe so it can't resolve differently. */
-    private record CapturedHandshake(java.time.Instant notAfter, String cipherSuite, String issuer, String connectedAddress) {}
+    private record CapturedHandshake(
+            java.time.Instant notAfter, String cipherSuite, String issuer, String connectedAddress, List<String> dnsNames) {}
 
     private record HstsResult(boolean reachable, String headerValue) {}
 }
