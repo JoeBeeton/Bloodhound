@@ -178,4 +178,18 @@ class TlsDecisionLogicTest {
         assertThat(TlsDecisionLogic.isKnownIssuer("CN=some,O=DigiCert Inc,C=US")).isTrue();
         assertThat(TlsDecisionLogic.isKnownIssuer("CN=x,O=Totally Legit CA,C=XX")).isFalse();
     }
+
+    /** The probe result is the check that actually fires in practice - see WeakCipherProbe. */
+    @Test
+    void weakSuiteAcceptedByProbe_flaggedEvenThoughOurOwnHandshakeWasStrong() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, "TLS_RSA_WITH_RC4_128_SHA");
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_WEAK_CIPHER_SUITE");
+            assertThat(f.evidence()).containsEntry("cipherSuite", "TLS_RSA_WITH_RC4_128_SHA");
+        });
+        assertThat(findings.stream().filter(f -> f.ruleId().equals("TLS_WEAK_CIPHER_SUITE")).count()).isEqualTo(1);
+    }
 }

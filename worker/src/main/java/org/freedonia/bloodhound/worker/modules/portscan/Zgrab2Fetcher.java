@@ -89,6 +89,22 @@ public class Zgrab2Fetcher {
         return run(command, ip);
     }
 
+    /**
+     * A TLS handshake offering exactly {@code cipherSuiteHex} (IANA codes, "0x000a" form) and
+     * nothing newer than TLS 1.2 - the way to ask "would this server accept a weak suite?", which
+     * the JDK's own client can't do (it refuses to offer RC4/3DES/DES/NULL/anon at all). Input is
+     * zgrab2's "IP,DOMAIN" form: connect to the already-validated address, SNI from the name.
+     */
+    public String tlsJson(String ip, String sniHostname, int port, List<String> cipherSuiteHex)
+            throws ScanModuleException {
+        return run(
+                List.of(
+                        "zgrab2", "tls", "-b", BLOCKLIST_FILE, "-p", String.valueOf(port),
+                        "--max-version", "771", // TLS 1.2 - otherwise zgrab2 adds the 1.3 suites regardless of the list
+                        "--cipher-suite", String.join(",", cipherSuiteHex)),
+                ip + "," + sniHostname);
+    }
+
     private String run(List<String> command, String ip) throws ScanModuleException {
         ProcessBuilder pb = new ProcessBuilder(command);
         Process process = null;

@@ -16,4 +16,19 @@ public record TlsFetchResult(
         boolean tls11Supported,
         boolean httpsReachable,
         String hstsHeaderValue,
-        String certIssuer) {}
+        String certIssuer,
+        String weakCipherNegotiated) {
+
+    /** weakCipherNegotiated: the suite the server accepted when offered only known-weak ones (see WeakCipherProbe), or null. */
+    public TlsFetchResult(
+            Instant certNotAfter,
+            boolean chainTrusted,
+            String cipherSuite,
+            boolean tls1Supported,
+            boolean tls11Supported,
+            boolean httpsReachable,
+            String hstsHeaderValue,
+            String certIssuer) {
+        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue, certIssuer, null);
+    }
+}
