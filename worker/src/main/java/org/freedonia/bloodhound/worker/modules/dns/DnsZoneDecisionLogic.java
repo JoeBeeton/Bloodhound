@@ -15,6 +15,9 @@ public final class DnsZoneDecisionLogic {
     public static List<RawFinding> decide(List<DnsZoneFetcher.NsCheckResult> results) {
         List<RawFinding> findings = new ArrayList<>();
         for (DnsZoneFetcher.NsCheckResult r : results) {
+            if (!r.reachable()) {
+                continue; // no evidence either way - see NsCheckResult
+            }
             if (r.axfrAllowed()) {
                 findings.add(new RawFinding(
                         "DNS_ZONE_TRANSFER_ALLOWED",

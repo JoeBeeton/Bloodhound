@@ -67,4 +67,12 @@ class DnsZoneDecisionLogicTest {
     void noNameservers_producesNoFindings() {
         assertThat(DnsZoneDecisionLogic.decide(List.of())).isEmpty();
     }
+
+    /** An unreachable nameserver is no evidence either way - never lame, never a transfer. */
+    @Test
+    void unreachableNameserver_yieldsNoFindingsAtAll() {
+        List<RawFinding> findings = DnsZoneDecisionLogic.decide(
+                List.of(new DnsZoneFetcher.NsCheckResult("blocked.example.com", false, 0, false, false)));
+        assertThat(findings).isEmpty();
+    }
 }

@@ -1,5 +1,8 @@
 package org.freedonia.bloodhound.worker.modules.dns;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +34,26 @@ public class DnsZoneFetcher {
     /** NS/A discovery only - the AXFR and SOA probes below connect to each nameserver directly, by design. */
     private final FallbackDnsLookup dns = new FallbackDnsLookup(false);
 
-    public record NsCheckResult(String nameserver, boolean axfrAllowed, int axfrRecordCount, boolean answeredAuthoritatively) {}
+    /**
+     * {@code reachable} is false when this vantage point could not open TCP/53 to the nameserver
+     * at all (connection refused, ICMP port-unreachable, timeout). Both probes below need a
+     * direct conversation with the nameserver, so an unreachable one yields no evidence either
+     * way - a rules audit found a deployment where outbound port 53 to arbitrary hosts is
+     * blocked by VPN policy, and DNS_ZONE_TRANSFER_ALLOWED / DNS_NS_LAME_DELEGATION had silently
+     * never been able to fire (zonetransfer.me, the canonical open-AXFR test zone, reported
+     * "not allowed"). Surfaced in DnsPostureModule's result metadata so the coverage gap is
+     * visible instead of indistinguishable from "checked, all fine".
+     */
+    public record NsCheckResult(
+            String nameserver,
+            boolean axfrAllowed,
+            int axfrRecordCount,
+            boolean answeredAuthoritatively,
+            boolean reachable) {
+        public NsCheckResult(String nameserver, boolean axfrAllowed, int axfrRecordCount, boolean answeredAuthoritatively) {
+            this(nameserver, axfrAllowed, axfrRecordCount, answeredAuthoritatively, true);
+        }
+    }
 
     public List<NsCheckResult> fetch(String hostname) {
         List<String> nsHostnames = queryNsHostnames(hostname);
@@ -59,9 +81,13 @@ public class DnsZoneFetcher {
             } catch (java.io.IOException e) {
                 continue;
             }
+            if (!tcp53Reachable(nsIp)) {
+                results.add(new NsCheckResult(ns, false, 0, true, false));
+                continue;
+            }
             boolean answersAuthoritatively = respondsAuthoritatively(hostname, nsIp);
             AxfrAttempt axfr = attemptAxfr(hostname, nsIp);
-            results.add(new NsCheckResult(ns, axfr.allowed(), axfr.recordCount(), answersAuthoritatively));
+            results.add(new NsCheckResult(ns, axfr.allowed(), axfr.recordCount(), answersAuthoritatively, true));
         }
         return results;
     }
@@ -110,6 +136,16 @@ public class DnsZoneFetcher {
     }
 
     private record AxfrAttempt(boolean allowed, int recordCount) {}
+
+    /** A plain TCP connect: AXFR is TCP-only, so a nameserver that won't take a TCP/53 connection can't be assessed here at all. */
+    private boolean tcp53Reachable(String nsIp) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(nsIp, 53), (int) TIMEOUT.toMillis());
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
 
     /**
      * A security review found this had no cap on record count/bytes at all - dnsjava's default
