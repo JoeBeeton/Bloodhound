@@ -75,11 +75,13 @@ class SubdomainIngestionServiceTest {
         assertThat(finding.affectedAsset()).isEqualTo("known.example.com");
     }
 
+    /**
+     * A first-time discovery with no address is neither stale (never known live) nor "new
+     * surface" (nothing is listening) - it's inventoried, silently. 78,000 of this rule's
+     * 102,000 historical findings were this case.
+     */
     @Test
-    void newHostnameNotResolving_notFlaggedStale() {
-        // isNew=true takes precedence - a hostname discovered for the first time with no
-        // current IP isn't "stale" (it was never known to be live), it's just a fresh
-        // discovery with no live A/AAAA - not the SUBDOMAIN_STALE_NOT_RESOLVING scenario.
+    void newHostnameNotResolving_isInventoriedButNotAFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of());
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
@@ -90,8 +92,25 @@ class SubdomainIngestionServiceTest {
                         "source", "CRTSH"))),
                 List.of());
 
-        assertThat(findings).hasSize(1);
-        assertThat(findings.get(0).ruleId()).isEqualTo("SUBDOMAIN_NEW_UNEXPECTED");
+        assertThat(findings).isEmpty();
+        verify(repository).upsert(eq(targetId), eq("brandnew.example.com"), eq("CRTSH"), any(), isNull(), eq(true));
+    }
+
+    /** A long-tracked CT artifact that comes to life IS new surface, even though it's been in the table for months. */
+    @Test
+    void knownDormantHostnameResolvingForTheFirstTime_isNew() {
+        when(repository.findHostnames(targetId)).thenReturn(Set.of("dormant.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of());
+
+        List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
+                targetId,
+                Map.of("subdomains", List.of(Map.of(
+                        "hostname", "dormant.example.com",
+                        "ipAddresses", List.of("203.0.113.9"),
+                        "source", "CRTSH"))),
+                List.of());
+
+        assertThat(findings).extracting(FindingPayload::ruleId).containsExactly("SUBDOMAIN_NEW_UNEXPECTED");
     }
 
     @Test
@@ -129,6 +148,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void publiclyListableBucketSynthesizesExposureFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("assets.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("assets.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -154,6 +174,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void bucketMatchedButNotPubliclyListable_noExposureFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("assets.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("assets.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -172,6 +193,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void confirmedNsTakeoverSynthesizesFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("legacy.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("legacy.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
@@ -197,6 +219,7 @@ class SubdomainIngestionServiceTest {
     @Test
     void nsMatchedButNotConfirmedTakeover_noFinding() {
         when(repository.findHostnames(targetId)).thenReturn(Set.of("legacy.example.com"));
+        when(repository.findHostnamesEverResolved(targetId)).thenReturn(Set.of("legacy.example.com"));
 
         List<FindingPayload> findings = service.ingestAndSynthesizeFindings(
                 targetId,
