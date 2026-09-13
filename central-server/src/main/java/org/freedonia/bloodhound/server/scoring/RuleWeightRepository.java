@@ -55,11 +55,18 @@ public class RuleWeightRepository {
      * same as before this table existed.
      */
     public Set<String> findDisabledRuleIds(UUID organizationId) {
+        // Second branch of the UNION: pass-through rule ids (ZAP_ALERT_*/NUCLEI_*) have no
+        // catalog row to COALESCE against - an override is the only state they have (V55).
         return Set.copyOf(jdbc.queryForList(
                 "SELECT rc.rule_id FROM rules_catalog rc "
                         + "LEFT JOIN org_rule_overrides oro ON oro.rule_id = rc.rule_id AND oro.organization_id = ? "
-                        + "WHERE COALESCE(oro.enabled, rc.enabled) = FALSE",
+                        + "WHERE COALESCE(oro.enabled, rc.enabled) = FALSE "
+                        + "UNION "
+                        + "SELECT oro.rule_id FROM org_rule_overrides oro "
+                        + "WHERE oro.organization_id = ? AND oro.enabled = FALSE "
+                        + "AND NOT EXISTS (SELECT 1 FROM rules_catalog rc WHERE rc.rule_id = oro.rule_id)",
                 String.class,
+                organizationId,
                 organizationId));
     }
 }

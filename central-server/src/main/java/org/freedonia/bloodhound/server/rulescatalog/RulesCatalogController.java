@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.server.rulescatalog;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
@@ -64,10 +65,41 @@ public class RulesCatalogController {
         this.auditLogRepository = auditLogRepository;
     }
 
+    /**
+     * Pass-through rules: ZAP_ALERT_<pluginId> / NUCLEI_<templateId> findings carry their rule
+     * identity from the scanner and are never seeded into rules_catalog (thousands of them, each
+     * self-describing - see ZapAlertMapper). Listed here per org from the rules that org has
+     * actually produced findings for, so the same toggle works on them; title/description come
+     * from the most recent finding, severity from the most common one, weight is ScoringEngine's
+     * default for an unknown id. An override with no matching finding yet (rare: a rule disabled,
+     * then every finding of it purged) simply doesn't show until it fires again.
+     */
+    private static final String SELECT_OBSERVED_PASSTHROUGH = "SELECT f.rule_id, 'WEB_APP' AS category, "
+            + "(SELECT severity FROM findings f2 WHERE f2.rule_id = f.rule_id AND f2.target_id = ANY(t.ids) "
+            + " GROUP BY severity ORDER BY count(*) DESC LIMIT 1) AS default_severity, "
+            + "(SELECT title FROM findings f3 WHERE f3.rule_id = f.rule_id AND f3.target_id = ANY(t.ids) "
+            + " ORDER BY created_at DESC LIMIT 1) AS title, "
+            + "(SELECT description FROM findings f4 WHERE f4.rule_id = f.rule_id AND f4.target_id = ANY(t.ids) "
+            + " ORDER BY created_at DESC LIMIT 1) AS description, "
+            + "'Reported by the scanner itself - see the finding''s own reference/solution evidence.' AS remediation_advice, "
+            + "1.0 AS weight, COALESCE(oro.enabled, TRUE) AS enabled "
+            + "FROM (SELECT array_agg(id) AS ids FROM targets WHERE organization_id = ?) t, "
+            + "(SELECT DISTINCT rule_id FROM findings WHERE target_id IN (SELECT id FROM targets WHERE organization_id = ?) "
+            + " AND (rule_id LIKE 'ZAP_ALERT_%' OR rule_id LIKE 'NUCLEI_%')) f "
+            + "LEFT JOIN org_rule_overrides oro ON oro.rule_id = f.rule_id AND oro.organization_id = ? "
+            + "ORDER BY f.rule_id";
+
+    static boolean isPassThroughRuleId(String ruleId) {
+        return ruleId != null && (ruleId.startsWith("ZAP_ALERT_") || ruleId.startsWith("NUCLEI_")) && ruleId.length() <= 200;
+    }
+
     @GetMapping("/api/v1/rules-catalog")
     public List<RulesCatalogEntry> list(@AuthenticationPrincipal JwtPrincipal principal) {
-        return jdbc.query(
-                SELECT_EFFECTIVE + " ORDER BY rc.category, rc.rule_id", ROW_MAPPER, principal.organizationId());
+        UUID orgId = principal.organizationId();
+        List<RulesCatalogEntry> entries =
+                new ArrayList<>(jdbc.query(SELECT_EFFECTIVE + " ORDER BY rc.category, rc.rule_id", ROW_MAPPER, orgId));
+        entries.addAll(jdbc.query(SELECT_OBSERVED_PASSTHROUGH, ROW_MAPPER, orgId, orgId, orgId));
+        return entries;
     }
 
     public record UpdateRuleEnabledRequest(boolean enabled) {}
@@ -82,7 +114,8 @@ public class RulesCatalogController {
         requireSameOrg(orgId, principal);
         Integer ruleExists =
                 jdbc.queryForObject("SELECT count(*) FROM rules_catalog WHERE rule_id = ?", Integer.class, ruleId);
-        if (ruleExists == null || ruleExists == 0) {
+        boolean inCatalog = ruleExists != null && ruleExists > 0;
+        if (!inCatalog && !isPassThroughRuleId(ruleId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule");
         }
         jdbc.update(
@@ -99,7 +132,14 @@ public class RulesCatalogController {
                 "RULE",
                 ruleId,
                 null);
-        return jdbc.queryForObject(SELECT_EFFECTIVE + " WHERE rc.rule_id = ?", ROW_MAPPER, orgId, ruleId);
+        if (inCatalog) {
+            return jdbc.queryForObject(SELECT_EFFECTIVE + " WHERE rc.rule_id = ?", ROW_MAPPER, orgId, ruleId);
+        }
+        return jdbc.query(SELECT_OBSERVED_PASSTHROUGH, ROW_MAPPER, orgId, orgId, orgId).stream()
+                .filter(e -> e.ruleId().equals(ruleId))
+                .findFirst()
+                .orElse(new RulesCatalogEntry(
+                        ruleId, "WEB_APP", "INFO", ruleId, "", "", java.math.BigDecimal.ONE, request.enabled()));
     }
 
     private void requireSameOrg(UUID orgId, JwtPrincipal principal) {
