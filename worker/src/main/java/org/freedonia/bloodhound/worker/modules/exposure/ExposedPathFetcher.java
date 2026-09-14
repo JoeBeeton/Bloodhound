@@ -63,6 +63,9 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_KIBANA_UNAUTH", List.of("/app/kibana")),
             ExposureProbeSpec.get("EXPOSURE_SECURITY_TXT_PRESENT", List.of("/.well-known/security.txt")),
             ExposureProbeSpec.get("EXPOSURE_DS_STORE", List.of("/.DS_Store")),
+            ExposureProbeSpec.get(
+                    "EXPOSURE_DIRECTORY_LISTING",
+                    List.of("/backup/", "/backups/", "/uploads/", "/files/", "/old/", "/tmp/", "/logs/", "/assets/", "/images/")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             ExposureProbeSpec.altPort("EXPOSURE_ELASTICSEARCH_UNAUTH", "/", 9200),
             ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500));

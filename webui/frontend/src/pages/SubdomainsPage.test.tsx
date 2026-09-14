@@ -22,6 +22,8 @@ function subdomain(hostname: string): Subdomain {
     source: "crt.sh",
     isActive: true,
     currentIpAddresses: [],
+    wafVendor: null,
+    wafScanned: false,
   };
 }
 
