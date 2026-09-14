@@ -2,16 +2,19 @@ package org.freedonia.bloodhound.server.target;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
@@ -35,9 +38,14 @@ class TargetControllerDeleteTest {
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
     private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final FindingRepository findingRepository = mock(FindingRepository.class);
     private final TargetController controller = new TargetController(
             targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository,
-            targetAuthorizationRepository, auditLogRepository, new TargetBulkCreateRateLimiter(), 100);
+            targetAuthorizationRepository, auditLogRepository, new TargetBulkCreateRateLimiter(), findingRepository, 100);
+
+    {
+        when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+    }
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

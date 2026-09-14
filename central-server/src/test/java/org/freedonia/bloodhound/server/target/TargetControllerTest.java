@@ -11,9 +11,11 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
@@ -39,6 +41,11 @@ class TargetControllerTest {
     // per-method test instance lifecycle gives every @Test its own fresh instance (same as admin's
     // own random UUID below), so this never accumulates state across tests.
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter = new TargetBulkCreateRateLimiter();
+    private final FindingRepository findingRepository = mock(FindingRepository.class);
+
+    {
+        when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+    }
 
     private TargetController controller(int maxTargetsPerOrg) {
         return new TargetController(
@@ -50,6 +57,7 @@ class TargetControllerTest {
                 targetAuthorizationRepository,
                 auditLogRepository,
                 targetBulkCreateRateLimiter,
+                findingRepository,
                 maxTargetsPerOrg);
     }
 

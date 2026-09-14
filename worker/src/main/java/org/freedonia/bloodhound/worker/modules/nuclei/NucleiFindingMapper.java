@@ -42,6 +42,11 @@ public final class NucleiFindingMapper {
             putIfPresent(evidence, "reference", result.reference());
             putIfPresent(evidence, "cveId", result.cveId());
             putIfPresent(evidence, "curlCommand", result.curlCommand());
+            // Generic, not waf-detect-specific - same "no per-template special-casing" precedent
+            // as everything else here. It just happens to matter most for waf-detect, where each
+            // matcher's name IS the vendor identified (e.g. "cloudflare") - see FindingRepository's
+            // WAF-status query, the one consumer that currently reads this key by name.
+            putIfPresent(evidence, "matcherName", result.matcherName());
             if (!result.extractedResults().isEmpty()) {
                 evidence.put("extractedResults", result.extractedResults());
             }

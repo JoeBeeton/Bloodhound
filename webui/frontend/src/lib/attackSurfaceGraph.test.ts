@@ -28,11 +28,13 @@ function target(overrides: Partial<Target> = {}): Target {
     lastScanAt: null,
     lastScanWasDeep: null,
     notes: null,
+    wafVendor: null,
+    wafScanned: false,
     ...overrides,
   };
 }
 
-function sub(id: string, hostname: string, isActive = true): Subdomain {
+function sub(id: string, hostname: string, isActive = true, wafOverrides: Partial<Pick<Subdomain, "wafVendor" | "wafScanned">> = {}): Subdomain {
   return {
     id,
     hostname,
@@ -41,6 +43,9 @@ function sub(id: string, hostname: string, isActive = true): Subdomain {
     source: "crt.sh",
     isActive,
     currentIpAddresses: [],
+    wafVendor: null,
+    wafScanned: false,
+    ...wafOverrides,
   };
 }
 
@@ -126,6 +131,27 @@ describe("buildGraph", () => {
     const active = graph.nodes.find((n) => n.id === "sub:t1:s1")!;
     const inactive = graph.nodes.find((n) => n.id === "sub:t1:s2")!;
     expect(inactive.radius).toBeLessThan(active.radius);
+  });
+
+  it("a subdomain's WAF vendor/scanned status carries straight through onto its node", () => {
+    const t = target();
+    const subs = [
+      sub("s1", "protected.example.com", true, { wafVendor: "cloudflare", wafScanned: true }),
+      sub("s2", "unprotected.example.com", true, { wafVendor: null, wafScanned: true }),
+      sub("s3", "unscanned.example.com", true, { wafVendor: null, wafScanned: false }),
+    ];
+    const graph = buildGraph([t], new Map([[t.id, { sample: subs, total: 3 }]]));
+
+    expect(graph.nodes.find((n) => n.id === "sub:t1:s1")).toMatchObject({ wafVendor: "cloudflare", wafScanned: true });
+    expect(graph.nodes.find((n) => n.id === "sub:t1:s2")).toMatchObject({ wafVendor: null, wafScanned: true });
+    expect(graph.nodes.find((n) => n.id === "sub:t1:s3")).toMatchObject({ wafVendor: null, wafScanned: false });
+  });
+
+  it("a target's own WAF vendor/scanned status carries through onto its node", () => {
+    const t = target({ wafVendor: "akamai", wafScanned: true });
+    const graph = buildGraph([t], new Map());
+
+    expect(graph.nodes.find((n) => n.id === "target:t1")).toMatchObject({ wafVendor: "akamai", wafScanned: true });
   });
 
   it("multiple targets each get their own independent subtree, no cross-links", () => {

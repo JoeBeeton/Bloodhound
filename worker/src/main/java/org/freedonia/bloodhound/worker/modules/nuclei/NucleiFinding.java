@@ -13,4 +13,9 @@ public record NucleiFinding(
         String reference,
         List<String> extractedResults,
         String curlCommand,
-        String cveId) {}
+        String cveId,
+        /** Which of a template's several named matchers actually fired - null for a template with
+         * only one, unnamed matcher. Several templates (waf-detect chief among them - its "name"
+         * field per matcher is literally the WAF vendor, e.g. "cloudflare") only distinguish what
+         * was actually found via this field, not template-id alone. */
+        String matcherName) {}

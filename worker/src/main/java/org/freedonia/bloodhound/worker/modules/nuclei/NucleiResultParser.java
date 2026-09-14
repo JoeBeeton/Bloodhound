@@ -51,7 +51,8 @@ public final class NucleiResultParser {
                     joinArray(info.path("reference")),
                     toStringList(node.path("extracted-results")),
                     text(node, "curl-command"),
-                    text(info.path("classification"), "cve-id")));
+                    text(info.path("classification"), "cve-id"),
+                    text(node, "matcher-name")));
         }
         return results;
     }

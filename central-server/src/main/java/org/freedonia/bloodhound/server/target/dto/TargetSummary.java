@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.target.dto;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.findings.FindingRepository.WafStatus;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.target.Target;
 
@@ -25,19 +26,28 @@ public record TargetSummary(
         Instant lastScanAt,
         /** Null alongside lastScanAt when there's no scan yet; otherwise true for a Tier 2 deep scan, false for a regular Tier 1 scan. */
         Boolean lastScanWasDeep,
-        String notes) {
+        String notes,
+        /** Same meaning as SubdomainSummary's own wafVendor - the WAF nuclei identified on this target's own apex hostname, if any. */
+        String wafVendor,
+        /** Same meaning as SubdomainSummary's own wafScanned. */
+        boolean wafScanned) {
 
     /** No scan has ever completed for this target yet - score/grade are absent, not zero. */
     public static TargetSummary from(Target target) {
-        return from(target, null, null, null);
+        return from(target, null, null, null, null);
     }
 
     public static TargetSummary from(Target target, ScoreSnapshot latestScore) {
-        return from(target, latestScore, null, null);
+        return from(target, latestScore, null, null, null);
     }
 
     public static TargetSummary from(
             Target target, ScoreSnapshot latestScore, Instant lastScanAt, Boolean lastScanWasDeep) {
+        return from(target, latestScore, lastScanAt, lastScanWasDeep, null);
+    }
+
+    public static TargetSummary from(
+            Target target, ScoreSnapshot latestScore, Instant lastScanAt, Boolean lastScanWasDeep, WafStatus wafStatus) {
         return new TargetSummary(
                 target.id(),
                 target.hostname(),
@@ -53,6 +63,8 @@ public record TargetSummary(
                 latestScore != null ? latestScore.tier1Grade() : null,
                 lastScanAt,
                 lastScanWasDeep,
-                target.notes());
+                target.notes(),
+                wafStatus != null ? wafStatus.vendor() : null,
+                wafStatus != null && wafStatus.scanned());
     }
 }

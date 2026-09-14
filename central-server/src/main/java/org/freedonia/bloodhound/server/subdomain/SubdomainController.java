@@ -3,8 +3,11 @@ package org.freedonia.bloodhound.server.subdomain;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.findings.FindingRepository.WafStatus;
 import org.freedonia.bloodhound.server.subdomain.dto.SubdomainSummary;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
@@ -31,10 +34,13 @@ public class SubdomainController {
 
     private final SubdomainRepository subdomainRepository;
     private final TargetRepository targetRepository;
+    private final FindingRepository findingRepository;
 
-    public SubdomainController(SubdomainRepository subdomainRepository, TargetRepository targetRepository) {
+    public SubdomainController(
+            SubdomainRepository subdomainRepository, TargetRepository targetRepository, FindingRepository findingRepository) {
         this.subdomainRepository = subdomainRepository;
         this.targetRepository = targetRepository;
+        this.findingRepository = findingRepository;
     }
 
     /**
@@ -58,8 +64,9 @@ public class SubdomainController {
         int boundedLimit = Math.clamp(limit, 1, MAX_LIMIT);
         int boundedOffset = Math.max(offset, 0);
 
+        Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
         List<SubdomainSummary> page = subdomainRepository.findByTarget(id, hostname, boundedLimit, boundedOffset).stream()
-                .map(SubdomainSummary::from)
+                .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
                 .toList();
         int totalCount = subdomainRepository.countByTarget(id, hostname);
 
@@ -110,9 +117,10 @@ public class SubdomainController {
         targetRepository
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
         return subdomainRepository
                 .findByTargetAndHostname(id, hostname)
-                .map(SubdomainSummary::from)
+                .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 }

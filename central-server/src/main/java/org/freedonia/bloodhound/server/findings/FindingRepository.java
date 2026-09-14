@@ -6,9 +6,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -610,6 +612,52 @@ public class FindingRepository {
                 Integer.class,
                 scanRunId);
         return count != null ? count : 0;
+    }
+
+    /** {@code vendor} is the WAF product nuclei's waf-detect template identified (e.g. "cloudflare"), or null if
+     * either no WAF was detected or this host hasn't been scanned by nuclei at all - {@code scanned}
+     * disambiguates those two, see {@link #findWafStatusByTarget}. */
+    public record WafStatus(String vendor, boolean scanned) {}
+
+    /**
+     * One {@link WafStatus} per hostname nuclei has scanned for this target (root apex and/or
+     * subdomains - both flow through the same per-host {@code scan_scope}, see V53's migration).
+     * {@code scanned=true} comes from the presence of ANY open {@code NUCLEI_*} finding for that
+     * host - nuclei's template corpus is large enough (10,000+ templates) that a real, reachable
+     * web host essentially always trips at least one INFO-level template (tech-detect,
+     * missing-security-headers, etc.), so "at least one nuclei finding exists" is a reliable proxy
+     * for "nuclei successfully scanned this host", without needing to separately plumb through
+     * scan_jobs/last_scanned_at just for this. The one real edge case - a host nuclei scanned but
+     * that happened to trip literally nothing - reads as "not yet scanned" instead of "scanned,
+     * clean"; accepted as a good-enough approximation, same tradeoff this codebase already makes
+     * for several other "no direct signal, use a strong correlate instead" cases (see
+     * WHOIS_REGISTRANT_CHANGED's privacy-redaction note, for one). {@code vendor} comes
+     * specifically from {@code NUCLEI_waf-detect}'s {@code matcherName} evidence key - see
+     * NucleiFindingMapper's own comment for why that key (not something waf-detect-specific) is
+     * where the vendor name lives.
+     */
+    public Map<String, WafStatus> findWafStatusByTarget(UUID targetId) {
+        Map<String, String> vendorByHost = new HashMap<>();
+        Set<String> scannedHosts = new HashSet<>();
+        jdbc.query(
+                "SELECT scan_scope, rule_id, evidence->>'matcherName' AS vendor FROM findings "
+                        + "WHERE target_id = ? AND status = 'OPEN' AND rule_id LIKE 'NUCLEI_%' AND scan_scope IS NOT NULL",
+                rs -> {
+                    String host = rs.getString("scan_scope");
+                    scannedHosts.add(host);
+                    if ("NUCLEI_waf-detect".equals(rs.getString("rule_id"))) {
+                        String vendor = rs.getString("vendor");
+                        if (vendor != null && !vendor.isBlank()) {
+                            vendorByHost.put(host, vendor);
+                        }
+                    }
+                },
+                targetId);
+        Map<String, WafStatus> result = new HashMap<>();
+        for (String host : scannedHosts) {
+            result.put(host, new WafStatus(vendorByHost.get(host), true));
+        }
+        return result;
     }
 
     private String writeJson(Object value) {
