@@ -5,7 +5,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
@@ -53,7 +55,15 @@ public final class DeepPortScanDecisionLogic {
             byPort.computeIfAbsent(detail.portId(), p -> new ArrayList<>()).add(detail);
         }
 
+        Set<Integer> openAdminPorts = byPort.keySet().stream()
+                .filter(PortScanDecisionLogic.ADMIN_DB_PORTS::contains)
+                .collect(Collectors.toSet());
+        boolean promiscuous = PortScanDecisionLogic.isPromiscuousPortPattern(openAdminPorts);
+
         List<RawFinding> findings = new ArrayList<>();
+        if (promiscuous) {
+            findings.add(PortScanDecisionLogic.promiscuousPortFinding(hostname, openAdminPorts));
+        }
         for (Map.Entry<Integer, List<PortDetail>> entry : byPort.entrySet()) {
             int portId = entry.getKey();
             List<PortDetail> details = entry.getValue();
@@ -76,16 +86,21 @@ public final class DeepPortScanDecisionLogic {
                 evidence.put("version", representative.serviceVersion());
             }
 
+            // See PortScanDecisionLogic#isPromiscuousPortPattern's own doc: when most/all admin
+            // ports answer at once, skip the misleading per-port claim in favor of the single
+            // promiscuousPortFinding already added above.
             if (PortScanDecisionLogic.ADMIN_DB_PORTS.contains(portId)) {
-                findings.add(new RawFinding(
-                        "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
-                        Severity.HIGH,
-                        Category.NETWORK,
-                        "Administrative/database service reachable from the internet",
-                        "A port commonly used by a database or remote-administration service was found open and reachable"
-                                + " (deep scan identified it as " + representative.serviceSummary() + ").",
-                        hostname + ":" + portId,
-                        evidence));
+                if (!promiscuous) {
+                    findings.add(new RawFinding(
+                            "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
+                            Severity.HIGH,
+                            Category.NETWORK,
+                            "Administrative/database service reachable from the internet",
+                            "A port commonly used by a database or remote-administration service was found open and reachable"
+                                    + " (deep scan identified it as " + representative.serviceSummary() + ").",
+                            hostname + ":" + portId,
+                            evidence));
+                }
             } else if (PortScanDecisionLogic.UNENCRYPTED_MGMT_PORTS.contains(portId)) {
                 findings.add(new RawFinding(
                         "PORT_OPEN_UNENCRYPTED_MGMT",

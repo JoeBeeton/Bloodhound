@@ -78,4 +78,33 @@ class PortScanDecisionLogicTest {
         assertThat(ruleIds(findings))
                 .containsExactlyInAnyOrder("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", "PORT_OPEN_UNENCRYPTED_MGMT");
     }
+
+    /** Below the threshold - each of a handful of admin ports still gets its own specific finding. */
+    @Test
+    void fourAdminPortsOpen_stillReportedIndividually_belowPromiscuousThreshold() {
+        List<RawFinding> findings =
+                PortScanDecisionLogic.decide("example.com", ipv4(List.of(3389, 3306, 5432, 27017)));
+        assertThat(ruleIds(findings)).containsOnly("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+        assertThat(findings).hasSize(4);
+    }
+
+    /** The live incident this exists for: real hosts with all 9 ADMIN_DB_PORTS open at once. */
+    @Test
+    void allNineAdminPortsOpen_oneSinglePromiscuousFinding_notNineIndividualOnes() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide(
+                "joinbeta.example.co.uk", ipv4(List.of(3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984)));
+        assertThat(ruleIds(findings)).containsExactly("NETWORK_PROMISCUOUS_PORT_RESPONSE");
+        assertThat(findings.get(0).severity().name()).isEqualTo("INFO");
+        assertThat(findings.get(0).evidence().get("openAdminPorts"))
+                .isEqualTo(List.of(1433, 1521, 3306, 3389, 5432, 5900, 5984, 6379, 27017));
+    }
+
+    /** A non-admin unencrypted-mgmt port finding still fires normally alongside the promiscuous one. */
+    @Test
+    void promiscuousAdminPorts_plusAnUnencryptedMgmtPort_bothReported() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide(
+                "example.com", ipv4(List.of(3389, 3306, 5432, 27017, 6379, 21)));
+        assertThat(ruleIds(findings))
+                .containsExactlyInAnyOrder("NETWORK_PROMISCUOUS_PORT_RESPONSE", "PORT_OPEN_UNENCRYPTED_MGMT");
+    }
 }

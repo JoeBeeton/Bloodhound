@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
@@ -15,6 +16,54 @@ public final class PortScanDecisionLogic {
 
     static final Set<Integer> ADMIN_DB_PORTS = Set.of(3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984);
     static final Set<Integer> UNENCRYPTED_MGMT_PORTS = Set.of(21, 23);
+
+    /**
+     * Found live: two real hosts (example.co.uk's joinbeta/pioneers subdomains) both showed every
+     * single one of {@link #ADMIN_DB_PORTS}' 9 entries open at once - RDP, MySQL, Postgres,
+     * MongoDB, Redis, MSSQL, Oracle, VNC, and CouchDB, simultaneously, on the same host. No real
+     * infrastructure runs all nine of those unrelated vendor protocols on one box exposed to the
+     * internet; this is the signature of a firewall/load balancer/WAF accepting TCP connections
+     * on every port rather than nine genuinely exposed services. Confirmed independently, live,
+     * against the raw sockets themselves (not just our own scanner): a passive read from port
+     * 3306 (MySQL, which unconditionally sends its handshake packet unprompted the instant a
+     * real server accepts a connection) returned zero bytes after several seconds, and an
+     * explicit Redis PING sent to port 6379 got no +PONG reply at all - both null results
+     * regardless of the specific host or port, which real running services never produce.
+     * Deliberately a simple absolute-count threshold (not, say, "ADMIN_DB_PORTS.size()", which
+     * would only catch the literal all-nine case): a host that happens to expose two or three of
+     * these for a real, if risky, reason is still worth its own specific per-port findings; five
+     * or more distinct, unrelated database/admin protocols all answering at once is past what any
+     * legitimate single host would ever combine.
+     */
+    static final int PROMISCUOUS_PORT_THRESHOLD = 5;
+
+    /**
+     * True when {@code openAdminPorts} (the subset of {@link #ADMIN_DB_PORTS} found open on one
+     * host) is large enough that treating each one as a genuine, independently-exposed service
+     * would be misleading - see {@link #PROMISCUOUS_PORT_THRESHOLD}'s own comment for the live
+     * incident this exists to catch.
+     */
+    static boolean isPromiscuousPortPattern(Set<Integer> openAdminPorts) {
+        return openAdminPorts.size() >= PROMISCUOUS_PORT_THRESHOLD;
+    }
+
+    static RawFinding promiscuousPortFinding(String hostname, Set<Integer> openAdminPorts) {
+        List<Integer> sortedPorts = openAdminPorts.stream().sorted().toList();
+        return new RawFinding(
+                "NETWORK_PROMISCUOUS_PORT_RESPONSE",
+                Severity.INFO,
+                Category.NETWORK,
+                "Unusually many admin/database ports appear open at once",
+                sortedPorts.size() + " of " + ADMIN_DB_PORTS.size() + " commonly-flagged administrative/database "
+                        + "ports (covering several unrelated vendor protocols) all appear open on this host "
+                        + "simultaneously - a pattern real infrastructure essentially never produces, and much more "
+                        + "consistent with a firewall, load balancer, or WAF accepting TCP connections on every "
+                        + "port than with that many distinct services genuinely being exposed. Reported here "
+                        + "instead of as individual per-port findings so the ambiguity is visible rather than "
+                        + "implying confirmed exposure of every listed service.",
+                hostname,
+                Map.of("openAdminPorts", sortedPorts));
+    }
 
     private PortScanDecisionLogic() {}
 
@@ -37,7 +86,14 @@ public final class PortScanDecisionLogic {
             }
         });
 
+        Set<Integer> openAdminPorts =
+                familiesByPort.keySet().stream().filter(ADMIN_DB_PORTS::contains).collect(Collectors.toSet());
+        boolean promiscuous = isPromiscuousPortPattern(openAdminPorts);
+
         List<RawFinding> findings = new ArrayList<>();
+        if (promiscuous) {
+            findings.add(promiscuousPortFinding(hostname, openAdminPorts));
+        }
         for (Map.Entry<Integer, List<String>> entry : familiesByPort.entrySet()) {
             int port = entry.getKey();
             // Sorted for deterministic evidence: openPortsByFamily is frequently a
@@ -50,15 +106,22 @@ public final class PortScanDecisionLogic {
             evidence.put("port", port);
             evidence.put("addressFamilies", addressFamilies);
 
+            // See isPromiscuousPortPattern's own doc: when most/all of ADMIN_DB_PORTS answer at
+            // once, the individual per-port "this specific service is exposed" claim is more
+            // likely a firewall/LB artifact than nine real findings - promiscuousPortFinding
+            // above already surfaces the ambiguity as a single finding, so skip the misleading
+            // per-port ones rather than reporting both.
             if (ADMIN_DB_PORTS.contains(port)) {
-                findings.add(new RawFinding(
-                        "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
-                        Severity.HIGH,
-                        Category.NETWORK,
-                        "Administrative/database service reachable from the internet",
-                        "A port commonly used by a database or remote-administration service was found open and reachable.",
-                        hostname + ":" + port,
-                        evidence));
+                if (!promiscuous) {
+                    findings.add(new RawFinding(
+                            "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
+                            Severity.HIGH,
+                            Category.NETWORK,
+                            "Administrative/database service reachable from the internet",
+                            "A port commonly used by a database or remote-administration service was found open and reachable.",
+                            hostname + ":" + port,
+                            evidence));
+                }
             } else if (UNENCRYPTED_MGMT_PORTS.contains(port)) {
                 findings.add(new RawFinding(
                         "PORT_OPEN_UNENCRYPTED_MGMT",
