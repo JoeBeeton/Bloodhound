@@ -221,8 +221,27 @@ public class ScanJobRepository {
      * {@code created_at ASC} has no notion of "target" at all, so one target with enough queued
      * work can monopolize every worker for as long as its queue lasts. Ranking by
      * (target_rank, created_at) instead means every target's *oldest* job is preferred over any
-     * target's *second*-oldest job - each target gets a turn before any target gets a second turn,
-     * which is the round-robin fairness a shared, multi-tenant queue actually needs.
+     * target's *second*-oldest job - each target gets a turn before any target gets a second turn.
+     *
+     * <p>{@code target_last_claimed}'s {@code last_claimed_at ASC} is the tie-break used when two
+     * targets' rows both land on {@code target_rank = 1} at once - found live, the hard way again,
+     * the very next incident after the fix above: {@code target_rank} alone isn't enough when two
+     * targets' remaining queues are both down to "one job away from their own rank 1" at the same
+     * time, which happens constantly for two large, simultaneously-running scans. The previous
+     * tie-break here was {@code sj.created_at ASC} - the job's own fixed insertion timestamp - which
+     * sounds like a reasonable "oldest first" rule but is fatal for fairness once two targets are
+     * repeatedly tied: example.co.uk's batch of ~60 jobs was inserted a mere 1.6 SECONDS before
+     * example.finance's batch of ~48 (both from the same original scan-trigger call, sequential
+     * inserts), so example.co.uk's rank-1 job's created_at was *permanently* a hair earlier than
+     * example.finance's - not a one-time tie-break but the same fixed ordering winning every single
+     * time a worker freed up, for the example.finance scan's entire remaining run (its 11 ZAP_ACTIVE_SCAN
+     * jobs sat at 0 attempts the whole time). A job's own created_at can never change, so nothing
+     * about that ordering was ever going to self-correct. last_claimed_at instead asks "when did
+     * ANY job for this target last get handed to a worker" - the target that's gone longest without
+     * being served wins the tie, and after it's served, its own last_claimed_at moves to "now",
+     * naturally rotating priority to whichever target is next most overdue. A target with no claim
+     * history at all (COALESCE to epoch) sorts first, same as it should. sj.created_at remains the
+     * final fallback for the vanishingly rare case two targets' last_claimed_at are identical.
      */
     public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes) {
         String sql =
@@ -232,9 +251,16 @@ public class ScanJobRepository {
                     FROM scan_jobs
                     WHERE status = 'PENDING' AND run_after <= now()
                 ),
+                target_last_claimed AS (
+                    SELECT target_id, MAX(claimed_at) AS last_claimed_at
+                    FROM scan_jobs
+                    WHERE claimed_at IS NOT NULL
+                    GROUP BY target_id
+                ),
                 claimed AS (
                     SELECT sj.id FROM scan_jobs sj
                     JOIN ranked r ON r.id = sj.id
+                    LEFT JOIN target_last_claimed tlc ON tlc.target_id = sj.target_id
                     WHERE sj.status = 'PENDING' AND sj.run_after <= now()
                       AND (
                           sj.module_type != 'ZAP_ACTIVE_SCAN'
@@ -243,7 +269,8 @@ public class ScanJobRepository {
                               AND (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
                           )
                       )
-                    ORDER BY sj.priority DESC, r.target_rank ASC, sj.created_at ASC
+                    ORDER BY sj.priority DESC, r.target_rank ASC,
+                             COALESCE(tlc.last_claimed_at, '-infinity'::timestamptz) ASC, sj.created_at ASC
                     LIMIT ?
                     FOR UPDATE OF sj SKIP LOCKED
                 )
