@@ -139,4 +139,40 @@ class DeepPortScanDecisionLogicTest {
         assertThat(findings.stream().map(RawFinding::ruleId))
                 .contains("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", "PORT_OPEN_UNENCRYPTED_MGMT");
     }
+
+    /** The live incident this exists for, at the deep-scan layer: joinbeta.jaja.co.uk/pioneers.jaja.co.uk
+     * both showed every one of these 9 ports open at once with zero real service identification behind any of them. */
+    @Test
+    void allNineAdminPortsOpen_oneSinglePromiscuousFinding_notNineIndividualOnes() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "joinbeta.jaja.co.uk",
+                List.of(
+                        port(3389), port(3306), port(5432), port(27017), port(6379),
+                        port(1433), port(1521), port(5900), port(5984)));
+        assertThat(findings.stream().map(RawFinding::ruleId))
+                .contains("NETWORK_PROMISCUOUS_PORT_RESPONSE")
+                .doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+        RawFinding promiscuous = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_PROMISCUOUS_PORT_RESPONSE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(promiscuous.severity().name()).isEqualTo("INFO");
+    }
+
+    /** Even with real product/version identification, the promiscuous pattern still wins - that many
+     * unrelated vendor protocols "identifying" at once is itself the implausible signal. */
+    @Test
+    void allNineAdminPortsOpenWithServiceEvidence_stillOnePromiscuousFinding() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "example.com",
+                List.of(
+                        port(3389, "rdp", "Windows RDP", null), port(3306, "mysql", "MySQL", "8.0"),
+                        port(5432, "postgresql", "PostgreSQL", "14"), port(27017, "mongodb", "MongoDB", null),
+                        port(6379, "redis", "Redis", null), port(1433, "mssql", "MSSQL", null),
+                        port(1521, "oracle", "Oracle", null), port(5900, "vnc", "VNC", null),
+                        port(5984, "couchdb", "CouchDB", null)));
+        assertThat(findings.stream().map(RawFinding::ruleId))
+                .contains("NETWORK_PROMISCUOUS_PORT_RESPONSE")
+                .doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
 }
