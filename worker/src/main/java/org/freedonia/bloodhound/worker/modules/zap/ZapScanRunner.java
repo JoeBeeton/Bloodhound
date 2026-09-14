@@ -87,6 +87,7 @@ public class ZapScanRunner {
     public String runFullScan(String hostname) throws ScanModuleException {
         requireSafeHost(hostname);
         Instant deadline = Instant.now().plus(TOTAL_BUDGET);
+        startFreshSession();
         disableNoiseScanners();
 
         // HTTPS first, HTTP fallback - the same order every other HTTP-fetching module in this
@@ -117,7 +118,41 @@ public class ZapScanRunner {
             log.warn("ZAP active scan against {} did not finish within budget - retrieving whatever alerts have been raised so far", hostname);
         }
 
-        return callRaw("/JSON/core/view/alerts/", Map.of("baseurl", targetUrl));
+        return callRaw("/JSON/core/view/alerts/", Map.of("baseurl", targetUrl), ALERTS_FETCH_TIMEOUT);
+    }
+
+    /**
+     * A live incident traced ZAP's own API becoming unresponsive (a 25s+ hang on even trivial
+     * calls like numberOfMessages) back to its embedded HSQLDB-backed message-History table: a
+     * thread dump under `jstack` during the hang showed 486 of 567 threads all blocked on the
+     * same {@code ParosTableHistory} object monitor, and the one thread actually holding it was
+     * deep inside HSQLDB's disk row cache (RandomAccessFile I/O evicting/paging cache blocks to
+     * insert one history row) - a known HSQLDB characteristic where a CACHED table's per-insert
+     * cost grows as its on-disk size grows. ZAP's daemon session here runs continuously for the
+     * lifetime of the container; after hours of scanning many targets/subdomains with no session
+     * boundary ever drawn, the History table had grown large enough to make individual inserts
+     * slow enough to hold that global lock long enough for a real backlog to build - and since
+     * every new spidered/scanned message needs the same lock to log itself, the backlog only
+     * grows under continued load, never drains, and any API caller (spidering, scanning, or our
+     * own alerts/numberOfMessages reads) queues up behind it.
+     *
+     * <p>Starting a genuinely fresh, empty session at the top of every job bounds the History
+     * table to roughly one job's own traffic (hundreds of rows) rather than letting it accumulate
+     * across this ZAP instance's entire uptime - HSQLDB's cache never has the chance to grow large
+     * enough to hit the slow-eviction regime in the first place. Safe to do unconditionally here
+     * (not just opportunistically): {@code ScanJobRepository#claim}'s ZAP_ACTIVE_SCAN concurrency
+     * cap already guarantees at most one {@link #runFullScan} executes at a time system-wide, so
+     * there is never a concurrent job whose in-progress session data this could clobber. Best-effort,
+     * same reasoning as {@link #disableNoiseScanners}: a failed reset costs one job's worth of
+     * extra accumulated history, not a wrong or lost finding, and isn't worth failing the scan over
+     * - especially since the whole point is resilience against ZAP itself being unhealthy.
+     */
+    private void startFreshSession() {
+        try {
+            call("/JSON/core/action/newSession/", Map.of("name", "", "overwrite", "true"));
+        } catch (ScanModuleException e) {
+            log.warn("could not start a fresh ZAP session before this scan - history may carry over from prior runs: {}", e.getMessage());
+        }
     }
 
     /**
@@ -206,7 +241,7 @@ public class ZapScanRunner {
     }
 
     private JsonNode call(String path, Map<String, String> params) throws ScanModuleException {
-        String body = callRaw(path, params);
+        String body = callRaw(path, params, DEFAULT_CALL_TIMEOUT);
         try {
             return MAPPER.readTree(body);
         } catch (Exception e) {
@@ -215,13 +250,32 @@ public class ZapScanRunner {
     }
 
     private String callRaw(String path, Map<String, String> params) throws ScanModuleException {
+        return callRaw(path, params, DEFAULT_CALL_TIMEOUT);
+    }
+
+    /**
+     * Every other caller hits a lightweight status/action endpoint that answers in milliseconds
+     * regardless of scan size - 30s is generous there. The alerts fetch is the one exception:
+     * it returns one JSON object per finding across a whole spider+ascan run against a real,
+     * possibly large target (this class's own MAX_RESPONSE_BYTES doc comment already notes this),
+     * and how long ZAP takes to assemble that response scales with its accumulated alert store,
+     * not just this one host - found live: a example.co.uk alerts fetch timed out twice in a row at
+     * 30s, on what would have been its final retry attempt (losing every finding from that host's
+     * whole ZAP scan, not just a delay), while ZAP's own lightweight status endpoint answered
+     * instantly the entire time - so this wasn't ZAP being generally overloaded, just this one
+     * disproportionately-heavy call sharing too tight a budget with tiny ones.
+     */
+    private static final Duration DEFAULT_CALL_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration ALERTS_FETCH_TIMEOUT = Duration.ofSeconds(120);
+
+    private String callRaw(String path, Map<String, String> params, Duration timeout) throws ScanModuleException {
         StringBuilder query = new StringBuilder("apikey=").append(encode(apiKey));
         for (Map.Entry<String, String> entry : params.entrySet()) {
             query.append('&').append(entry.getKey()).append('=').append(encode(entry.getValue()));
         }
         URI uri = URI.create(baseUrl + path + "?" + query);
         HttpRequest request = HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(30))
+                .timeout(timeout)
                 .GET()
                 .build();
         try {
