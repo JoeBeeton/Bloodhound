@@ -32,16 +32,50 @@ public class HttpHeaderFetcher {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
+    /**
+     * A fabricated origin, not something any real site would legitimately allowlist - so seeing
+     * it echoed back verbatim in Access-Control-Allow-Origin can only mean the server reflects
+     * whatever Origin it's sent, not that this exact value happens to be on a real allowlist.
+     * {@code .invalid} is the RFC 2606 TLD reserved for exactly this "definitely not a real,
+     * resolvable domain" use.
+     */
+    static final String CORS_PROBE_ORIGIN = "https://bh-cors-probe.invalid";
+
     public FetchResult fetch(String hostname) throws ScanModuleException {
         FetchResult.PlainHttpProbe plainHttp = probePlainHttp(hostname);
         try {
-            return toResult(true, get("https://" + hostname + "/"), plainHttp);
+            return toResult(true, hostname, get("https://" + hostname + "/"), plainHttp);
         } catch (Exception httpsFailure) {
             try {
-                return toResult(false, get("http://" + hostname + "/"), plainHttp);
+                return toResult(false, hostname, get("http://" + hostname + "/"), plainHttp);
             } catch (Exception httpFailure) {
                 throw new ScanModuleException("failed to reach " + hostname + " over HTTPS or HTTP", httpFailure);
             }
+        }
+    }
+
+    /**
+     * One extra GET against the same scheme+host that just answered, carrying a fabricated
+     * {@code Origin} header - the question is specifically "does this server echo back whatever
+     * Origin it's handed" (a credentialed cross-origin request forgery enabler), which reading
+     * the main fetch's own (no Origin header sent) response can never answer. Best-effort: a
+     * failure here just means no CORS evidence, not a whole-module failure - the main fetch
+     * already succeeded, which is the part every other header check here depends on.
+     */
+    private FetchResult.CorsProbe probeCors(boolean https, String hostname) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create((https ? "https://" : "http://") + hostname + "/"))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", ScanUserAgent.VALUE)
+                    .header("Origin", CORS_PROBE_ORIGIN)
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            return new FetchResult.CorsProbe(
+                    response.headers().firstValue("access-control-allow-origin").orElse(null),
+                    response.headers().firstValue("access-control-allow-credentials").orElse(null));
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -78,13 +112,15 @@ public class HttpHeaderFetcher {
                 MAX_REDIRECTS);
     }
 
-    private FetchResult toResult(boolean https, HttpResponse<Void> response, FetchResult.PlainHttpProbe plainHttp) {
+    private FetchResult toResult(
+            boolean https, String hostname, HttpResponse<Void> response, FetchResult.PlainHttpProbe plainHttp) {
         Map<String, String> headers = new LinkedHashMap<>();
         response.headers().map().forEach((name, values) -> {
             if (!values.isEmpty()) {
                 headers.put(name.toLowerCase(), values.get(0));
             }
         });
-        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp);
+        FetchResult.CorsProbe cors = probeCors(https, hostname);
+        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp, cors);
     }
 }
