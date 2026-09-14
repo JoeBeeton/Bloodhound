@@ -17,6 +17,7 @@ public final class TlsDecisionLogic {
 
     private static final long EXPIRING_SOON_DAYS = 30;
     private static final long HSTS_MIN_MAX_AGE_SECONDS = 15_552_000; // 6 months
+    private static final long HSTS_PRELOAD_MIN_MAX_AGE_SECONDS = 31_536_000; // 1 year - hstspreload.org's own submission bar
     private static final List<String> WEAK_CIPHER_MARKERS = List.of("RC4", "DES", "3DES", "NULL", "EXPORT", "MD5");
     private static final Pattern MAX_AGE_PATTERN = Pattern.compile("max-age=(\\d+)", Pattern.CASE_INSENSITIVE);
 
@@ -150,13 +151,28 @@ public final class TlsDecisionLogic {
         if (hstsHeaderValue == null) {
             return List.of(finding("TLS_NO_HSTS", Severity.MEDIUM, hostname, Map.of()));
         }
+        List<RawFinding> findings = new ArrayList<>();
         long maxAge = parseMaxAge(hstsHeaderValue);
-        boolean includesSubDomains = hstsHeaderValue.toLowerCase(Locale.ROOT).contains("includesubdomains");
+        String lower = hstsHeaderValue.toLowerCase(Locale.ROOT);
+        boolean includesSubDomains = lower.contains("includesubdomains");
         if (maxAge < HSTS_MIN_MAX_AGE_SECONDS || !includesSubDomains) {
-            return List.of(finding(
-                    "TLS_HSTS_SHORT_MAX_AGE", Severity.LOW, hostname, Map.of("header", hstsHeaderValue)));
+            findings.add(finding("TLS_HSTS_SHORT_MAX_AGE", Severity.LOW, hostname, Map.of("header", hstsHeaderValue)));
         }
-        return List.of();
+        // A separate, stricter bar than the one above: hstspreload.org (the source of every
+        // browser's built-in HSTS preload list) requires max-age >= 1 year (not the 6 months
+        // checked above) plus includeSubDomains before it will even accept a submission. A site
+        // that adds the "preload" token without actually meeting that bar gets neither a
+        // TLS_HSTS_SHORT_MAX_AGE finding (it can clear the 6-month bar while still missing the
+        // 1-year one) nor any real protection from the token - it's a false signal of readiness,
+        // most often left over from a policy that was strong enough for preload once and has since
+        // been weakened without removing the token. Confirmed live: github.com actually sends
+        // "max-age=31536000; includeSubdomains; preload" (exactly at the eligible bar, no finding);
+        // none of our other tracked targets send the preload token at all.
+        if (lower.contains("preload") && (maxAge < HSTS_PRELOAD_MIN_MAX_AGE_SECONDS || !includesSubDomains)) {
+            findings.add(finding(
+                    "TLS_HSTS_PRELOAD_NOT_ELIGIBLE", Severity.LOW, hostname, Map.of("header", hstsHeaderValue)));
+        }
+        return findings;
     }
 
     static long parseMaxAge(String hstsHeaderValue) {
@@ -200,6 +216,15 @@ public final class TlsDecisionLogic {
                     new String[] {
                         "Weak HSTS policy",
                         "The Strict-Transport-Security header's max-age is under 6 months and/or missing includeSubDomains."
+                    },
+            "TLS_HSTS_PRELOAD_NOT_ELIGIBLE",
+                    new String[] {
+                        "HSTS preload token present without meeting preload requirements",
+                        "The Strict-Transport-Security header includes the preload token, but hstspreload.org "
+                                + "(the source of every browser's built-in preload list) requires max-age of at least "
+                                + "1 year and includeSubDomains before it will accept a submission. The token gives a "
+                                + "false sense of protection: browsers ignore it entirely unless the site is actually "
+                                + "on the list, and it won't be while the underlying policy is this weak."
                     },
             "TLS_CERT_HOSTNAME_MISMATCH",
                     new String[] {
