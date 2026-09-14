@@ -208,23 +208,44 @@ public class ScanJobRepository {
      * through to whatever non-ZAP job it might otherwise claim rather than stalling) and
      * auto-releases at the end of this statement's implicit transaction, so it adds no contention
      * outside the narrow moment a ZAP_ACTIVE_SCAN row is actually being considered.
+     *
+     * <p>{@code target_rank} (each target's own PENDING jobs numbered 1, 2, 3... by creation
+     * order, via a window function in the {@code ranked} CTE) is ordered ahead of raw {@code
+     * created_at} so claiming is fair *across targets*, not just FIFO within one queue - a live
+     * incident found this the hard way: two scans triggered a couple of seconds apart (example.co.uk,
+     * then example.finance) both queued the same ~50-60 jobs at the same priority, but example.co.uk's
+     * Tier 2 fan-out (12+ NUCLEI_SCAN/PORT_SCAN_DEEP/ZAP_ACTIVE_SCAN jobs per subdomain) gave it
+     * enough standing inventory to win every single tie against example.finance's very-slightly-newer
+     * rows - all 3 workers claimed nothing but example.co.uk jobs for the example.finance scan's entire
+     * 16+ minute run, which never advanced past 0/48 while example.co.uk progressed normally. Plain
+     * {@code created_at ASC} has no notion of "target" at all, so one target with enough queued
+     * work can monopolize every worker for as long as its queue lasts. Ranking by
+     * (target_rank, created_at) instead means every target's *oldest* job is preferred over any
+     * target's *second*-oldest job - each target gets a turn before any target gets a second turn,
+     * which is the round-robin fairness a shared, multi-tenant queue actually needs.
      */
     public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes) {
         String sql =
                 """
-                WITH claimed AS (
-                    SELECT id FROM scan_jobs
+                WITH ranked AS (
+                    SELECT id, row_number() OVER (PARTITION BY target_id ORDER BY created_at ASC) AS target_rank
+                    FROM scan_jobs
                     WHERE status = 'PENDING' AND run_after <= now()
+                ),
+                claimed AS (
+                    SELECT sj.id FROM scan_jobs sj
+                    JOIN ranked r ON r.id = sj.id
+                    WHERE sj.status = 'PENDING' AND sj.run_after <= now()
                       AND (
-                          module_type != 'ZAP_ACTIVE_SCAN'
+                          sj.module_type != 'ZAP_ACTIVE_SCAN'
                           OR (
                               pg_try_advisory_xact_lock(?)
                               AND (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
                           )
                       )
-                    ORDER BY priority DESC, created_at ASC
+                    ORDER BY sj.priority DESC, r.target_rank ASC, sj.created_at ASC
                     LIMIT ?
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF sj SKIP LOCKED
                 )
                 UPDATE scan_jobs sj
                 SET status = 'CLAIMED', claimed_by = ?, claimed_at = now(),
