@@ -26,13 +26,32 @@ public class ScanJobRepository {
      * queue has no other concept of "this module type shares an external bottleneck" - {@link
      * #claim} caps how many ZAP_ACTIVE_SCAN jobs can be CLAIMED/RUNNING at once, independent of
      * how many workers exist, so scaling workers up for every other module type doesn't also
-     * scale up load against the one shared ZAP instance. A small approximate-not-exact race is
-     * possible (two concurrent claim() calls could both see the cap not yet reached and each
-     * claim one, momentarily exceeding it by one) - acceptable, same tolerance for benign
-     * raciness FOR UPDATE SKIP LOCKED already accepts elsewhere in this query.
+     * scale up load against the one shared ZAP instance.
+     *
+     * <p>A live incident re-confirmed this cap was not actually holding: with 3 workers each
+     * idle-polling every few seconds, the moment the one ZAP slot freed up, two (sometimes three)
+     * of them would independently read "0 currently claimed/running" and each successfully claim
+     * a different ZAP_ACTIVE_SCAN row - not a rare one-in-a-million race, but a regular occurrence
+     * whenever multiple workers happened to poll within the same narrow window of a slot opening
+     * up, and directly reproduced the exact "failed to reach ZAP...request timed out" overload
+     * this cap exists to prevent. Root cause: the old query's {@code count(*) < ?} subquery is a
+     * plain read against the pre-statement snapshot - it has no way to see another transaction's
+     * claim that hasn't committed yet, so two concurrent claim() calls can both legitimately see
+     * the slot as free at the same instant. {@link #claim} now serializes the check-and-claim
+     * step for ZAP_ACTIVE_SCAN specifically via {@code pg_try_advisory_xact_lock} (see its own
+     * comment) so only one transaction can be mid-way through that decision at a time, closing
+     * the race rather than merely tolerating it.
      */
     @Value("${bloodhound.zap.max-concurrent-scans:1}")
     private int zapMaxConcurrentScans = 1;
+
+    /**
+     * Arbitrary, distinctive key for the advisory lock {@link #claim} takes around the
+     * ZAP_ACTIVE_SCAN concurrency check - advisory locks share one global 64-bit keyspace per
+     * database (not scoped to a table/row), so this only needs to not collide with some other
+     * lock key this codebase might take elsewhere; nothing else currently does.
+     */
+    private static final long ZAP_CLAIM_LOCK_KEY = 8_782_351_004_411_223L;
 
     /** Exposes the configured cap so the UI can explain (not just show) a queued ZAP_ACTIVE_SCAN job - see ScansController#queueLimits. */
     public int zapMaxConcurrentScans() {
@@ -181,6 +200,14 @@ public class ScanJobRepository {
      * explicit transaction: concurrent callers each lock a disjoint row set
      * (SKIP LOCKED) and only the rows *this* statement locked get updated and
      * returned - no two workers can ever be handed the same job.
+     *
+     * <p>The ZAP_ACTIVE_SCAN branch additionally gates on {@code pg_try_advisory_xact_lock} - see
+     * {@link #ZAP_CLAIM_LOCK_KEY}'s own comment for why a plain {@code count(*) < ?} read isn't
+     * enough on its own (a live incident). This lock is non-blocking (a losing caller's WHERE
+     * clause just evaluates false for that row, same as failing the count check, so it falls
+     * through to whatever non-ZAP job it might otherwise claim rather than stalling) and
+     * auto-releases at the end of this statement's implicit transaction, so it adds no contention
+     * outside the narrow moment a ZAP_ACTIVE_SCAN row is actually being considered.
      */
     public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes) {
         String sql =
@@ -190,7 +217,10 @@ public class ScanJobRepository {
                     WHERE status = 'PENDING' AND run_after <= now()
                       AND (
                           module_type != 'ZAP_ACTIVE_SCAN'
-                          OR (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
+                          OR (
+                              pg_try_advisory_xact_lock(?)
+                              AND (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
+                          )
                       )
                     ORDER BY priority DESC, created_at ASC
                     LIMIT ?
@@ -203,7 +233,7 @@ public class ScanJobRepository {
                 WHERE sj.id = claimed.id
                 RETURNING sj.*
                 """;
-        return jdbc.query(sql, ROW_MAPPER, zapMaxConcurrentScans, capacity, workerId, leaseMinutes);
+        return jdbc.query(sql, ROW_MAPPER, ZAP_CLAIM_LOCK_KEY, zapMaxConcurrentScans, capacity, workerId, leaseMinutes);
     }
 
     /** Returns true iff a matching, still-leased job was found and extended. */
