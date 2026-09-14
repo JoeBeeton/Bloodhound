@@ -145,6 +145,7 @@ public final class ExposedPathDecisionLogic {
         addIfMatches(findings, hostname, r, "EXPOSURE_KIBANA_UNAUTH", baselineBody, b -> b.contains("kbn-injected-metadata"));
         addIfMatches(findings, hostname, r, "EXPOSURE_SECURITY_TXT_PRESENT", baselineBody, b -> b.contains("Contact:"));
         addIfMatches(findings, hostname, r, "EXPOSURE_DS_STORE", baselineBody, ExposedPathDecisionLogic::looksLikeDsStore);
+        addIfMatches(findings, hostname, r, "EXPOSURE_DIRECTORY_LISTING", baselineBody, ExposedPathDecisionLogic::looksLikeDirectoryListing);
 
         // Alt-port probes: different port/protocol than the baseline probe, so no soft-404-dupe guard applies -
         // the content signature (a specific JSON shape) is the sole, sufficient guard here.
@@ -297,6 +298,25 @@ public final class ExposedPathDecisionLogic {
         return body.contains("Bud1");
     }
 
+    /**
+     * "Index of /" is the shared, decades-old convention both Apache's mod_autoindex and nginx's
+     * autoindex module use for their generated directory-listing pages - captured live against a
+     * real nginx autoindex response (a dedicated fixture directory added to the juiceshop-proxy
+     * dev target specifically to verify this against genuine output, not a guessed format):
+     * {@code <title>Index of /path/</title>} and an identical {@code <h1>Index of /path/</h1>}.
+     * Checking for the bare substring rather than the full tag also catches Apache's differently-
+     * structured (table-based, not {@code <pre>}-based) listing pages, which use the exact same
+     * title/heading phrasing. Unlike EXPOSURE_DS_STORE's single well-known path, a listing can be
+     * enabled on any directory - since the real directory names on an arbitrary target can't be
+     * known in advance, this probes a curated set of names commonly left with listing accidentally
+     * on (backup/upload/log/asset directories), the same "can't know real paths, probe common
+     * guesses" approach EXPOSURE_PHPMYADMIN and EXPOSURE_GIT_CONFIG already take for their own
+     * unpredictable-location targets.
+     */
+    static boolean looksLikeDirectoryListing(String body) {
+        return body.contains("Index of /");
+    }
+
     /** A NOAUTH/ERR refusal means "properly secured" - not a finding; only a genuine bulk-string INFO reply counts. */
     static boolean isRedisPositive(String redisResponse) {
         return redisResponse != null && redisResponse.startsWith("$") && redisResponse.contains("redis_version:");
@@ -398,6 +418,11 @@ public final class ExposedPathDecisionLogic {
                     "A macOS Finder .DS_Store file is publicly readable, disclosing the names of files and "
                             + "subfolders Finder has seen in this directory - including ones no longer present in "
                             + "the live listing - useful for reconnaissance of the site's real directory structure.")),
+            Map.entry("EXPOSURE_DIRECTORY_LISTING", new RuleMeta(Severity.MEDIUM,
+                    "Directory listing enabled",
+                    "A web server directory listing (Apache/nginx autoindex) is publicly reachable on a commonly "
+                            + "exposed path, disclosing the names of every file it contains - including backups, "
+                            + "logs, or uploads that were never meant to be individually discoverable.")),
             Map.entry("EXPOSURE_DOCKER_API", new RuleMeta(Severity.CRITICAL,
                     "Docker Engine API exposed without authentication",
                     "The Docker Engine remote API is reachable without TLS/authentication - equivalent to root access.")),

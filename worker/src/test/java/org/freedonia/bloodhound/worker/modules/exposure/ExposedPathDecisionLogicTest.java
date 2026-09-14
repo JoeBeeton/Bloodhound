@@ -385,4 +385,52 @@ class ExposedPathDecisionLogicTest {
                 BASELINE_404, Map.of("EXPOSURE_DS_STORE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DS_STORE");
     }
+
+    /** The exact real nginx autoindex response captured live from the juiceshop-proxy dev fixture. */
+    private static final String REAL_NGINX_AUTOINDEX_BODY =
+            "<html>\n<head><title>Index of /bh-test-listing/</title></head>\n<body>\n"
+                    + "<h1>Index of /bh-test-listing/</h1><hr><pre><a href=\"../\">../</a>\n"
+                    + "<a href=\"backup.sql.bak\">backup.sql.bak</a>                                     "
+                    + "14-Sep-2026 17:52                  26\n"
+                    + "<a href=\"notes.txt\">notes.txt</a>                                          "
+                    + "14-Sep-2026 17:52                  57\n</pre><hr></body>\n</html>";
+
+    @Test
+    void realNginxAutoindexResponse_flaggedMedium() {
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DIRECTORY_LISTING",
+                new ProbeResponse(200, "text/html", (long) REAL_NGINX_AUTOINDEX_BODY.length(), REAL_NGINX_AUTOINDEX_BODY)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_DIRECTORY_LISTING");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    /** Apache's mod_autoindex uses a differently-structured (table, not <pre>) page but the same title/heading phrasing. */
+    @Test
+    void apacheStyleAutoindexResponse_alsoFlagged() {
+        String body = "<html><head><title>Index of /backup</title></head><body><h1>Index of /backup</h1>"
+                + "<table><tr><th>Name</th><th>Last modified</th><th>Size</th></tr>"
+                + "<tr><td><a href=\"db.sql\">db.sql</a></td></tr></table></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_DIRECTORY_LISTING", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).contains("EXPOSURE_DIRECTORY_LISTING");
+    }
+
+    @Test
+    void notADirectoryListing_notFlagged() {
+        String body = "<html><body><h1>Welcome to our backup service page</h1></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_DIRECTORY_LISTING", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DIRECTORY_LISTING");
+    }
+
+    /** A soft-404 SPA catch-all that happens to 200 every guessed directory path must never be flagged. */
+    @Test
+    void directoryListingProbe_softDupeOfBaseline_notFlagged() {
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_DIRECTORY_LISTING", new ProbeResponse(200, "text/html", 9L, "not found")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DIRECTORY_LISTING");
+    }
 }

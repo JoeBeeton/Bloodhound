@@ -73,6 +73,8 @@ function target(overrides: Partial<Target> = {}): Target {
     lastScanAt: null,
     lastScanWasDeep: false,
     notes: null,
+    wafVendor: null,
+    wafScanned: false,
     ...overrides,
   };
 }
