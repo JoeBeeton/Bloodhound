@@ -1,11 +1,14 @@
 package org.freedonia.bloodhound.worker.modules.http;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpRequest;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
@@ -30,14 +33,38 @@ public class HttpHeaderFetcher {
             .build();
 
     public FetchResult fetch(String hostname) throws ScanModuleException {
+        FetchResult.PlainHttpProbe plainHttp = probePlainHttp(hostname);
         try {
-            return toResult(true, get("https://" + hostname + "/"));
+            return toResult(true, get("https://" + hostname + "/"), plainHttp);
         } catch (Exception httpsFailure) {
             try {
-                return toResult(false, get("http://" + hostname + "/"));
+                return toResult(false, get("http://" + hostname + "/"), plainHttp);
             } catch (Exception httpFailure) {
                 throw new ScanModuleException("failed to reach " + hostname + " over HTTPS or HTTP", httpFailure);
             }
+        }
+    }
+
+    /**
+     * One GET to {@code http://host/} with NO redirect following - the question is precisely
+     * "what does the first cleartext response do", which the redirect-following {@link #get}
+     * can't answer (it either lands on the final page or throws). Null when nothing answers
+     * on port 80: not serving cleartext at all is the ideal, not a finding. Connects to the
+     * same hostname the HTTPS fetch validates, via the same SafeAddressValidator gate.
+     */
+    private FetchResult.PlainHttpProbe probePlainHttp(String hostname) {
+        try {
+            SafeAddressValidator.requireSafeIfResolvable(hostname);
+            HttpRequest request = HttpRequest.newBuilder(URI.create("http://" + hostname + "/"))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", ScanUserAgent.VALUE)
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            return new FetchResult.PlainHttpProbe(
+                    response.statusCode(), response.headers().firstValue("location").orElse(null));
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -51,13 +78,13 @@ public class HttpHeaderFetcher {
                 MAX_REDIRECTS);
     }
 
-    private FetchResult toResult(boolean https, HttpResponse<Void> response) {
+    private FetchResult toResult(boolean https, HttpResponse<Void> response, FetchResult.PlainHttpProbe plainHttp) {
         Map<String, String> headers = new LinkedHashMap<>();
         response.headers().map().forEach((name, values) -> {
             if (!values.isEmpty()) {
                 headers.put(name.toLowerCase(), values.get(0));
             }
         });
-        return new FetchResult(https, headers, response.headers().allValues("set-cookie"));
+        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp);
     }
 }

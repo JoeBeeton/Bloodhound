@@ -101,4 +101,53 @@ class HttpHeaderParserTest {
         List<String> ids = ruleIds(HttpHeaderParser.parse("example.com", result));
         assertThat(ids).containsExactly("COOKIE_MISSING_SAMESITE");
     }
+
+    private static FetchResult withPlainHttp(boolean https, FetchResult.PlainHttpProbe plain) {
+        return new FetchResult(https, allSecureHeaders(), List.of(), plain);
+    }
+
+    @Test
+    void contentServedOverCleartext_flaggedMedium() {
+        List<RawFinding> findings = HttpHeaderParser.parse(
+                "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(200, null)));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HTTP_NO_HTTPS_REDIRECT");
+            assertThat(f.severity()).isEqualTo(org.freedonia.bloodhound.common.findings.Severity.MEDIUM);
+            assertThat(f.evidence()).containsEntry("httpStatus", 200);
+        });
+    }
+
+    @Test
+    void firstHopRedirectsToAnotherCleartextUrl_flaggedLow() {
+        List<RawFinding> findings = HttpHeaderParser.parse(
+                "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(301, "http://www.example.com/")));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HTTP_NO_HTTPS_REDIRECT");
+            assertThat(f.severity()).isEqualTo(org.freedonia.bloodhound.common.findings.Severity.LOW);
+            assertThat(f.evidence()).containsEntry("location", "http://www.example.com/");
+        });
+    }
+
+    @Test
+    void redirectStraightToHttps_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(301, "https://example.com/")))))
+                .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(308, "HTTPS://Example.com/x")))))
+                .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+    }
+
+    /** Nothing on port 80 is the ideal; HTTPS-unreachable is the TLS module's problem; errors say nothing. */
+    @Test
+    void noCleartextListener_orNoHttps_orErrorStatus_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withPlainHttp(true, null))))
+                .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withPlainHttp(false, new FetchResult.PlainHttpProbe(200, null)))))
+                .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(403, null)))))
+                .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+    }
 }

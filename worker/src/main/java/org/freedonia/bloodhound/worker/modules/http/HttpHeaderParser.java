@@ -1,7 +1,9 @@
 package org.freedonia.bloodhound.worker.modules.http;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.findings.Category;
@@ -27,6 +29,8 @@ public final class HttpHeaderParser {
         requireHeader(findings, headers, hostname, "referrer-policy", "HEADER_REFERRER_POLICY_MISSING", Severity.INFO);
         requireHeader(
                 findings, headers, hostname, "permissions-policy", "HEADER_PERMISSIONS_POLICY_MISSING", Severity.INFO);
+
+        findings.addAll(httpsRedirectFindings(hostname, result));
 
         String banner = (headers.getOrDefault("server", "") + " " + headers.getOrDefault("x-powered-by", "")).trim();
         if (!banner.isEmpty() && VERSION_LIKE.matcher(banner).find()) {
@@ -79,6 +83,33 @@ public final class HttpHeaderParser {
         return eq > 0 && eq < end ? setCookieHeader.substring(0, eq).trim() : setCookieHeader.substring(0, end).trim();
     }
 
+    /**
+     * Only judged when HTTPS is known to work for this host (result.https()) - if it doesn't,
+     * there is nothing to redirect to and the missing-TLS problem is the TLS module's to report.
+     * A 2xx on cleartext is the real finding (the site is fully usable without TLS, so an
+     * on-path attacker gets every request a user or bot makes before HSTS ever applies); a
+     * redirect whose first hop is to another http:// URL is the weaker shape - one more
+     * cleartext round trip, usually an apex-to-www hop that only upgrades on the next one.
+     */
+    static List<RawFinding> httpsRedirectFindings(String hostname, FetchResult result) {
+        FetchResult.PlainHttpProbe plain = result.plainHttp();
+        if (plain == null || !result.https()) {
+            return List.of();
+        }
+        if (plain.status() >= 200 && plain.status() < 300) {
+            return List.of(finding(
+                    "HTTP_NO_HTTPS_REDIRECT", Severity.MEDIUM, hostname, Map.of("httpStatus", plain.status())));
+        }
+        if (plain.status() >= 300 && plain.status() < 400 && plain.location() != null
+                && !plain.location().toLowerCase(Locale.ROOT).startsWith("https://")) {
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("httpStatus", plain.status());
+            evidence.put("location", plain.location());
+            return List.of(finding("HTTP_NO_HTTPS_REDIRECT", Severity.LOW, hostname, evidence));
+        }
+        return List.of();
+    }
+
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
         String[] copy = COPY.get(ruleId);
         return new RawFinding(ruleId, severity, Category.HEADERS, copy[0], copy[1], asset, evidence);
@@ -114,6 +145,14 @@ public final class HttpHeaderParser {
                     new String[] {
                         "Missing Permissions-Policy header",
                         "The response has no Permissions-Policy header restricting browser feature access (camera, geolocation, etc.)."
+                    }),
+            Map.entry(
+                    "HTTP_NO_HTTPS_REDIRECT",
+                    new String[] {
+                        "Plain HTTP not redirected to HTTPS",
+                        "The site answers on cleartext HTTP without redirecting to HTTPS. Anything a user or client "
+                                + "sends before reaching the HTTPS version - and every visit that starts from an http:// "
+                                + "link or a typed hostname - is readable and modifiable by anyone on the network path."
                     }),
             Map.entry(
                     "HEADER_SERVER_BANNER_VERBOSE",
