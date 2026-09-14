@@ -127,12 +127,50 @@ class TlsDecisionLogicTest {
         assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).contains("TLS_HSTS_SHORT_MAX_AGE");
     }
 
+    /** The gap zone: clears the 6-month bar (no TLS_HSTS_SHORT_MAX_AGE) but not preload's 1-year one. */
+    @Test
+    void hstsPreloadTokenWithSubYearMaxAge_flaggedPreloadNotEligible() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=15552000; includeSubDomains; preload", KNOWN_ISSUER);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(ruleIds(findings)).contains("TLS_HSTS_PRELOAD_NOT_ELIGIBLE").doesNotContain("TLS_HSTS_SHORT_MAX_AGE");
+    }
+
+    @Test
+    void hstsPreloadTokenWithoutIncludeSubDomains_flaggedPreloadNotEligibleEvenWithLongMaxAge() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=63072000; preload", KNOWN_ISSUER);
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).contains("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+    }
+
+    /** The real, live-verified github.com shape: exactly at the eligibility bar - correctly silent. */
+    @Test
+    void hstsPreloadTokenMeetingEligibilityBar_notFlagged() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubdomains; preload", KNOWN_ISSUER);
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).doesNotContain("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+    }
+
+    /** No preload token at all - never judged against the stricter bar, regardless of policy strength. */
+    @Test
+    void hstsWithoutPreloadToken_neverFlaggedPreloadNotEligible() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+        TlsFetchResult weak = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=3600", KNOWN_ISSUER);
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", weak, NOW))).doesNotContain("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+    }
+
     @Test
     void httpsUnreachable_skipsHstsFindingsEntirely() {
         TlsFetchResult r = new TlsFetchResult(
                 NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, false, null, KNOWN_ISSUER);
         List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
-        assertThat(ruleIds(findings)).doesNotContain("TLS_NO_HSTS", "TLS_HSTS_SHORT_MAX_AGE");
+        assertThat(ruleIds(findings)).doesNotContain("TLS_NO_HSTS", "TLS_HSTS_SHORT_MAX_AGE", "TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
     }
 
     @Test
