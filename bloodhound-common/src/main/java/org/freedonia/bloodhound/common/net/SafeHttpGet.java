@@ -154,7 +154,19 @@ public final class SafeHttpGet {
         }
     }
 
+    /**
+     * Same allowlist gap independently found and fixed in {@code DualStackResolver}: this
+     * method's own address-only {@link SafeAddressValidator#isUnsafeToConnect} loop never
+     * consulted {@code BLOODHOUND_SSRF_ALLOWLIST} at all, so every module that fetches via
+     * {@link #get} (HTTP_HEADERS included) failed against the allowlisted juiceshop.local
+     * dev-fixture with "resolves to a private/loopback/reserved address" despite the env var
+     * being set correctly - found live the same way: HTTP_HEADERS jobs against juiceshop.local
+     * failing instantly while a raw curl from inside the same container succeeded fine.
+     */
     private static void requireSafeHost(String host) throws IOException {
+        if (SafeAddressValidator.isHostnameAllowlisted(host)) {
+            return;
+        }
         InetAddress[] addresses;
         try {
             addresses = InetAddress.getAllByName(host);
