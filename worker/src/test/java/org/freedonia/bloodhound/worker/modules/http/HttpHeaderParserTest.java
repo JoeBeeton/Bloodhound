@@ -103,7 +103,11 @@ class HttpHeaderParserTest {
     }
 
     private static FetchResult withPlainHttp(boolean https, FetchResult.PlainHttpProbe plain) {
-        return new FetchResult(https, allSecureHeaders(), List.of(), plain);
+        return new FetchResult(https, allSecureHeaders(), List.of(), plain, null);
+    }
+
+    private static FetchResult withCors(FetchResult.CorsProbe cors) {
+        return new FetchResult(true, allSecureHeaders(), List.of(), null, cors);
     }
 
     @Test
@@ -149,5 +153,54 @@ class HttpHeaderParserTest {
         assertThat(ruleIds(HttpHeaderParser.parse(
                         "example.com", withPlainHttp(true, new FetchResult.PlainHttpProbe(403, null)))))
                 .doesNotContain("HTTP_NO_HTTPS_REDIRECT");
+    }
+
+    @Test
+    void corsReflectsProbeOriginWithCredentials_flaggedHigh() {
+        List<RawFinding> findings = HttpHeaderParser.parse(
+                "example.com",
+                withCors(new FetchResult.CorsProbe(HttpHeaderFetcher.CORS_PROBE_ORIGIN, "true")));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("CORS_CREDENTIALED_ORIGIN_REFLECTION");
+            assertThat(f.severity()).isEqualTo(org.freedonia.bloodhound.common.findings.Severity.HIGH);
+            assertThat(f.evidence()).containsEntry("allowOrigin", HttpHeaderFetcher.CORS_PROBE_ORIGIN);
+        });
+    }
+
+    @Test
+    void corsReflectsOriginCaseInsensitively_stillFlagged() {
+        List<RawFinding> findings = HttpHeaderParser.parse(
+                "example.com",
+                withCors(new FetchResult.CorsProbe(HttpHeaderFetcher.CORS_PROBE_ORIGIN.toUpperCase(), "TRUE")));
+        assertThat(ruleIds(findings)).contains("CORS_CREDENTIALED_ORIGIN_REFLECTION");
+    }
+
+    /** A bare wildcard can never carry credentials per the CORS spec itself - not the same attack, not flagged. */
+    @Test
+    void corsWildcardWithoutCredentials_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withCors(new FetchResult.CorsProbe("*", null)))))
+                .doesNotContain("CORS_CREDENTIALED_ORIGIN_REFLECTION");
+    }
+
+    /** Reflects the probe origin, but never actually sends credentials:true - not exploitable the same way. */
+    @Test
+    void corsReflectsOriginButNoCredentialsHeader_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withCors(new FetchResult.CorsProbe(HttpHeaderFetcher.CORS_PROBE_ORIGIN, null)))))
+                .doesNotContain("CORS_CREDENTIALED_ORIGIN_REFLECTION");
+    }
+
+    /** A specific, real allowlisted origin with credentials:true is a deliberate, legitimate config, not a reflection. */
+    @Test
+    void corsAllowsOneRealOriginWithCredentials_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse(
+                        "example.com", withCors(new FetchResult.CorsProbe("https://app.example.com", "true")))))
+                .doesNotContain("CORS_CREDENTIALED_ORIGIN_REFLECTION");
+    }
+
+    @Test
+    void noCorsProbeResult_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withCors(null))))
+                .doesNotContain("CORS_CREDENTIALED_ORIGIN_REFLECTION");
     }
 }

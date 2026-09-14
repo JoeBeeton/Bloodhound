@@ -31,6 +31,7 @@ public final class HttpHeaderParser {
                 findings, headers, hostname, "permissions-policy", "HEADER_PERMISSIONS_POLICY_MISSING", Severity.INFO);
 
         findings.addAll(httpsRedirectFindings(hostname, result));
+        findings.addAll(corsReflectionFindings(hostname, result));
 
         String banner = (headers.getOrDefault("server", "") + " " + headers.getOrDefault("x-powered-by", "")).trim();
         if (!banner.isEmpty() && VERSION_LIKE.matcher(banner).find()) {
@@ -110,6 +111,35 @@ public final class HttpHeaderParser {
         return List.of();
     }
 
+    /**
+     * A fabricated, definitely-not-a-real-allowlisted Origin (see {@link
+     * HttpHeaderFetcher#CORS_PROBE_ORIGIN}) coming back verbatim in Access-Control-Allow-Origin,
+     * combined with Access-Control-Allow-Credentials: true, means the server reflects whatever
+     * Origin it's handed rather than checking it against a real allowlist - any malicious site
+     * can then make authenticated cross-origin requests using a logged-in victim's cookies and
+     * read the response. A bare wildcard ({@code *}) is deliberately NOT flagged here: browsers
+     * refuse to send credentials to a wildcard origin regardless of the credentials header (the
+     * CORS spec forbids the combination), so it can't enable the same attack, and an
+     * unauthenticated public API returning {@code *} is extremely common and not itself a
+     * misconfiguration worth an org-wide finding.
+     */
+    static List<RawFinding> corsReflectionFindings(String hostname, FetchResult result) {
+        FetchResult.CorsProbe cors = result.cors();
+        if (cors == null || cors.allowOrigin() == null) {
+            return List.of();
+        }
+        boolean reflected = cors.allowOrigin().equalsIgnoreCase(HttpHeaderFetcher.CORS_PROBE_ORIGIN);
+        boolean credentialed = "true".equalsIgnoreCase(cors.allowCredentials());
+        if (reflected && credentialed) {
+            return List.of(finding(
+                    "CORS_CREDENTIALED_ORIGIN_REFLECTION",
+                    Severity.HIGH,
+                    hostname,
+                    Map.of("allowOrigin", cors.allowOrigin(), "allowCredentials", cors.allowCredentials())));
+        }
+        return List.of();
+    }
+
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
         String[] copy = COPY.get(ruleId);
         return new RawFinding(ruleId, severity, Category.HEADERS, copy[0], copy[1], asset, evidence);
@@ -153,6 +183,16 @@ public final class HttpHeaderParser {
                         "The site answers on cleartext HTTP without redirecting to HTTPS. Anything a user or client "
                                 + "sends before reaching the HTTPS version - and every visit that starts from an http:// "
                                 + "link or a typed hostname - is readable and modifiable by anyone on the network path."
+                    }),
+            Map.entry(
+                    "CORS_CREDENTIALED_ORIGIN_REFLECTION",
+                    new String[] {
+                        "CORS reflects arbitrary Origin with credentials allowed",
+                        "The server echoes back whatever Origin header it receives in Access-Control-Allow-Origin "
+                                + "while also sending Access-Control-Allow-Credentials: true, rather than checking the "
+                                + "Origin against a real allowlist. Any malicious website can exploit this to make "
+                                + "authenticated cross-origin requests using a logged-in victim's own cookies and read "
+                                + "the response."
                     }),
             Map.entry(
                     "HEADER_SERVER_BANNER_VERBOSE",
