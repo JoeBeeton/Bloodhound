@@ -59,6 +59,22 @@ public final class SafeAddressValidator {
         return hostname != null && ALLOWLISTED_HOSTNAMES.contains(hostname.toLowerCase(Locale.ROOT));
     }
 
+    /**
+     * Public for callers that resolve a hostname themselves and filter addresses with {@link
+     * #isUnsafeToConnect} directly (e.g. {@code DualStackResolver}, which needs one address per
+     * IP family) rather than going through {@link #requireSafeIfResolvable}/{@link
+     * #resolveSafeAddress} - those two already check the allowlist internally, but a caller
+     * doing its own per-address filtering has no way to honor it otherwise. Found live:
+     * PORT_SCAN_LIGHT/PORT_SCAN_DEEP against juiceshop.local (the allowlisted dev-fixtures
+     * target) still failed with "resolves only to private/loopback/reserved addresses" despite
+     * BLOODHOUND_SSRF_ALLOWLIST being set correctly - DualStackResolver was calling {@link
+     * #isUnsafeToConnect} per-address with no hostname context at all, so the allowlist this
+     * class already had could never be consulted from there.
+     */
+    public static boolean isHostnameAllowlisted(String hostname) {
+        return isAllowlisted(hostname);
+    }
+
     public static boolean isSafeToConnect(InetAddress address) {
         if (address.isLoopbackAddress()
                 || address.isSiteLocalAddress()

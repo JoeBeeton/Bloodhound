@@ -32,6 +32,14 @@ public final class DualStackResolver {
      * address of the other family. Fails only if not a single address of
      * either family turned out to be safe to connect to.
      *
+     * <p>{@code hostname}'s own allowlist status ({@link
+     * SafeAddressValidator#isHostnameAllowlisted}) is checked once, up front - a live bug found
+     * PORT_SCAN_LIGHT/PORT_SCAN_DEEP still refusing to scan the allowlisted juiceshop.local dev
+     * fixture (it only ever resolves to a private Docker-bridge address, exactly why it's
+     * allowlisted at all) because this method filtered per-address with no hostname context,
+     * never consulting the allowlist {@link SafeAddressValidator#requireSafeIfResolvable}/{@link
+     * SafeAddressValidator#resolveSafeAddress} already honor.
+     *
      * @return keys are "IPv4"/"IPv6", in the order the addresses were resolved
      */
     public static Map<String, InetAddress> resolveOnePerFamily(String hostname) throws ScanModuleException {
@@ -42,10 +50,11 @@ public final class DualStackResolver {
             throw new ScanModuleException(hostname + " could not be resolved", e);
         }
 
+        boolean allowlisted = SafeAddressValidator.isHostnameAllowlisted(hostname);
         Map<String, InetAddress> result = new LinkedHashMap<>();
         for (InetAddress address : all) {
             String family = address instanceof Inet6Address ? "IPv6" : "IPv4";
-            if (result.containsKey(family) || SafeAddressValidator.isUnsafeToConnect(address)) {
+            if (result.containsKey(family) || (!allowlisted && SafeAddressValidator.isUnsafeToConnect(address))) {
                 continue;
             }
             result.put(family, address);
