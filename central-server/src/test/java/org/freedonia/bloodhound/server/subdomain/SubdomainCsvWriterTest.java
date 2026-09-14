@@ -11,7 +11,8 @@ import org.junit.jupiter.api.Test;
 class SubdomainCsvWriterTest {
 
     private static SubdomainSummary summary(String hostname, boolean active, List<String> ips) {
-        return new SubdomainSummary(UUID.randomUUID(), hostname, Instant.now(), Instant.now(), "CRTSH", active, ips);
+        return new SubdomainSummary(
+                UUID.randomUUID(), hostname, Instant.now(), Instant.now(), "CRTSH", active, ips, null, false);
     }
 
     @Test

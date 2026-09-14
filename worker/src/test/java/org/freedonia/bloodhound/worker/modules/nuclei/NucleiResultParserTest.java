@@ -93,4 +93,18 @@ class NucleiResultParserTest {
         List<NucleiFinding> results = NucleiResultParser.parse(multiRef);
         assertThat(results.get(0).reference()).isEqualTo("https://a.example, https://b.example");
     }
+
+    /** Captured from a live run of nuclei's own waf-detect template against a real Cloudflare-fronted host. */
+    @Test
+    void matcherName_extractedFromRealWafDetectLine() {
+        String wafDetectLine = "{\"template-id\":\"waf-detect\",\"info\":{\"name\":\"WAF Detection\",\"severity\":\"info\"},"
+                + "\"matcher-name\":\"cloudflare\",\"host\":\"asda.example.co.uk\",\"matched-at\":\"https://asda.example.co.uk\"}";
+        List<NucleiFinding> results = NucleiResultParser.parse(wafDetectLine);
+        assertThat(results.get(0).matcherName()).isEqualTo("cloudflare");
+    }
+
+    @Test
+    void missingMatcherName_null() {
+        assertThat(NucleiResultParser.parse(REAL_LINE).get(0).matcherName()).isNull();
+    }
 }

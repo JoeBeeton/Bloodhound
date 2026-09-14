@@ -55,6 +55,10 @@ export interface Target {
   lastScanWasDeep: boolean | null;
   /** Free-text context an analyst leaves on a target (which environment, who owns it, why it's tracked) - absent for most existing targets. */
   notes: string | null;
+  /** The WAF product nuclei's waf-detect template identified on this target's own apex hostname (e.g. "cloudflare"), or null if either none was detected or nuclei hasn't scanned it yet - see wafScanned. */
+  wafVendor: string | null;
+  /** True once nuclei has scanned this hostname at all - disambiguates "scanned, no WAF found" from "not yet scanned" when wafVendor is null. */
+  wafScanned: boolean;
 }
 
 /** Mirrors ScoringEngine.CATEGORY_WEIGHTS on the backend exactly - WEB_APP (ZAP/Nuclei
@@ -190,6 +194,10 @@ export interface Subdomain {
   source: string;
   isActive: boolean;
   currentIpAddresses: string[];
+  /** Same meaning as Target's own wafVendor, for this subdomain. */
+  wafVendor: string | null;
+  /** Same meaning as Target's own wafScanned, for this subdomain. */
+  wafScanned: boolean;
 }
 
 export interface Technology {

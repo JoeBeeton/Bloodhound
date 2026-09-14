@@ -53,12 +53,18 @@ const LEGEND_RESERVED_BOTTOM = 140;
  * focusable - the platform nodes (hub/database/webui/worker) aren't links, so giving them
  * role="button" would be a focusable dead end, itself an accessibility anti-pattern.
  */
+function wafAriaSuffix(node: GraphNode): string {
+  if (node.wafVendor) return `, WAF detected (${node.wafVendor})`;
+  if (node.wafScanned) return ", no WAF detected";
+  return "";
+}
+
 function ariaLabelForNode(node: GraphNode): string {
   if (node.kind === "target") {
-    return `${node.label}, ${node.targetType}${node.grade ? `, grade ${node.grade} (${node.score?.toFixed(0)})` : ", not yet scanned"}`;
+    return `${node.label}, ${node.targetType}${node.grade ? `, grade ${node.grade} (${node.score?.toFixed(0)})` : ", not yet scanned"}${wafAriaSuffix(node)}`;
   }
   if (node.kind === "subdomain") {
-    return `${node.label}, ${node.isActive ? "active" : "inactive"} subdomain`;
+    return `${node.label}, ${node.isActive ? "active" : "inactive"} subdomain${wafAriaSuffix(node)}`;
   }
   if (node.kind === "more") {
     return `View all subdomains for this target${node.hiddenCount ? ` (${node.hiddenCount} more not shown)` : ""}`;
@@ -363,6 +369,14 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
                 {node.kind === "target" && (
                   <circle r={node.radius + 4} fill="none" stroke={color} strokeWidth={0.75} opacity={0.35} />
                 )}
+                {(node.kind === "target" || node.kind === "subdomain") && (node.wafVendor || node.wafScanned) && (
+                  <WafBadge
+                    detected={Boolean(node.wafVendor)}
+                    offsetX={node.radius * 0.72}
+                    offsetY={-node.radius * 0.72}
+                    scale={node.kind === "target" ? 1 : 0.72}
+                  />
+                )}
                 {node.kind === "database" && (
                   // A tiny cylinder glyph (two ellipses + a body line) reads as "database" at a glance, without an icon font/library.
                   <g stroke="#12071f" strokeWidth={0.8} fill="none" opacity={0.55}>
@@ -429,6 +443,7 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
               {hoveredNode.isActive ? "active" : "inactive"}
             </p>
           )}
+          {(hoveredNode.kind === "target" || hoveredNode.kind === "subdomain") && <WafTooltipLine node={hoveredNode} />}
           {hoveredNode.kind === "more" && <p className="text-slate-400">click to view the full list</p>}
           {hoveredNode.kind === "worker" && (
             <>
@@ -466,12 +481,64 @@ export function AttackSurfaceGraph({ data }: { data: GraphData }) {
         <div className="my-0.5 h-px bg-slate-700/60" />
         <LegendRow color="#a78bfa" label="Platform" />
         <LegendRow color="#ffb800" label="Worker busy" />
+        <div className="my-0.5 h-px bg-slate-700/60" />
+        <LegendRow color={WAF_DETECTED_COLOR} label="WAF detected" />
+        <LegendRow color={WAF_NOT_DETECTED_COLOR} label="No WAF found" />
         <p className="mt-1 text-muted">scroll to zoom · drag to pan</p>
         <p className="text-muted">zoom in to reveal subdomain names</p>
         <p className="text-muted">tab to a node · enter to open it</p>
       </div>
     </div>
   );
+}
+
+/** Distinct from every other color already in this graph's palette (own/competitor/watchlist/platform/worker-status) -
+ * green reads unambiguously as "protected" with no risk of being mistaken for a target-type or worker-status color. */
+const WAF_DETECTED_COLOR = "#4ade80";
+/** Muted amber, not the same amber worker-busy/watchlist already use at full opacity - an outline-only badge at low
+ * opacity reads as "worth noting" without competing with those for attention the way a solid fill would. */
+const WAF_NOT_DETECTED_COLOR = "#f59e0b";
+
+/**
+ * A small shield glyph overlaid near a target/subdomain node's edge - filled solid when nuclei
+ * identified a WAF vendor on that host, an outline-only (fainter) version when nuclei scanned the
+ * host and found none. Absent entirely (see the wafVendor || wafScanned guard at the call site)
+ * for a host nuclei hasn't scanned yet, so "no badge" never gets misread as "confirmed no WAF."
+ */
+function WafBadge({
+  detected,
+  offsetX,
+  offsetY,
+  scale,
+}: {
+  detected: boolean;
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+}) {
+  const color = detected ? WAF_DETECTED_COLOR : WAF_NOT_DETECTED_COLOR;
+  return (
+    <g transform={`translate(${offsetX}, ${offsetY}) scale(${scale})`} className="pointer-events-none">
+      <circle r={4.2} fill="#0a0714" opacity={0.9} />
+      <path
+        d="M0,-3.2 L2.6,-2 L2.6,0.6 C2.6,2.3 1.3,3.2 0,3.6 C-1.3,3.2 -2.6,2.3 -2.6,0.6 L-2.6,-2 Z"
+        fill={detected ? color : "none"}
+        stroke={color}
+        strokeWidth={detected ? 0 : 0.6}
+        opacity={detected ? 0.95 : 0.75}
+      />
+    </g>
+  );
+}
+
+function WafTooltipLine({ node }: { node: GraphNode }) {
+  if (node.wafVendor) {
+    return <p style={{ color: WAF_DETECTED_COLOR }}>WAF: {node.wafVendor}</p>;
+  }
+  if (node.wafScanned) {
+    return <p style={{ color: WAF_NOT_DETECTED_COLOR }}>WAF: none detected</p>;
+  }
+  return null;
 }
 
 function LegendRow({ color, label }: { color: string; label: string }) {

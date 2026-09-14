@@ -12,7 +12,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Map;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.subdomain.dto.SubdomainSummary;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
@@ -24,7 +26,13 @@ class SubdomainControllerTest {
 
     private final SubdomainRepository subdomainRepository = mock(SubdomainRepository.class);
     private final TargetRepository targetRepository = mock(TargetRepository.class);
-    private final SubdomainController controller = new SubdomainController(subdomainRepository, targetRepository);
+    private final FindingRepository findingRepository = mock(FindingRepository.class);
+    private final SubdomainController controller =
+            new SubdomainController(subdomainRepository, targetRepository, findingRepository);
+
+    {
+        when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+    }
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();

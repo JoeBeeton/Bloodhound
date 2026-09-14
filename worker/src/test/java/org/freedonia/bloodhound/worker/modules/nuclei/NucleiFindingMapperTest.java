@@ -10,7 +10,7 @@ class NucleiFindingMapperTest {
 
     private static NucleiFinding finding(String templateId, String severity, String matchedAt) {
         return new NucleiFinding(templateId, "Test Finding", severity, "A test description.", "example.com",
-                matchedAt, "https://example.org/ref", List.of(), null, null);
+                matchedAt, "https://example.org/ref", List.of(), null, null, null);
     }
 
     @Test
@@ -67,15 +67,16 @@ class NucleiFindingMapperTest {
 
     @Test
     void nullMatchedAt_fallsBackToHost() {
-        NucleiFinding result = new NucleiFinding("t", "Name", "info", "desc", "example.com", null, null, List.of(), null, null);
+        NucleiFinding result =
+                new NucleiFinding("t", "Name", "info", "desc", "example.com", null, null, List.of(), null, null, null);
         RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
         assertThat(f.affectedAsset()).isEqualTo("example.com");
     }
 
     @Test
     void missingName_fallsBackToTemplateIdInTitle() {
-        NucleiFinding result =
-                new NucleiFinding("mystery-template", null, "low", null, "example.com", "http://example.com", null, List.of(), null, null);
+        NucleiFinding result = new NucleiFinding(
+                "mystery-template", null, "low", null, "example.com", "http://example.com", null, List.of(), null, null, null);
         RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
         assertThat(f.title()).isEqualTo("Nuclei finding (template mystery-template)");
         assertThat(f.description()).isEqualTo("");
@@ -85,10 +86,27 @@ class NucleiFindingMapperTest {
     void cveIdAndExtractedResults_includedInEvidenceWhenPresent() {
         NucleiFinding result = new NucleiFinding(
                 "cve-2021-12345", "Some CVE", "critical", "desc", "example.com", "http://example.com",
-                null, List.of("v1.2.3"), "curl ...", "CVE-2021-12345");
+                null, List.of("v1.2.3"), "curl ...", "CVE-2021-12345", null);
         RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
         assertThat(f.evidence()).containsEntry("cveId", "CVE-2021-12345");
         assertThat(f.evidence()).containsEntry("curlCommand", "curl ...");
         assertThat(f.evidence().get("extractedResults")).isEqualTo(List.of("v1.2.3"));
+    }
+
+    /** waf-detect's matcher name IS the vendor identified - see NucleiFindingMapper's own comment. */
+    @Test
+    void matcherName_includedInEvidenceWhenPresent() {
+        NucleiFinding result = new NucleiFinding(
+                "waf-detect", "WAF Detection", "info", "desc", "asda.example.co.uk", "https://asda.example.co.uk",
+                null, List.of(), null, null, "cloudflare");
+        RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
+        assertThat(f.evidence()).containsEntry("matcherName", "cloudflare");
+    }
+
+    @Test
+    void nullMatcherName_omittedFromEvidence() {
+        RawFinding f = NucleiFindingMapper.map(List.of(finding("tech-detect", "info", "http://example.com")))
+                .get(0);
+        assertThat(f.evidence()).doesNotContainKey("matcherName");
     }
 }

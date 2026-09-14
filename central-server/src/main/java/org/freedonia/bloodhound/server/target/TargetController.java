@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
@@ -55,6 +56,7 @@ public class TargetController {
     private final TargetAuthorizationRepository targetAuthorizationRepository;
     private final AuditLogRepository auditLogRepository;
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter;
+    private final FindingRepository findingRepository;
     private final int maxTargetsPerOrg;
 
     public TargetController(
@@ -66,6 +68,7 @@ public class TargetController {
             TargetAuthorizationRepository targetAuthorizationRepository,
             AuditLogRepository auditLogRepository,
             TargetBulkCreateRateLimiter targetBulkCreateRateLimiter,
+            FindingRepository findingRepository,
             @Value("${bloodhound.targets.max-per-org:100}") int maxTargetsPerOrg) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
@@ -75,6 +78,7 @@ public class TargetController {
         this.targetAuthorizationRepository = targetAuthorizationRepository;
         this.auditLogRepository = auditLogRepository;
         this.targetBulkCreateRateLimiter = targetBulkCreateRateLimiter;
+        this.findingRepository = findingRepository;
         this.maxTargetsPerOrg = maxTargetsPerOrg;
     }
 
@@ -117,7 +121,10 @@ public class TargetController {
             lastScanWasDeep =
                     scanJobRepository.existsForRunWithModuleTypeIn(lastScan.id(), ScanRunService.allTier2ModuleTypes());
         }
-        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep);
+        // Only the apex hostname's own entry is needed here - see SubdomainController for the
+        // identical per-host lookup driving the map's subdomain-level WAF badges.
+        var wafStatus = findingRepository.findWafStatusByTarget(target.id()).get(target.hostname());
+        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus);
     }
 
     @PostMapping

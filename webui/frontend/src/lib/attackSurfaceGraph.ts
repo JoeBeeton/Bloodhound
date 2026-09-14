@@ -22,6 +22,10 @@ export interface GraphNode extends SimulationNodeDatum {
   fullWorkerId?: string;
   href?: string;
   radius: number;
+  /** Only meaningful on "target"/"subdomain" nodes - see Target/Subdomain's own wafVendor doc comment. */
+  wafVendor?: string | null;
+  /** Only meaningful on "target"/"subdomain" nodes - see Target/Subdomain's own wafScanned doc comment. */
+  wafScanned?: boolean;
 }
 
 export type GraphLink = SimulationLinkDatum<GraphNode> & { kind?: "structural" | "scanning" };
@@ -167,6 +171,8 @@ export function buildGraph(
       // log-scaled so americanexpress.com's 22,761 subdomains doesn't dwarf everything else on
       // the canvas, while still visibly reading as "bigger surface" than an 11-subdomain target.
       radius: 10 + Math.min(14, Math.log2(subdomainCount + 1) * 2.4),
+      wafVendor: target.wafVendor,
+      wafScanned: target.wafScanned,
     });
     links.push({ source: HUB_ID, target: targetNodeId, kind: "structural" });
 
@@ -180,6 +186,8 @@ export function buildGraph(
         targetType: target.targetType,
         isActive: sub.isActive,
         radius: sub.isActive ? 5 : 3.5,
+        wafVendor: sub.wafVendor,
+        wafScanned: sub.wafScanned,
       });
       links.push({ source: targetNodeId, target: subNodeId, kind: "structural" });
     }
