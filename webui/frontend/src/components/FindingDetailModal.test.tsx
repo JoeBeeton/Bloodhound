@@ -74,6 +74,20 @@ describe("FindingDetailModal - evidence", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
   });
+
+  it("renders a URL-shaped affectedAsset (ZAP/Nuclei findings) as a clickable link", () => {
+    renderModal(finding({ affectedAsset: "https://example.com/actuator/health" }));
+
+    const link = screen.getByRole("link", { name: "https://example.com/actuator/health" });
+    expect(link).toHaveAttribute("href", "https://example.com/actuator/health");
+  });
+
+  it("keeps a bare-hostname affectedAsset as plain text", () => {
+    renderModal(finding({ affectedAsset: "example.com" }));
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+  });
 });
 
 describe("FindingDetailModal - dismiss/reopen", () => {

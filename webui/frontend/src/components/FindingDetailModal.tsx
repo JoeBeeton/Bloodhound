@@ -24,11 +24,12 @@ async function reopenFinding(id: string): Promise<void> {
   if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to reopen finding."));
 }
 
-/** True for any evidence value worth rendering as a clickable link rather than plain text - e.g.
- * ExposedPathDecisionLogic's "url" (the exact endpoint a finding was probed at) or
- * BucketBruteForceModule's "checkUrl". Every such value here is a URL this app's own worker
- * constructed and requested against an already-tracked target, not arbitrary attacker text, and
- * the http(s):// prefix check rules out a javascript: URI. */
+/** True for any evidence/affectedAsset value worth rendering as a clickable link rather than
+ * plain text - e.g. ExposedPathDecisionLogic's "url" evidence, BucketBruteForceModule's
+ * "checkUrl", or ZapAlertMapper/NucleiFindingMapper's affectedAsset (both set it to the exact
+ * URL the alert/match came from, not just a bare hostname). Every such value here is a URL this
+ * app's own worker constructed and requested against an already-tracked target, not arbitrary
+ * attacker text, and the http(s):// prefix check rules out a javascript: URI. */
 function isLinkableUrl(value: unknown): value is string {
   return typeof value === "string" && /^https?:\/\//.test(value);
 }
@@ -158,7 +159,20 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
         <Field label="Finding ID">{finding.displayId}</Field>
         <Field label="Rule ID">{finding.ruleId}</Field>
         <Field label="Module">{finding.moduleType}</Field>
-        <Field label="Affected asset">{finding.affectedAsset}</Field>
+        <Field label="Affected asset">
+          {isLinkableUrl(finding.affectedAsset) ? (
+            <a
+              href={finding.affectedAsset}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-neon-cyan hover:underline"
+            >
+              {finding.affectedAsset}
+            </a>
+          ) : (
+            finding.affectedAsset
+          )}
+        </Field>
         {"targetHostname" in finding && <Field label="Target">{finding.targetHostname}</Field>}
         <Field label="First seen">{formatDate(finding.firstSeenAt)}</Field>
         <Field label="Last seen">{formatDate(finding.lastSeenAt)}</Field>
