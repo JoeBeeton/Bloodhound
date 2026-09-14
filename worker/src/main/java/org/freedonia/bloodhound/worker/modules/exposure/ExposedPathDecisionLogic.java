@@ -144,6 +144,7 @@ public final class ExposedPathDecisionLogic {
                 b -> b.contains("Groovy script") || b.contains("Script Console"));
         addIfMatches(findings, hostname, r, "EXPOSURE_KIBANA_UNAUTH", baselineBody, b -> b.contains("kbn-injected-metadata"));
         addIfMatches(findings, hostname, r, "EXPOSURE_SECURITY_TXT_PRESENT", baselineBody, b -> b.contains("Contact:"));
+        addIfMatches(findings, hostname, r, "EXPOSURE_DS_STORE", baselineBody, ExposedPathDecisionLogic::looksLikeDsStore);
 
         // Alt-port probes: different port/protocol than the baseline probe, so no soft-404-dupe guard applies -
         // the content signature (a specific JSON shape) is the sole, sufficient guard here.
@@ -276,6 +277,26 @@ public final class ExposedPathDecisionLogic {
         return anyKeyValueLine && anySecretLikeKey;
     }
 
+    /**
+     * .DS_Store is macOS Finder's per-directory metadata file (folder view settings, icon
+     * positions, and - the actually sensitive part - a record of every file/subfolder name
+     * Finder has ever seen in that directory, including ones since deleted from the visible
+     * listing) - accidentally deployed alongside real site content whenever someone drags a
+     * folder onto a web server from a Mac without excluding it. Its binary format has a fixed,
+     * well-documented magic signature at a fixed offset: bytes 0-3 are 0x00000001, bytes 4-7 are
+     * the ASCII string "Bud1". "Bud1" alone is what's checked here (not the full 8-byte
+     * signature) since the leading 0x00 bytes are exactly the kind of byte a lossy UTF-8 decode
+     * could mangle depending on what precedes them - "Bud1" itself is pure ASCII (all four bytes
+     * below 0x80), which UTF-8 always decodes correctly regardless of surrounding malformed
+     * binary (invalid multi-byte sequences get replaced with U+FFFD, but a byte that's
+     * unambiguously a plain ASCII character on its own is never treated as part of one), so the
+     * signature survives this codebase's ordinary UTF-8 body decoding of what is otherwise a
+     * binary file.
+     */
+    static boolean looksLikeDsStore(String body) {
+        return body.contains("Bud1");
+    }
+
     /** A NOAUTH/ERR refusal means "properly secured" - not a finding; only a genuine bulk-string INFO reply counts. */
     static boolean isRedisPositive(String redisResponse) {
         return redisResponse != null && redisResponse.startsWith("$") && redisResponse.contains("redis_version:");
@@ -372,6 +393,11 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_SECURITY_TXT_PRESENT", new RuleMeta(Severity.INFO,
                     "security.txt published",
                     "A /.well-known/security.txt file was found - a positive security-maturity signal.")),
+            Map.entry("EXPOSURE_DS_STORE", new RuleMeta(Severity.MEDIUM,
+                    "Exposed .DS_Store file",
+                    "A macOS Finder .DS_Store file is publicly readable, disclosing the names of files and "
+                            + "subfolders Finder has seen in this directory - including ones no longer present in "
+                            + "the live listing - useful for reconnaissance of the site's real directory structure.")),
             Map.entry("EXPOSURE_DOCKER_API", new RuleMeta(Severity.CRITICAL,
                     "Docker Engine API exposed without authentication",
                     "The Docker Engine remote API is reachable without TLS/authentication - equivalent to root access.")),

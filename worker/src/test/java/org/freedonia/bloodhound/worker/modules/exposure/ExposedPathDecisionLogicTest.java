@@ -358,4 +358,31 @@ class ExposedPathDecisionLogicTest {
             assertThat(f.severity().name()).isEqualTo("INFO");
         });
     }
+
+    /**
+     * Real .DS_Store magic bytes (0x00000001 then ASCII "Bud1"), decoded through UTF-8 exactly the
+     * way ExposedPathFetcher decodes every probe body - the leading binary bytes turn into
+     * replacement characters, but "Bud1" itself (pure ASCII) survives intact, which is exactly
+     * the property looksLikeDsStore relies on.
+     */
+    @Test
+    void dsStoreMagicBytes_flaggedMediumEvenThroughLossyUtf8Decode() {
+        byte[] realDsStoreHeader = {0x00, 0x00, 0x00, 0x01, 'B', 'u', 'd', '1', 0x00, 0x10, 0x00, 0x00};
+        String body = new String(realDsStoreHeader, java.nio.charset.StandardCharsets.UTF_8);
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_DS_STORE", new ProbeResponse(200, "application/octet-stream", (long) realDsStoreHeader.length, body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_DS_STORE");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void notDsStoreFormat_notFlagged() {
+        String body = "<html><body>404 not found</body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_DS_STORE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DS_STORE");
+    }
 }
