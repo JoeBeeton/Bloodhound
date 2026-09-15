@@ -22,7 +22,7 @@ class ExternalCliSubdomainSourceTest {
         }
 
         @Override
-        protected List<String> parseOutput(String stdout) {
+        protected List<String> parseOutput(String stdout, String rootDomain) {
             return List.of(stdout); // not the point of this test - just needs to not throw
         }
 

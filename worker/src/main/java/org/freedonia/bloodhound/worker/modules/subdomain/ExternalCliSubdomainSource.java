@@ -47,7 +47,14 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
 
     protected abstract List<String> command(String rootDomain);
 
-    protected abstract List<String> parseOutput(String stdout);
+    /**
+     * @param rootDomain the same value passed to {@link #command(String)} for this call - most
+     *     sources' output is already scoped to the queried domain and can ignore this (see
+     *     SubfinderCliSource), but a crawler-backed source (see KatanaCliSource) reports every
+     *     URL it fetches, in-scope or not, and needs this to filter its own results back down to
+     *     the queried domain.
+     */
+    protected abstract List<String> parseOutput(String stdout, String rootDomain);
 
     @Override
     public List<String> discover(String rootDomain) {
@@ -93,7 +100,7 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
                 log.warn("{} exited {} with no output for {}", sourceName(), process.exitValue(), rootDomain);
                 return List.of();
             }
-            return parseOutput(stdout);
+            return parseOutput(stdout, rootDomain);
         } catch (IOException e) {
             // Binary missing/not executable in this image, or failed to start.
             log.warn("{} unavailable ({}); continuing with other sources", sourceName(), e.getMessage());

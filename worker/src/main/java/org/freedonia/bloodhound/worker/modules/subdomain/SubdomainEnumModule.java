@@ -16,7 +16,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Aggregates every configured SubdomainSource (crt.sh + subfinder as of
- * Milestone 6b), resolves current IPs, CNAME targets, and NS delegation for
+ * Milestone 6b, katana's js-crawl mode added afterward - see KatanaCliSource),
+ * resolves current IPs, CNAME targets, and NS delegation for
  * what it finds, runs dangling-CNAME/takeover confirmation plus
  * cloud-storage-bucket public-listing confirmation (see CloudBucketChecker -
  * same CNAME data, a different check: "unclaimed" vs "claimed but publicly
