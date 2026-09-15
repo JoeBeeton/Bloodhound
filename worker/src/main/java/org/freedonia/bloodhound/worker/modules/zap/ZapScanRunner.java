@@ -208,6 +208,18 @@ public class ZapScanRunner {
                 .mapToInt(JsonNode::size)
                 .sum();
         boolean reachable = messageCount > 0 && ioErrorCount == 0;
+        if (!reachable) {
+            // Rare (2 of 516 ZAP_ACTIVE_SCAN jobs ever, against a host independently confirmed
+            // reachable both times) but currently unexplained when it hits a genuinely live host:
+            // ruled out network/WAF/UA-level blocking by reproducing the exact request from inside
+            // the zap container itself (200 OK, <0.5s) immediately after one such failure. Logging
+            // the actual counts here so the next occurrence leaves evidence instead of nothing -
+            // messageCount==0 with ioErrorCount==0 (spider reports done, but recorded neither a
+            // success nor a connection error) is the specific ambiguous case worth distinguishing
+            // from a real ioError-confirmed dead host.
+            log.warn("ZAP spider inconclusive for {}: messageCount={} ioErrorCount={} - treating as unreachable",
+                    targetUrl, messageCount, ioErrorCount);
+        }
         return new SpiderResult(targetUrl, reachable);
     }
 
