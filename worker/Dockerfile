@@ -36,6 +36,25 @@ RUN curl -fsSL -O \
     && unzip "subfinder_${SUBFINDER_VERSION}_linux_amd64.zip" subfinder \
     && chmod +x subfinder
 
+# katana (ProjectDiscovery, MIT - license-checked the same way as nuclei below) - same
+# prebuilt-binary, checksum-verified pattern as subfinder above. A second, active subdomain
+# source alongside crt.sh/subfinder's passive lookups: crawls the target's own site and parses
+# every fetched JS file for endpoint-shaped strings via -jc (see KatanaCliSource), catching
+# hostnames a company's own frontend code references that never got a public CT-logged cert and
+# aren't a guessable wordlist entry - a different discovery angle than either existing source
+# structurally can cover. Version pinned; bump deliberately, don't float latest.
+FROM ghcr.io/graalvm/jdk-community:21 AS katana
+WORKDIR /tmp/katana
+RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+ARG KATANA_VERSION=1.7.0
+RUN curl -fsSL -O \
+      "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VERSION}/katana_${KATANA_VERSION}_linux_amd64.zip" \
+    && curl -fsSL -o katana_checksums.txt \
+      "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VERSION}/katana-${KATANA_VERSION}-checksums.txt" \
+    && grep " katana_${KATANA_VERSION}_linux_amd64.zip\$" katana_checksums.txt | sha256sum -c - \
+    && unzip "katana_${KATANA_VERSION}_linux_amd64.zip" katana \
+    && chmod +x katana
+
 # naabu (ProjectDiscovery, MIT) - same prebuilt-binary pattern as subfinder
 # above. modules/portscan's Tier 2 full-port-range discovery tool - see
 # NaabuFetcher/DeepPortScanModule (Tier 1's light scan needed no external
@@ -110,6 +129,7 @@ WORKDIR /app
 RUN microdnf install -y ca-certificates && microdnf clean all
 
 COPY --from=subfinder /tmp/subfinder/subfinder /usr/local/bin/subfinder
+COPY --from=katana /tmp/katana/katana /usr/local/bin/katana
 COPY --from=naabu /tmp/naabu/naabu /usr/local/bin/naabu
 COPY --from=zgrab2 /go/bin/zgrab2 /usr/local/bin/zgrab2
 COPY --from=nuclei /tmp/nuclei/nuclei /usr/local/bin/nuclei

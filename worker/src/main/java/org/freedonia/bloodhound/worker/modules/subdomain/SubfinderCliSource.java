@@ -23,7 +23,7 @@ public class SubfinderCliSource extends ExternalCliSubdomainSource {
     }
 
     @Override
-    protected List<String> parseOutput(String stdout) {
+    protected List<String> parseOutput(String stdout, String rootDomain) {
         return parse(stdout);
     }
 
