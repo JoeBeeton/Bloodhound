@@ -3,7 +3,10 @@ package org.freedonia.bloodhound.worker.modules.nuclei;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.http.HttpClient;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -91,6 +94,43 @@ public class NucleiFetcher {
         return thread;
     });
 
+    /**
+     * A live incident found several genuinely-dead subdomains (connection attempts that hang for
+     * ~5s before failing, rather than a fast refusal) each burning the full HARD_TIMEOUT_SECONDS
+     * (20 minutes) with zero output, worker capacity gone the entire time: nuclei's own template
+     * corpus is large enough (10,000+ templates) that even with -c 25 concurrency, a host where
+     * every single request takes the full connect timeout to fail can plausibly exceed the hard
+     * timeout before nuclei's built-in -max-host-error safety valve (default 30, confirmed still
+     * enabled here) has a chance to kick in - confirmed live: re-ran nuclei directly against one
+     * of these hosts with -mhe lowered to 10 and it still produced zero output after 2 real
+     * minutes, so that flag alone isn't a reliable fix for this specific failure shape. A single
+     * fast reachability probe first (the same HTTPS-first/HTTP-fallback shape HttpHeaderFetcher/
+     * ZapScanRunner already use to answer exactly this question) turns a worst-case 20-minute
+     * dead-host job into a few-second one, freeing that worker slot back to the queue - directly
+     * relevant to overall scan throughput/fairness, not just this one module's own runtime.
+     */
+    private static final Duration REACHABILITY_TIMEOUT = Duration.ofSeconds(6);
+
+    private final HttpClient reachabilityClient = HttpClient.newBuilder()
+            .connectTimeout(REACHABILITY_TIMEOUT)
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+
+    private void requireReachable(String hostname) throws ScanModuleException {
+        try {
+            SafeHttpGet.get(reachabilityClient, "https://" + hostname + "/", REACHABILITY_TIMEOUT,
+                    ScanUserAgent.VALUE, HttpResponse.BodyHandlers.discarding(), 5);
+        } catch (Exception httpsFailure) {
+            try {
+                SafeHttpGet.get(reachabilityClient, "http://" + hostname + "/", REACHABILITY_TIMEOUT,
+                        ScanUserAgent.VALUE, HttpResponse.BodyHandlers.discarding(), 5);
+            } catch (Exception httpFailure) {
+                throw new ScanModuleException(hostname + " is unreachable over HTTPS or HTTP - skipping the "
+                        + "nuclei scan rather than spending its full timeout budget probing a dead host", httpFailure);
+            }
+        }
+    }
+
     public String scanJsonLines(String hostname) throws ScanModuleException {
         // hostname reaches here as "-target", hostname in argv below - ProcessBuilder(List<String>)
         // isn't shell-interpreted, so classic ';'/backtick shell injection isn't possible, but a value
@@ -110,6 +150,7 @@ public class NucleiFetcher {
             throw new ScanModuleException(
                     hostname + " resolves to a private/loopback/reserved address - refusing to run nuclei", e);
         }
+        requireReachable(hostname);
 
         ProcessBuilder pb = new ProcessBuilder(
                 "nuclei",
