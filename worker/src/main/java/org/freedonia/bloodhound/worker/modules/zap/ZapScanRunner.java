@@ -207,18 +207,23 @@ public class ZapScanRunner {
                 .stream()
                 .mapToInt(JsonNode::size)
                 .sum();
-        boolean reachable = messageCount > 0 && ioErrorCount == 0;
+        // Confirmed live (via the logging added below, against example.co.uk's own real apex -
+        // 129 messages, 1 io error): requiring ioErrorCount == 0 was too strict. A real,
+        // content-rich site pulling in third-party widgets (this one embeds Trustpilot, Vimeo,
+        // Facebook Connect - confirmed via a separate crawl) will often have exactly one slow or
+        // broken embedded resource among hundreds of otherwise-successful requests; that single
+        // incidental failure was silently discarding the entire legitimate crawl (and any ascan
+        // findings that would have followed) rather than just being noise. Every genuinely dead
+        // host seen this session instead shows ioErrorCount == messageCount (every single
+        // request failed, e.g. 3/3) - "not every message failed" is the threshold that actually
+        // separates "real site, one broken embed" from "nothing here at all", not "zero errors".
+        boolean reachable = messageCount > 0 && ioErrorCount < messageCount;
         if (!reachable) {
-            // Rare (2 of 516 ZAP_ACTIVE_SCAN jobs ever, against a host independently confirmed
-            // reachable both times) but currently unexplained when it hits a genuinely live host:
-            // ruled out network/WAF/UA-level blocking by reproducing the exact request from inside
-            // the zap container itself (200 OK, <0.5s) immediately after one such failure. Logging
-            // the actual counts here so the next occurrence leaves evidence instead of nothing -
-            // messageCount==0 with ioErrorCount==0 (spider reports done, but recorded neither a
-            // success nor a connection error) is the specific ambiguous case worth distinguishing
-            // from a real ioError-confirmed dead host.
-            log.warn("ZAP spider inconclusive for {}: messageCount={} ioErrorCount={} - treating as unreachable",
+            log.warn("ZAP spider found nothing reachable at {}: messageCount={} ioErrorCount={}",
                     targetUrl, messageCount, ioErrorCount);
+        } else if (ioErrorCount > 0) {
+            log.info("ZAP spider against {} had {} incidental io error(s) out of {} messages - proceeding, not treating as unreachable",
+                    targetUrl, ioErrorCount, messageCount);
         }
         return new SpiderResult(targetUrl, reachable);
     }
