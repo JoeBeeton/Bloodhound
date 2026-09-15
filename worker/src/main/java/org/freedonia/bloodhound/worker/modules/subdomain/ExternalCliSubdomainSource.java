@@ -62,6 +62,17 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
         Process process = null;
         try {
             process = new ProcessBuilder(command).start();
+            // ProcessBuilder leaves the child's stdin as an open pipe by default - nothing
+            // written, never closed. Found live: katana (added as a source after this class was
+            // written) checks stdin for additional piped target URLs and blocks reading it
+            // when given exactly that kind of pipe, completely ignoring its own -ct
+            // wall-clock budget and running into this class's much blunter 75s force-kill
+            // instead - reproduced directly (an open/unwritten/unclosed pipe as stdin hangs
+            // past even a 30s outer timeout; /dev/null or an explicitly closed stdin both exit
+            // clean and on-budget). Closing this immediately sends the child EOF right away,
+            // matching how it behaves with no piped input at all - safe unconditionally, since
+            // no source here is meant to feed a subprocess anything via stdin in the first place.
+            process.getOutputStream().close();
             final Process started = process;
             Thread stderrDrain = new Thread(() -> {
                 try {
