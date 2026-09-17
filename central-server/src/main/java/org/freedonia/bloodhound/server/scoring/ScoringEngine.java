@@ -187,7 +187,8 @@ public final class ScoringEngine {
         return value;
     }
 
-    private static String gradeFor(BigDecimal overall) {
+    /** Public so PortfolioService can grade a blended score with these exact same thresholds instead of a second, driftable copy. */
+    public static String gradeFor(BigDecimal overall) {
         if (overall.compareTo(new BigDecimal("90")) >= 0) return "A";
         if (overall.compareTo(new BigDecimal("80")) >= 0) return "B";
         if (overall.compareTo(new BigDecimal("70")) >= 0) return "C";

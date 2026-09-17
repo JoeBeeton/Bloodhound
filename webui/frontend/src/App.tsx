@@ -17,6 +17,10 @@ const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default:
 const SsoCallbackPage = lazy(() => import("./pages/SsoCallbackPage").then((m) => ({ default: m.SsoCallbackPage })));
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const TargetsPage = lazy(() => import("./pages/TargetsPage").then((m) => ({ default: m.TargetsPage })));
+const PortfoliosPage = lazy(() => import("./pages/PortfoliosPage").then((m) => ({ default: m.PortfoliosPage })));
+const PortfolioDetailPage = lazy(() =>
+  import("./pages/PortfolioDetailPage").then((m) => ({ default: m.PortfolioDetailPage })),
+);
 const FindingsPage = lazy(() => import("./pages/FindingsPage").then((m) => ({ default: m.FindingsPage })));
 const FindingsFeedPage = lazy(() => import("./pages/FindingsFeedPage").then((m) => ({ default: m.FindingsFeedPage })));
 const TargetDetailPage = lazy(() => import("./pages/TargetDetailPage").then((m) => ({ default: m.TargetDetailPage })));
@@ -77,6 +81,22 @@ export default function App() {
             element={
               <RequireAuth>
                 <TargetsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/portfolios"
+            element={
+              <RequireAuth>
+                <PortfoliosPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/portfolios/:id"
+            element={
+              <RequireAuth>
+                <PortfolioDetailPage />
               </RequireAuth>
             }
           />

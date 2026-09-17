@@ -1,5 +1,7 @@
 package org.freedonia.bloodhound.server.subdomain;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
@@ -18,6 +20,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -102,6 +106,46 @@ public class SubdomainController {
     /** hostname is user-supplied at target creation - strip anything that could break a quoted Content-Disposition filename. */
     private static String sanitizeFilename(String hostname) {
         return hostname.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    public record AddSubdomainRequest(@NotBlank String hostname) {}
+
+    /**
+     * Lets an analyst add a hostname the automated sources (crt.sh/subfinder/katana) haven't
+     * found yet - a real internal API host learned out-of-band, say. Reuses the same
+     * upsert(...) every SUBDOMAIN_ENUM source already calls, tagged with the new "MANUAL" source
+     * value (source is free text, not an enum - see CRTSH/SUBFINDER/KATANA) - is_active stays
+     * false and last_resolved_at stays null until the next real scan actually resolves it, same
+     * as a freshly-discovered, not-yet-verified hostname from any other source. Restricted to
+     * same-root-domain-or-subdomain of this target, the identical rule worker-side sources
+     * already enforce (see KatanaCliSource#inScope), so a hostname can't be misattached to the
+     * wrong target by mistake.
+     */
+    @PostMapping("/api/v1/targets/{id}/subdomains")
+    public ResponseEntity<SubdomainSummary> add(
+            @PathVariable UUID id,
+            @Valid @RequestBody AddSubdomainRequest request,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        Target target = targetRepository
+                .findByIdAndOrganization(id, principal.organizationId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        String hostname = request.hostname().trim().toLowerCase();
+        if (!inScope(hostname, target.hostname())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "hostname must be " + target.hostname() + " or a subdomain of it");
+        }
+        subdomainRepository.upsert(id, hostname, "MANUAL", List.of(), null);
+        Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(subdomainRepository
+                        .findByTargetAndHostname(id, hostname)
+                        .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
+                        .orElseThrow());
+    }
+
+    private static boolean inScope(String host, String rootDomain) {
+        String root = rootDomain.toLowerCase();
+        return host.equals(root) || host.endsWith("." + root);
     }
 
     /**

@@ -180,6 +180,51 @@ class SubdomainControllerTest {
         assertThat(result.hostname()).isEqualTo("a.example.com");
     }
 
+    @Test
+    void add_targetInAnotherOrg_notFound() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.add(
+                        targetId, new SubdomainController.AddSubdomainRequest("sub.example.com"), principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void add_outOfScopeHostname_badRequest() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+
+        assertThatThrownBy(() -> controller.add(
+                        targetId, new SubdomainController.AddSubdomainRequest("evil.com"), principal))
+                .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void add_bareRootDomain_isInScope() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTargetAndHostname(targetId, "example.com"))
+                .thenReturn(Optional.of(subdomain("example.com")));
+
+        ResponseEntity<SubdomainSummary> response =
+                controller.add(targetId, new SubdomainController.AddSubdomainRequest("example.com"), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+        verify(subdomainRepository).upsert(targetId, "example.com", "MANUAL", List.of(), null);
+    }
+
+    @Test
+    void add_inScopeHostname_lowercasedAndTrimmed_upsertsAsManual() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTargetAndHostname(targetId, "sub.example.com"))
+                .thenReturn(Optional.of(subdomain("sub.example.com")));
+
+        ResponseEntity<SubdomainSummary> response = controller.add(
+                targetId, new SubdomainController.AddSubdomainRequest("  SUB.Example.com  "), principal);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+        assertThat(response.getBody().hostname()).isEqualTo("sub.example.com");
+        verify(subdomainRepository).upsert(targetId, "sub.example.com", "MANUAL", List.of(), null);
+    }
+
     private static int anyInt() {
         return org.mockito.ArgumentMatchers.anyInt();
     }

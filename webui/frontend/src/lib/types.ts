@@ -61,6 +61,36 @@ export interface Target {
   wafScanned: boolean;
 }
 
+/** One row in a portfolio's member list - hasScore disambiguates a real overallScore of e.g. 0 from "no scan yet" (overallScore/grade null in that case). */
+export interface PortfolioMemberDetail {
+  targetId: string;
+  hostname: string;
+  overallScore: number | null;
+  grade: Grade | null;
+  hasScore: boolean;
+}
+
+/** List-view row - see PortfolioDetail for the full member list, only fetched on the portfolio's own detail page. */
+export interface Portfolio {
+  id: string;
+  name: string;
+  createdAt: string;
+  /** Null until at least one member target has ever been scanned. */
+  blendedScore: number | null;
+  blendedGrade: Grade | null;
+  memberCount: number;
+  unscoredMemberCount: number;
+}
+
+export interface PortfolioDetail {
+  id: string;
+  name: string;
+  createdAt: string;
+  blendedScore: number | null;
+  blendedGrade: Grade | null;
+  members: PortfolioMemberDetail[];
+}
+
 /** Mirrors ScoringEngine.CATEGORY_WEIGHTS on the backend exactly - WEB_APP (ZAP/Nuclei
  * findings) carries real weight (15%) same as the other six, it's just Tier2-only (see
  * Target.tier1OverallScore's own doc comment) so it only ever shows up for authorized/owned
