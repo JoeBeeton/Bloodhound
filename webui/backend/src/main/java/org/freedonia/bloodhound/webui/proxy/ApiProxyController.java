@@ -1,6 +1,8 @@
 package org.freedonia.bloodhound.webui.proxy;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URI;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
@@ -45,9 +47,12 @@ import org.springframework.web.client.RestClient;
 public class ApiProxyController {
 
     private final RestClient centralServerClient;
+    private final String centralServerBaseUrl;
 
-    public ApiProxyController(RestClient centralServerClient) {
+    public ApiProxyController(
+            RestClient centralServerClient, @Value("${bloodhound.central-server-url}") String centralServerBaseUrl) {
         this.centralServerClient = centralServerClient;
+        this.centralServerBaseUrl = centralServerBaseUrl;
     }
 
     /**
@@ -87,8 +92,22 @@ public class ApiProxyController {
         String query = request.getQueryString();
         String uri = request.getRequestURI() + (query != null ? "?" + query : "");
 
-        RestClient.RequestBodySpec spec =
-                centralServerClient.method(HttpMethod.valueOf(request.getMethod())).uri(uri);
+        // URI.create(String), not the plain uri(String) overload below it used to call: a query
+        // value containing a character that itself needs percent-encoding (a comma, joining
+        // several ids - see Compare's targetIds/portfolioIds) arrives here ALREADY encoded byte-
+        // for-byte off the wire (getQueryString() returns the raw string, never decoded). The
+        // uri(String) overload treats its argument as a URI TEMPLATE and re-encodes it - taking
+        // an already-encoded "%2C" and turning it into "%252C", which central-server then decodes
+        // exactly once back down to the literal text "%2C" (not a comma), breaking any
+        // List<UUID>/List<String> @RequestParam that relies on comma-splitting a single value.
+        // Found live: comparing 2+ targets on /compare - which has always joined its ids with a
+        // comma - silently 400'd through this proxy while working fine hitting central-server
+        // directly, for every request carrying more than one comma-joined id. URI.create treats
+        // its argument as already-encoded (RFC 3986) and does no further escaping, so the query
+        // string reaches central-server exactly as the original client sent it.
+        RestClient.RequestBodySpec spec = centralServerClient
+                .method(HttpMethod.valueOf(request.getMethod()))
+                .uri(URI.create(centralServerBaseUrl + uri));
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authorization != null) {
             spec = spec.header(HttpHeaders.AUTHORIZATION, authorization);
