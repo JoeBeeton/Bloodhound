@@ -2,18 +2,22 @@ package org.freedonia.bloodhound.server.portfolio;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.scoring.ScoringEngine;
+import org.freedonia.bloodhound.server.scoring.dto.ScoreSnapshotSummary;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.springframework.stereotype.Service;
 
-/** Computes a portfolio's blended score from its member targets' own latest ScoreSnapshots - never stores anything itself, always derived live from data each target's own scan pipeline already produces. */
+/** Computes a portfolio's blended score(s) from its member targets' own ScoreSnapshots - never stores anything itself, always derived live from data each target's own scan pipeline already produces. */
 @Service
 public class PortfolioService {
 
@@ -50,6 +54,80 @@ public class PortfolioService {
     }
 
     /**
+     * A portfolio's blended score *over time*, for the Compare page's trend chart - the historical
+     * generalization of {@link #computeDetail}'s single "as of right now" blend. Each member scans
+     * on its own schedule (same reason CompareTrendChart plots each real target's own history as
+     * its own independently-timed series rather than a shared bucketed axis), so this walks the
+     * sorted union of every member's own snapshot timestamps in the window ("change points") and,
+     * at each one, blends whichever members have a known snapshot as of that point yet (a member
+     * with no snapshot yet is excluded, not treated as 0 - same rule as {@link #computeDetail}) -
+     * a simple per-member "most recent snapshot seen so far" cursor, advanced as change points are
+     * walked in order.
+     *
+     * <p>No carry-forward from before {@code from}: an individual target's own series in Compare
+     * doesn't get that either (see CompareTrendChart's own "targets with no history yet are
+     * silently skipped" comment), so a portfolio's blended line starts exactly where its members'
+     * real data starts, not before.
+     *
+     * <p>Each point carries both a full-score blend and a tier1-score blend, substituting
+     * {@code tier1OverallScore ?? overallScore} per member first - the exact same fallback
+     * CompareTrendChart.tsx already applies per-point to a real target's history, so a portfolio's
+     * Fair-comparison/Full-picture toggle behaves identically to an individual target's.
+     */
+    public List<ScoreSnapshotSummary> computeBlendedHistory(Portfolio portfolio, Instant from, Instant to) {
+        List<Target> members = targetRepository.findByPortfolio(portfolio.id());
+        Map<UUID, List<ScoreSnapshot>> historyByMember = new HashMap<>();
+        TreeSet<Instant> changePoints = new TreeSet<>();
+        for (Target target : members) {
+            List<ScoreSnapshot> history = scoreSnapshotRepository.findHistory(target.id(), from, to);
+            historyByMember.put(target.id(), history);
+            history.forEach(s -> changePoints.add(s.computedAt()));
+        }
+
+        Map<UUID, Integer> cursor = new HashMap<>();
+        Map<UUID, ScoreSnapshot> current = new HashMap<>();
+        List<ScoreSnapshotSummary> result = new ArrayList<>();
+        for (Instant point : changePoints) {
+            for (Target target : members) {
+                List<ScoreSnapshot> history = historyByMember.get(target.id());
+                int idx = cursor.getOrDefault(target.id(), 0);
+                while (idx < history.size() && !history.get(idx).computedAt().isAfter(point)) {
+                    current.put(target.id(), history.get(idx));
+                    idx++;
+                }
+                cursor.put(target.id(), idx);
+            }
+            if (current.isEmpty()) {
+                continue;
+            }
+            List<BigDecimal> fullScores = new ArrayList<>();
+            List<BigDecimal> tier1Scores = new ArrayList<>();
+            List<Long> weights = new ArrayList<>();
+            for (ScoreSnapshot snapshot : current.values()) {
+                fullScores.add(snapshot.overallScore());
+                tier1Scores.add(snapshot.tier1OverallScore() != null ? snapshot.tier1OverallScore() : snapshot.overallScore());
+                weights.add(snapshot.findingCounts().values().stream()
+                        .mapToLong(Long::longValue)
+                        .sum());
+            }
+            BigDecimal blendedFull = weightedAverage(fullScores, weights);
+            BigDecimal blendedTier1 = weightedAverage(tier1Scores, weights);
+            result.add(new ScoreSnapshotSummary(
+                    UUID.randomUUID(),
+                    null,
+                    point,
+                    blendedFull,
+                    ScoringEngine.gradeFor(blendedFull),
+                    Map.of(),
+                    Map.of(),
+                    blendedTier1,
+                    ScoringEngine.gradeFor(blendedTier1),
+                    Map.of()));
+        }
+        return result;
+    }
+
+    /**
      * Weighted average of each scored member's overallScore, weighted by that member's own total
      * open-finding count (summed across its latest snapshot's severities) - a portfolio pairing a
      * quiet 95-scoring domain against a 40-scoring one crawling with open findings should read
@@ -58,10 +136,6 @@ public class PortfolioService {
      * that conflates inventory size with risk, so a huge but perfectly clean estate would wrongly
      * dominate the blend.
      *
-     * <p>Falls back to a plain unweighted mean when every scored member currently has zero open
-     * findings - the weighted formula is otherwise 0/0 (undefined), and an all-clean portfolio
-     * should show its true high average rather than blow up or silently show null.
-     *
      * <p>Package-private and pure (no repository calls) so it's directly unit-testable without
      * mocking anything - see PortfolioServiceTest.
      */
@@ -69,17 +143,28 @@ public class PortfolioService {
         if (scored.isEmpty()) {
             return null;
         }
-        long totalWeight =
-                scored.stream().mapToLong(PortfolioMemberScore::totalOpenFindings).sum();
+        List<BigDecimal> scores = scored.stream().map(PortfolioMemberScore::overallScore).toList();
+        List<Long> weights = scored.stream().map(PortfolioMemberScore::totalOpenFindings).toList();
+        return weightedAverage(scores, weights);
+    }
+
+    /**
+     * Falls back to a plain unweighted mean when every weight is zero - the weighted formula is
+     * otherwise 0/0 (undefined), and an all-clean set should show its true high average rather
+     * than blow up or silently show null. Shared by both the single-point blend
+     * ({@link #blendedScore}) and the historical blend ({@link #computeBlendedHistory}) so the
+     * two can never drift apart.
+     */
+    private static BigDecimal weightedAverage(List<BigDecimal> scores, List<Long> weights) {
+        long totalWeight = weights.stream().mapToLong(Long::longValue).sum();
         if (totalWeight == 0) {
-            BigDecimal sum = scored.stream()
-                    .map(PortfolioMemberScore::overallScore)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            return sum.divide(BigDecimal.valueOf(scored.size()), 2, RoundingMode.HALF_UP);
+            BigDecimal sum = scores.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+            return sum.divide(BigDecimal.valueOf(scores.size()), 2, RoundingMode.HALF_UP);
         }
-        BigDecimal weightedSum = scored.stream()
-                .map(m -> m.overallScore().multiply(BigDecimal.valueOf(m.totalOpenFindings())))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal weightedSum = BigDecimal.ZERO;
+        for (int i = 0; i < scores.size(); i++) {
+            weightedSum = weightedSum.add(scores.get(i).multiply(BigDecimal.valueOf(weights.get(i))));
+        }
         return weightedSum.divide(BigDecimal.valueOf(totalWeight), 2, RoundingMode.HALF_UP);
     }
 }

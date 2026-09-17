@@ -4,8 +4,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.compare.dto.CompareSeries;
+import org.freedonia.bloodhound.server.portfolio.Portfolio;
+import org.freedonia.bloodhound.server.portfolio.PortfolioRepository;
+import org.freedonia.bloodhound.server.portfolio.PortfolioService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.scoring.dto.ScoreSnapshotSummary;
 import org.freedonia.bloodhound.server.target.Target;
@@ -38,30 +42,56 @@ public class CompareController {
 
     private final TargetRepository targetRepository;
     private final ScoreSnapshotRepository scoreSnapshotRepository;
+    private final PortfolioRepository portfolioRepository;
+    private final PortfolioService portfolioService;
 
-    public CompareController(TargetRepository targetRepository, ScoreSnapshotRepository scoreSnapshotRepository) {
+    public CompareController(
+            TargetRepository targetRepository,
+            ScoreSnapshotRepository scoreSnapshotRepository,
+            PortfolioRepository portfolioRepository,
+            PortfolioService portfolioService) {
         this.targetRepository = targetRepository;
         this.scoreSnapshotRepository = scoreSnapshotRepository;
+        this.portfolioRepository = portfolioRepository;
+        this.portfolioService = portfolioService;
     }
 
+    /**
+     * @param portfolioIds each resolves to one blended series (see PortfolioService#computeBlendedHistory),
+     *     appended after the individual-target series so a portfolio's line has a stable position
+     *     regardless of how many targetIds were selected alongside it.
+     */
     @GetMapping("/api/v1/compare")
     public List<CompareSeries> compare(
-            @RequestParam List<UUID> targetIds,
+            @RequestParam(required = false) List<UUID> targetIds,
+            @RequestParam(required = false) List<UUID> portfolioIds,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @AuthenticationPrincipal JwtPrincipal principal) {
-        if (targetIds.size() > MAX_COMPARE_TARGETS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "too many targetIds (max " + MAX_COMPARE_TARGETS + ")");
+        List<UUID> effectiveTargetIds = targetIds != null ? targetIds : List.of();
+        List<UUID> effectivePortfolioIds = portfolioIds != null ? portfolioIds : List.of();
+        if (effectiveTargetIds.size() + effectivePortfolioIds.size() > MAX_COMPARE_TARGETS) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "too many targetIds/portfolioIds (max " + MAX_COMPARE_TARGETS + " combined)");
         }
         Instant effectiveTo = to != null ? to : Instant.now();
         Instant effectiveFrom = from != null ? from : effectiveTo.minus(DEFAULT_LOOKBACK_DAYS, ChronoUnit.DAYS);
 
-        return targetIds.stream()
+        List<CompareSeries> targetSeries = effectiveTargetIds.stream()
                 .map(id -> targetRepository
                         .findByIdAndOrganization(id, principal.organizationId())
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND)))
                 .map(target -> CompareSeries.of(target, history(target, effectiveFrom, effectiveTo)))
                 .toList();
+        List<CompareSeries> portfolioSeries = effectivePortfolioIds.stream()
+                .map(id -> portfolioRepository
+                        .findByIdAndOrganization(id, principal.organizationId())
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND)))
+                .map(portfolio -> CompareSeries.ofPortfolio(
+                        portfolio, portfolioService.computeBlendedHistory(portfolio, effectiveFrom, effectiveTo)))
+                .toList();
+
+        return Stream.concat(targetSeries.stream(), portfolioSeries.stream()).toList();
     }
 
     private List<ScoreSnapshotSummary> history(Target target, Instant from, Instant to) {

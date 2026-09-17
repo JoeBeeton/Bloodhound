@@ -7,7 +7,7 @@ import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { TargetTypeBadge } from "../components/TargetTypeBadge";
 import { apiFetch } from "../lib/apiClient";
-import type { CompareSeries, Target } from "../lib/types";
+import type { CompareSeries, Portfolio, Target } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
 async function fetchTargets(): Promise<Target[]> {
@@ -16,8 +16,18 @@ async function fetchTargets(): Promise<Target[]> {
   return res.json();
 }
 
-async function fetchCompare(targetIds: string[]): Promise<CompareSeries[]> {
-  const res = await apiFetch(`/api/v1/compare?targetIds=${targetIds.join(",")}`);
+async function fetchPortfolios(): Promise<Portfolio[]> {
+  const res = await apiFetch("/api/v1/portfolios");
+  if (!res.ok) throw new Error("Failed to load portfolios.");
+  return res.json();
+}
+
+/** targetIds and portfolioIds are independent selections - either (or both) can be empty; the backend accepts either param missing entirely. */
+async function fetchCompare(targetIds: string[], portfolioIds: string[]): Promise<CompareSeries[]> {
+  const params = new URLSearchParams();
+  if (targetIds.length > 0) params.set("targetIds", targetIds.join(","));
+  if (portfolioIds.length > 0) params.set("portfolioIds", portfolioIds.join(","));
+  const res = await apiFetch(`/api/v1/compare?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load comparison.");
   return res.json();
 }
@@ -31,6 +41,7 @@ async function fetchCompare(targetIds: string[]): Promise<CompareSeries[]> {
 export function ComparePage() {
   usePageTitle("Compare");
   const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: fetchTargets });
+  const portfoliosQuery = useQuery({ queryKey: ["portfolios"], queryFn: fetchPortfolios });
   // A product review found a comparison you'd actually built - a specific set of competitor
   // domains, in "full picture" mode - vanished the moment the tab was reloaded or the URL was
   // shared with a colleague, silently reverting to the OWN-targets default. Persisted in the URL
@@ -53,11 +64,20 @@ export function ComparePage() {
     return new Set(ownIds);
   }, [urlTargetIds, targetsQuery.data]);
 
+  // No default selection, unlike targets' "default to OWN" above - a portfolio is something the
+  // user deliberately created and picks explicitly, there's no equivalent "obvious default" for it.
+  const urlPortfolioIds = searchParams.get("portfolioIds");
+  const effectiveSelectedPortfolios = useMemo(
+    () => new Set(urlPortfolioIds ? urlPortfolioIds.split(",").filter(Boolean) : []),
+    [urlPortfolioIds],
+  );
+
   const targetIds = [...effectiveSelected];
+  const portfolioIds = [...effectiveSelectedPortfolios];
   const compareQuery = useQuery({
-    queryKey: ["compare", targetIds.sort().join(",")],
-    queryFn: () => fetchCompare(targetIds),
-    enabled: targetIds.length > 0,
+    queryKey: ["compare", targetIds.sort().join(","), portfolioIds.sort().join(",")],
+    queryFn: () => fetchCompare(targetIds, portfolioIds),
+    enabled: targetIds.length > 0 || portfolioIds.length > 0,
   });
 
   function toggle(id: string) {
@@ -68,6 +88,20 @@ export function ComparePage() {
       (prev) => {
         const params = new URLSearchParams(prev);
         params.set("targetIds", [...next].join(","));
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
+  function togglePortfolio(id: string) {
+    const next = new Set(effectiveSelectedPortfolios);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set("portfolioIds", [...next].join(","));
         return params;
       },
       { replace: true },
@@ -129,6 +163,31 @@ export function ComparePage() {
               })}
             </div>
 
+            {portfoliosQuery.data && portfoliosQuery.data.length > 0 && (
+              <div className="mb-6">
+                <p className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-400">Portfolios</p>
+                <div className="flex flex-wrap gap-2 rounded-lg border border-neon-magenta/20 bg-panel/60 p-4">
+                  {portfoliosQuery.data.map((portfolio) => {
+                    const isSelected = effectiveSelectedPortfolios.has(portfolio.id);
+                    return (
+                      <button
+                        key={portfolio.id}
+                        aria-pressed={isSelected}
+                        onClick={() => togglePortfolio(portfolio.id)}
+                        className={`flex items-center gap-2 rounded border px-2.5 py-1.5 font-mono text-xs transition ${
+                          isSelected
+                            ? "border-neon-magenta bg-neon-magenta/10 text-neon-magenta"
+                            : "border-slate-700 text-slate-400 hover:border-slate-500"
+                        }`}
+                      >
+                        {portfolio.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div
                 role="group"
@@ -161,13 +220,16 @@ export function ComparePage() {
               </p>
             </div>
 
-            {compareQuery.isLoading && targetIds.length > 0 && (
+            {compareQuery.isLoading && (targetIds.length > 0 || portfolioIds.length > 0) && (
               <p className="font-mono text-sm text-slate-400">Loading comparison…</p>
             )}
             {compareQuery.isError && (
               <ErrorState message="Failed to load comparison." onRetry={() => compareQuery.refetch()} />
             )}
-            <CompareTrendChart series={targetIds.length > 0 ? compareQuery.data ?? [] : []} mode={scoreMode} />
+            <CompareTrendChart
+              series={targetIds.length > 0 || portfolioIds.length > 0 ? (compareQuery.data ?? []) : []}
+              mode={scoreMode}
+            />
           </>
         )}
       </div>

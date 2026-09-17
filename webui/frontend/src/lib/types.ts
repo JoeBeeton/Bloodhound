@@ -123,7 +123,8 @@ export const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const
 
 export interface ScoreSnapshot {
   id: string;
-  scanRunId: string;
+  /** Null on a portfolio's blended history point (see PortfolioService#computeBlendedHistory) - no single real scan run backs a blend of several targets' own snapshots. */
+  scanRunId: string | null;
   computedAt: string;
   overallScore: number;
   grade: Grade;
@@ -313,11 +314,11 @@ export interface Finding {
   scoreImpact: ScoreImpact | null;
 }
 
-/** One target's score history, as returned by /api/v1/compare - a single series in the multi-line compare chart. */
+/** One series in the multi-line compare chart, as returned by /api/v1/compare - either a single target's own score history, or (targetType "PORTFOLIO") a portfolio's blended history across its member targets. */
 export interface CompareSeries {
   targetId: string;
   hostname: string;
-  targetType: TargetType;
+  targetType: TargetType | "PORTFOLIO";
   history: ScoreSnapshot[];
 }
 
