@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -101,7 +102,7 @@ public class ZapScanRunner {
             spidered = spiderAndCheck("http://" + hostname + "/", deadline);
         }
         if (!spidered.reachable()) {
-            throw new ScanModuleException(
+            throw new HostUnreachableException(
                     "ZAP spider found nothing to scan for " + hostname
                             + " over HTTPS or HTTP - the host may be unreachable or not serving web traffic");
         }

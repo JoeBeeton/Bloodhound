@@ -14,6 +14,7 @@ import java.util.UUID;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
+import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ModuleResult;
 import org.freedonia.bloodhound.common.scanmodule.ScanContext;
 import org.freedonia.bloodhound.common.scanmodule.ScanModule;
@@ -172,7 +173,28 @@ class JobPollingLoopTest {
         verify(heartbeatSender).start(jobId);
         verify(heartbeatHandle).stop();
         verify(preBodySpec)
-                .body(argThat((Object arg) -> arg instanceof FailRequest fr && "dns lookup timed out".equals(fr.errorDetail())));
+                .body(argThat((Object arg) -> arg instanceof FailRequest fr
+                        && "dns lookup timed out".equals(fr.errorDetail())
+                        && !fr.confirmedUnreachable()));
+    }
+
+    @Test
+    void moduleThrowsHostUnreachableException_reportsFailureWithConfirmedUnreachableFlag() {
+        // A dead host confirmed via DNS resolution failure (or an equivalent "definitely not
+        // there" probe) is a correct scan outcome, not a bug - central-server uses this flag to
+        // avoid counting the job toward the run's PARTIAL_FAILURE status. See
+        // HostUnreachableException's own javadoc.
+        ScanModule module = fakeModule("NUCLEI_SCAN", ctx -> {
+            throw new HostUnreachableException("dead-host.example.com could not be resolved");
+        });
+        stubClaimReturns(List.of(claimedJob("NUCLEI_SCAN")));
+
+        loop(module).poll();
+
+        verify(preBodySpec)
+                .body(argThat((Object arg) -> arg instanceof FailRequest fr
+                        && "dead-host.example.com could not be resolved".equals(fr.errorDetail())
+                        && fr.confirmedUnreachable()));
     }
 
     @Test

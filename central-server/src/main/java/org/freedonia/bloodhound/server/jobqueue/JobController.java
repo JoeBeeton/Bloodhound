@@ -89,7 +89,8 @@ public class JobController {
 
     @PostMapping("/{id}/fail")
     public ResponseEntity<Void> fail(@PathVariable UUID id, @Valid @RequestBody JobFailRequest request) {
-        jobLifecycleService.fail(id, request.workerId(), request.errorDetail(), request.logLines());
+        jobLifecycleService.fail(
+                id, request.workerId(), request.errorDetail(), request.logLines(), request.confirmedUnreachable());
         return ResponseEntity.noContent().build();
     }
 

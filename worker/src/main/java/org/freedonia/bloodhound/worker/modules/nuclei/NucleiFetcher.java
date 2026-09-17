@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
+import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -125,7 +126,7 @@ public class NucleiFetcher {
                 SafeHttpGet.get(reachabilityClient, "http://" + hostname + "/", REACHABILITY_TIMEOUT,
                         ScanUserAgent.VALUE, HttpResponse.BodyHandlers.discarding(), 5);
             } catch (Exception httpFailure) {
-                throw new ScanModuleException(hostname + " is unreachable over HTTPS or HTTP - skipping the "
+                throw new HostUnreachableException(hostname + " is unreachable over HTTPS or HTTP - skipping the "
                         + "nuclei scan rather than spending its full timeout budget probing a dead host", httpFailure);
             }
         }

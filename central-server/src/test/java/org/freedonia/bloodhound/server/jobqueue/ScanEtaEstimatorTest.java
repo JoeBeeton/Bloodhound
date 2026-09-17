@@ -78,6 +78,23 @@ class ScanEtaEstimatorTest {
     }
 
     @Test
+    void unreachableJob_countsAsTerminal_notFactoredIntoRemainingEstimate() {
+        // A confirmed-dead host (see HostUnreachableException) is terminal just like
+        // COMPLETE/FAILED/CANCELLED - without this, an UNREACHABLE job would never count as
+        // "completed" and would keep contributing a fabricated remaining-time estimate to a
+        // scan run that has actually already finished.
+        List<JobProgress> jobs = List.of(
+                new JobProgress("NUCLEI_SCAN", "COMPLETE", now.minusSeconds(60)),
+                new JobProgress("PORT_SCAN_DEEP", "UNREACHABLE", now.minusSeconds(30)));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("NUCLEI_SCAN", 10.0, "PORT_SCAN_DEEP", 5.0), now);
+
+        assertThat(estimate.completedJobs()).isEqualTo(2);
+        assertThat(estimate.totalJobs()).isEqualTo(2);
+        assertThat(estimate.etaSeconds()).isNull();
+    }
+
+    @Test
     void emptyJobList_zeroTotalAndCompleted_nullEta() {
         Estimate estimate = ScanEtaEstimator.estimate(List.of(), Map.of(), now);
 
