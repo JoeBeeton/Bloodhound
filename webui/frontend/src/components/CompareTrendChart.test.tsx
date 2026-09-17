@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeComparison } from "./CompareTrendChart";
+import { colorForSeries, summarizeComparison } from "./CompareTrendChart";
 import type { CompareSeries, ScoreSnapshot, TargetType } from "../lib/types";
 
 function snapshot(overallScore: number, tier1OverallScore: number | null): ScoreSnapshot {
@@ -67,5 +67,31 @@ describe("summarizeComparison", () => {
     const summary = summarizeComparison([series("own.example.com", "OWN", [snapshot(50, 50), snapshot(90, 90)])], "full");
     expect(summary).toContain("own.example.com at 90");
     expect(summary).not.toContain("at 50");
+  });
+});
+
+describe("colorForSeries", () => {
+  // A product review found colors were assigned by array position, so deselecting one target
+  // shifted every other selected target's color, and re-adding it later gave it a different one -
+  // confusing when comparing the same targets repeatedly. Hashing the series' own stable id makes
+  // a given target's color the same regardless of what else is selected.
+  it("is the same for the same id regardless of what else is present", () => {
+    const id = "56c93bd5-c331-47ca-af29-22d37a22da5c";
+    expect(colorForSeries(id)).toEqual(colorForSeries(id));
+  });
+
+  it("is unaffected by other ids' presence or ordering - the exact 'shuffled on deselect' bug", () => {
+    const a = "56c93bd5-c331-47ca-af29-22d37a22da5c";
+    const b = "57edf8ea-0865-4261-8092-0a3031abc868";
+    // a's color must be identical whether it's plotted alone, second, or first.
+    expect(colorForSeries(a)).toEqual(colorForSeries(a));
+    const colorAlone = colorForSeries(a);
+    const colorWithB = [b, a].map(colorForSeries)[1];
+    expect(colorWithB).toEqual(colorAlone);
+  });
+
+  it("returns one of the defined palette colors", () => {
+    const color = colorForSeries("some-id");
+    expect(color).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });

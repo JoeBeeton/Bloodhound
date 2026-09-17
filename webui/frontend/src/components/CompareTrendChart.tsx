@@ -2,8 +2,26 @@ import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContai
 import { GRADE_BANDS } from "../lib/gradeBands";
 import type { CompareSeries } from "../lib/types";
 
-/** Cycled per selected target — cyan/magenta/amber first (the core retro-Tokyo palette), then a few extra hues for larger comparisons. */
+/** cyan/magenta/amber first (the core retro-Tokyo palette), then a few extra hues for larger comparisons. */
 const LINE_COLORS = ["#00f0ff", "#ff2e97", "#ffb800", "#7c3aed", "#34d399", "#f472b6"];
+
+/**
+ * A product review found colors were assigned by each series' position in the `series` array
+ * (`LINE_COLORS[i % LINE_COLORS.length]`) - deselecting one target shifted every other selected
+ * target's index, so its line's color changed too, and re-adding a target later gave it whatever
+ * color its new position happened to land on rather than the one it had before. Hashing the
+ * series' own stable id (a target/portfolio UUID, never reused for anything else) into the
+ * palette instead means a given target's color is the same every time it's plotted, regardless of
+ * what else is selected or the order selections were made in - no state to track, and it survives
+ * a page reload too, unlike a "first seen this session" assignment would.
+ */
+export function colorForSeries(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return LINE_COLORS[Math.abs(hash) % LINE_COLORS.length];
+}
 
 export type CompareScoreMode = "tier1" | "full";
 
@@ -110,8 +128,8 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
             labelStyle={{ color: "#7a8aa0" }}
           />
           <Legend formatter={(value) => <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>{value}</span>} />
-          {series.map((s, i) => {
-            const color = LINE_COLORS[i % LINE_COLORS.length];
+          {series.map((s) => {
+            const color = colorForSeries(s.targetId);
             // Pre-fix snapshots have no tier1OverallScore - fall back to the full score rather
             // than dropping the point, so old history doesn't just vanish from the "tier1" view.
             const data = s.history.map((h) => ({
