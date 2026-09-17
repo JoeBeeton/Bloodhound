@@ -14,6 +14,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.portfolio.Portfolio;
+import org.freedonia.bloodhound.server.portfolio.PortfolioRepository;
+import org.freedonia.bloodhound.server.portfolio.PortfolioService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
@@ -24,13 +27,20 @@ class CompareControllerTest {
 
     private final TargetRepository targetRepository = mock(TargetRepository.class);
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
-    private final CompareController controller = new CompareController(targetRepository, scoreSnapshotRepository);
+    private final PortfolioRepository portfolioRepository = mock(PortfolioRepository.class);
+    private final PortfolioService portfolioService = mock(PortfolioService.class);
+    private final CompareController controller = new CompareController(
+            targetRepository, scoreSnapshotRepository, portfolioRepository, portfolioService);
 
     private final UUID orgId = UUID.randomUUID();
     private final JwtPrincipal principal = new JwtPrincipal(UUID.randomUUID(), orgId, "VIEWER", "u@example.com");
 
     private Target target(UUID id) {
         return new Target(id, orgId, "host-" + id, "OWN", "AUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
+    }
+
+    private Portfolio portfolio(UUID id) {
+        return new Portfolio(id, orgId, "portfolio-" + id, Instant.now());
     }
 
     @Test
@@ -40,11 +50,21 @@ class CompareControllerTest {
         // findByIdAndOrganization + score-history lookups, one pair per id.
         List<UUID> tooMany = Stream.generate(UUID::randomUUID).limit(21).toList();
 
-        assertThatThrownBy(() -> controller.compare(tooMany, null, null, principal))
+        assertThatThrownBy(() -> controller.compare(tooMany, null, null, null, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
         verify(targetRepository, never()).findByIdAndOrganization(any(), any());
         verify(scoreSnapshotRepository, never()).findHistory(any(), any(), any());
+    }
+
+    @Test
+    void tooManyCombinedTargetAndPortfolioIds_rejected() {
+        List<UUID> targets = Stream.generate(UUID::randomUUID).limit(15).toList();
+        List<UUID> portfolios = Stream.generate(UUID::randomUUID).limit(6).toList();
+
+        assertThatThrownBy(() -> controller.compare(targets, portfolios, null, null, principal))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
     }
 
     @Test
@@ -55,8 +75,29 @@ class CompareControllerTest {
         when(targetRepository.findByIdAndOrganization(id2, orgId)).thenReturn(Optional.of(target(id2)));
         when(scoreSnapshotRepository.findHistory(any(), any(), any())).thenReturn(List.of());
 
-        var result = controller.compare(List.of(id1, id2), null, null, principal);
+        var result = controller.compare(List.of(id1, id2), null, null, null, principal);
 
         assertThat(result).hasSize(2);
+    }
+
+    @Test
+    void portfolioIdsAlone_noTargetIds_returnsOneSeriesPerPortfolio() {
+        UUID portfolioId = UUID.randomUUID();
+        when(portfolioRepository.findByIdAndOrganization(portfolioId, orgId)).thenReturn(Optional.of(portfolio(portfolioId)));
+        when(portfolioService.computeBlendedHistory(any(), any(), any())).thenReturn(List.of());
+
+        var result = controller.compare(null, List.of(portfolioId), null, null, principal);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).targetType()).isEqualTo("PORTFOLIO");
+    }
+
+    @Test
+    void portfolioInAnotherOrg_notFound() {
+        UUID portfolioId = UUID.randomUUID();
+        when(portfolioRepository.findByIdAndOrganization(portfolioId, orgId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> controller.compare(null, List.of(portfolioId), null, null, principal))
+                .isInstanceOf(ResponseStatusException.class);
     }
 }

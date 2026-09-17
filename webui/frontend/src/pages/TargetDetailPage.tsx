@@ -798,7 +798,7 @@ export function TargetDetailPage() {
         </h2>
         <FindingDiffView
           targetId={targetId}
-          runId={scoreHistoryQuery.data?.at(-1)?.scanRunId}
+          runId={scoreHistoryQuery.data?.at(-1)?.scanRunId ?? undefined}
           onSelectFinding={setSelectedFinding}
         />
       </div>
