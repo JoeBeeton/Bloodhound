@@ -111,6 +111,7 @@ describe("TargetsPage - bulk scan selection", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })])) // list
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse({ id: "run-1" })) // scan t1
       .mockResolvedValueOnce(jsonResponse({ id: "run-2" })); // scan t2
 
@@ -132,6 +133,7 @@ describe("TargetsPage - bulk scan selection", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]))
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse({ id: "run-1" }))
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
 
@@ -150,6 +152,7 @@ describe("TargetsPage - bulk scan selection", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })])) // active view
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios (cached across the showRemoved toggle - queryKey doesn't depend on it)
       .mockResolvedValueOnce(
         jsonResponse([target({ id: "t3", hostname: "gone.example.com", isActive: false })]),
       ); // removed view
@@ -230,6 +233,7 @@ describe("TargetsPage - scan-now failure surfacing", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target()])) // list
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 409 })); // scan attempt
 
     renderPage();
@@ -246,6 +250,7 @@ describe("TargetsPage - scan-now failure surfacing", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target()]))
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
 
     renderPage();
@@ -268,9 +273,9 @@ describe("TargetsPage - bulk remove", () => {
 
   it("clicking 'Remove N selected' opens one shared confirmation listing every selected hostname, without removing anything yet", async () => {
     const user = userEvent.setup();
-    mockedApiFetch.mockResolvedValueOnce(
-      jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]),
-    );
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]))
+      .mockResolvedValueOnce(jsonResponse([])); // portfolios
 
     renderPage();
     await screen.findByText("example.com", {}, { timeout: 5000 });
@@ -282,12 +287,14 @@ describe("TargetsPage - bulk remove", () => {
     expect(screen.getByRole("heading", { name: "Remove targets" })).toBeInTheDocument();
     expect(within(dialog).getByText("example.com")).toBeInTheDocument();
     expect(within(dialog).getByText("second.example.com")).toBeInTheDocument();
-    expect(mockedApiFetch).toHaveBeenCalledTimes(1); // only the initial list load - no PATCH yet
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2); // list + portfolios - no PATCH yet
   });
 
   it("Cancel closes the confirmation without removing anything", async () => {
     const user = userEvent.setup();
-    mockedApiFetch.mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]));
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]))
+      .mockResolvedValueOnce(jsonResponse([])); // portfolios
 
     renderPage();
     await screen.findByText("example.com", {}, { timeout: 5000 });
@@ -297,13 +304,14 @@ describe("TargetsPage - bulk remove", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("heading", { name: "Remove targets" })).not.toBeInTheDocument();
-    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2); // list + portfolios
   });
 
   it("confirming fires one PATCH per selected target and reports the summary", async () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })])) // list
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse({ ...target(), isActive: false })) // PATCH t1
       .mockResolvedValueOnce(jsonResponse({ ...target({ id: "t2" }), isActive: false })); // PATCH t2
 
@@ -337,6 +345,7 @@ describe("TargetsPage - bulk remove", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target(), target({ id: "t2", hostname: "second.example.com" })]))
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse({ ...target(), isActive: false }))
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
 
@@ -381,6 +390,7 @@ describe("TargetsPage - bulk add targets", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([])) // initial list load
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(
         jsonResponse([
           { hostname: "good.example.com", created: true, error: null, target: target({ id: "t1", hostname: "good.example.com" }) },
@@ -400,7 +410,7 @@ describe("TargetsPage - bulk add targets", () => {
     await user.click(screen.getByRole("button", { name: "Add 2 targets" }));
 
     await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenNthCalledWith(2, "/api/v1/targets/bulk", {
+      expect(mockedApiFetch).toHaveBeenNthCalledWith(3, "/api/v1/targets/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ hostnames: ["good.example.com", "dupe.example.com"], targetType: "OWN" }),
@@ -419,6 +429,7 @@ describe("TargetsPage - bulk add targets", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
 
     renderPage();
@@ -440,7 +451,10 @@ describe("TargetsPage - bulk add targets", () => {
       headers: { get: (name: string) => (name === "Retry-After" ? "90" : null) },
       json: async () => null,
     } as unknown as Response;
-    mockedApiFetch.mockResolvedValueOnce(jsonResponse([])).mockResolvedValueOnce(rateLimited);
+    mockedApiFetch
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
+      .mockResolvedValueOnce(rateLimited);
 
     renderPage();
     await screen.findByLabelText("Hostname", {}, { timeout: 5000 });
@@ -466,6 +480,7 @@ describe("TargetsPage - single remove/restore failure surfacing", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target()])) // list
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // PATCH fails
 
     renderPage();
@@ -483,6 +498,7 @@ describe("TargetsPage - single remove/restore failure surfacing", () => {
     const user = userEvent.setup();
     mockedApiFetch
       .mockResolvedValueOnce(jsonResponse([target({ isActive: false })])) // list (removed view)
+      .mockResolvedValueOnce(jsonResponse([])) // portfolios
       .mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 })); // PATCH fails
 
     renderPage();

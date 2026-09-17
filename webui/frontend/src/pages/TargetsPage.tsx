@@ -8,7 +8,7 @@ import { Shell } from "../components/Shell";
 import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { colorForTargetType } from "../lib/attackSurfaceGraph";
 import { formatRetryAfter } from "../lib/authClient";
-import type { ScanRunDetail, Target, TargetType } from "../lib/types";
+import type { Grade, Portfolio, PortfolioDetail, ScanRunDetail, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -152,6 +152,45 @@ async function fetchRun(runId: string): Promise<ScanRunDetail> {
   return res.json();
 }
 
+interface PortfolioWithMembers {
+  id: string;
+  name: string;
+  blendedScore: number | null;
+  blendedGrade: Grade | null;
+  memberIds: string[];
+}
+
+/**
+ * A product review found portfolio membership had no presence at all on the primary Targets
+ * list - example.co.uk and example.finance, both in the same portfolio, showed up wherever the normal
+ * hostname sort happened to put them, with nothing connecting them visually. /api/v1/portfolios
+ * only returns counts (see PortfolioSummary), not which targets - fetching each portfolio's own
+ * detail is the only way to get member ids, and there are normally few enough portfolios that
+ * doing it as one Promise.all rather than adding a new bulk backend endpoint is the simpler,
+ * lower-risk choice (deliberately not adding portfolioId to the heavily-reused TargetSummary DTO
+ * either - the portfolio feature's own commit already noted that DTO's field additions have
+ * rippled into 6+ files before).
+ */
+async function fetchPortfoliosWithMembers(): Promise<PortfolioWithMembers[]> {
+  const listRes = await apiFetch("/api/v1/portfolios");
+  if (!listRes.ok) throw new Error("Failed to load portfolios.");
+  const list: Portfolio[] = await listRes.json();
+  return Promise.all(
+    list.map(async (p): Promise<PortfolioWithMembers> => {
+      const res = await apiFetch(`/api/v1/portfolios/${p.id}`);
+      if (!res.ok) throw new Error("Failed to load portfolio detail.");
+      const detail: PortfolioDetail = await res.json();
+      return {
+        id: p.id,
+        name: p.name,
+        blendedScore: p.blendedScore,
+        blendedGrade: p.blendedGrade,
+        memberIds: detail.members.map((m) => m.targetId),
+      };
+    }),
+  );
+}
+
 const TARGET_TYPES: TargetType[] = ["OWN", "COMPETITOR", "WATCHLIST"];
 
 export function TargetsPage() {
@@ -165,6 +204,7 @@ export function TargetsPage() {
     queryKey: ["targets", showRemoved],
     queryFn: () => fetchTargets(showRemoved),
   });
+  const portfoliosQuery = useQuery({ queryKey: ["portfolios-with-members"], queryFn: fetchPortfoliosWithMembers });
   const [activeRuns, setActiveRuns] = useState<Record<string, string>>({});
   const [pendingRemoval, setPendingRemoval] = useState<Target | null>(null);
   const [pendingDeletion, setPendingDeletion] = useState<Target | null>(null);
@@ -514,6 +554,40 @@ export function TargetsPage() {
             const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
             const selectedCount = selectableIds.filter((id) => selectedIds.has(id)).length;
 
+            const renderTargetRow = (target: Target) => (
+              <TargetRow
+                key={target.id}
+                target={target}
+                activeRunId={activeRuns[target.id]}
+                onScanStarted={(runId) => handleScanStarted(target.id, runId)}
+                onRemove={() => setPendingRemoval(target)}
+                onRestore={() => setActive.mutate({ targetId: target.id, isActive: true })}
+                restorePending={setActive.isPending}
+                onDeleteForever={isAdmin ? () => setPendingDeletion(target) : undefined}
+                selectable={!showRemoved}
+                selected={selectedIds.has(target.id)}
+                onToggleSelected={() => toggleSelected(target.id)}
+              />
+            );
+
+            // Groups whichever of a portfolio's members are currently visible (search/showRemoved
+            // may hide the rest) into one bordered cluster, labeled with the portfolio's own
+            // blended score and linking back to its detail page - the visual "these belong
+            // together" signal a product review asked for after example.co.uk/example.finance (both in
+            // one portfolio) showed up wherever the plain hostname sort happened to scatter them.
+            const targetById = new Map(visible.map((t) => [t.id, t]));
+            const groupedTargetIds = new Set<string>();
+            const portfolioGroups = (portfoliosQuery.data ?? [])
+              .map((p) => ({
+                ...p,
+                members: p.memberIds
+                  .map((id) => targetById.get(id))
+                  .filter((t): t is Target => t !== undefined),
+              }))
+              .filter((g) => g.members.length > 0);
+            portfolioGroups.forEach((g) => g.members.forEach((t) => groupedTargetIds.add(t.id)));
+            const ungroupedVisible = visible.filter((t) => !groupedTargetIds.has(t.id));
+
             return (
               <>
                 {!showRemoved && selectableIds.length > 1 && (
@@ -555,21 +629,24 @@ export function TargetsPage() {
                     )}
                   </div>
                 )}
-                {visible.map((target) => (
-                  <TargetRow
-                    key={target.id}
-                    target={target}
-                    activeRunId={activeRuns[target.id]}
-                    onScanStarted={(runId) => handleScanStarted(target.id, runId)}
-                    onRemove={() => setPendingRemoval(target)}
-                    onRestore={() => setActive.mutate({ targetId: target.id, isActive: true })}
-                    restorePending={setActive.isPending}
-                    onDeleteForever={isAdmin ? () => setPendingDeletion(target) : undefined}
-                    selectable={!showRemoved}
-                    selected={selectedIds.has(target.id)}
-                    onToggleSelected={() => toggleSelected(target.id)}
-                  />
+                {portfolioGroups.map((group) => (
+                  <div
+                    key={group.id}
+                    className="rounded-lg border-2 border-neon-magenta/30 bg-neon-magenta/[0.03] p-3"
+                  >
+                    <Link
+                      to={`/portfolios/${group.id}`}
+                      className="mb-3 flex items-center justify-between gap-2 px-1 transition hover:opacity-80"
+                    >
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-neon-magenta">
+                        ◆ {group.name}
+                      </span>
+                      <GradeBadge grade={group.blendedGrade} score={group.blendedScore} />
+                    </Link>
+                    <div className="flex flex-col gap-3">{group.members.map(renderTargetRow)}</div>
+                  </div>
                 ))}
+                {ungroupedVisible.map(renderTargetRow)}
               </>
             );
           })()}
