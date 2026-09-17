@@ -209,4 +209,65 @@ class ScanRunServiceTest {
         assertThat(applied).isFalse();
         verify(scanJobRepository, org.mockito.Mockito.never()).cancelNonTerminalForRun(any());
     }
+
+    private ScanJob scanJob(String moduleType, String status) {
+        return new ScanJob(
+                UUID.randomUUID(),
+                runId,
+                targetId,
+                moduleType,
+                status,
+                (short) 0,
+                Instant.now(),
+                null,
+                null,
+                null,
+                0,
+                3,
+                "{}",
+                null,
+                null,
+                Instant.now());
+    }
+
+    @Test
+    void checkAndCompleteRun_onlyCompleteAndUnreachableJobs_marksRunComplete() {
+        // A confirmed-dead host is a correct scan outcome, not a failure - a run made up
+        // entirely of COMPLETE and UNREACHABLE jobs (no genuine FAILED job) should report
+        // COMPLETE, per the user's own call ("I dont think veerified down infra should be
+        // classed as a failure then").
+        when(scanJobRepository.findByScanRunId(runId))
+                .thenReturn(List.of(scanJob("NUCLEI_SCAN", "COMPLETE"), scanJob("PORT_SCAN_DEEP", "UNREACHABLE")));
+        when(scanRunRepository.markComplete(runId, "COMPLETE")).thenReturn(true);
+
+        service.checkAndCompleteRun(runId);
+
+        verify(scanRunRepository).markComplete(runId, "COMPLETE");
+    }
+
+    @Test
+    void checkAndCompleteRun_anyGenuineFailure_marksRunPartialFailure_evenAlongsideUnreachable() {
+        when(scanJobRepository.findByScanRunId(runId))
+                .thenReturn(List.of(
+                        scanJob("NUCLEI_SCAN", "FAILED"),
+                        scanJob("PORT_SCAN_DEEP", "UNREACHABLE"),
+                        scanJob("ZAP_ACTIVE_SCAN", "COMPLETE")));
+        when(scanRunRepository.markComplete(runId, "PARTIAL_FAILURE")).thenReturn(true);
+
+        service.checkAndCompleteRun(runId);
+
+        verify(scanRunRepository).markComplete(runId, "PARTIAL_FAILURE");
+    }
+
+    @Test
+    void checkAndCompleteRun_unreachableJobStillPending_doesNotCompleteRunYet() {
+        // UNREACHABLE must count as terminal (isTerminal), not leave the run stuck waiting
+        // forever - same reasoning as COMPLETE/FAILED/CANCELLED already do.
+        when(scanJobRepository.findByScanRunId(runId))
+                .thenReturn(List.of(scanJob("NUCLEI_SCAN", "RUNNING"), scanJob("PORT_SCAN_DEEP", "UNREACHABLE")));
+
+        service.checkAndCompleteRun(runId);
+
+        verify(scanRunRepository, org.mockito.Mockito.never()).markComplete(any(), any());
+    }
 }

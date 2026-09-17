@@ -6,6 +6,7 @@ import java.net.UnknownHostException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
+import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 
 /**
@@ -47,7 +48,7 @@ public final class DualStackResolver {
         try {
             all = InetAddress.getAllByName(hostname);
         } catch (UnknownHostException e) {
-            throw new ScanModuleException(hostname + " could not be resolved", e);
+            throw new HostUnreachableException(hostname + " could not be resolved", e);
         }
 
         boolean allowlisted = SafeAddressValidator.isHostnameAllowlisted(hostname);

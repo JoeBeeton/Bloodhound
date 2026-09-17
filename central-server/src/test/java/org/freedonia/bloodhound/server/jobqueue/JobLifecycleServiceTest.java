@@ -212,23 +212,25 @@ class JobLifecycleServiceTest {
     void fail_jobNotFound_throws404() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of())).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of(), false))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
     void fail_notOwned_throws404() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
-        when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.empty());
+        when(scanJobRepository.fail(jobId, workerId, "boom", false)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of())).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> service.fail(jobId, workerId, "boom", List.of(), false))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
     void fail_retryable_stillHasAttemptsLeft_statusPending_doesNotCheckRunCompletion() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
-        when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.of("PENDING"));
+        when(scanJobRepository.fail(jobId, workerId, "boom", false)).thenReturn(Optional.of("PENDING"));
 
-        service.fail(jobId, workerId, "boom", List.of());
+        service.fail(jobId, workerId, "boom", List.of(), false);
 
         verify(scanJobAttemptRepository).completeAttempt(jobId, "FAILED", "boom", null);
         verify(workerRepository).clearCurrentJob(workerId, jobId);
@@ -238,9 +240,21 @@ class JobLifecycleServiceTest {
     @Test
     void fail_exhaustedRetries_terminalFailed_checksRunCompletion() {
         when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("HTTP_HEADERS")));
-        when(scanJobRepository.fail(jobId, workerId, "boom")).thenReturn(Optional.of("FAILED"));
+        when(scanJobRepository.fail(jobId, workerId, "boom", false)).thenReturn(Optional.of("FAILED"));
 
-        service.fail(jobId, workerId, "boom", List.of());
+        service.fail(jobId, workerId, "boom", List.of(), false);
+
+        verify(scanRunService).checkAndCompleteRun(scanRunId);
+    }
+
+    @Test
+    void fail_confirmedUnreachable_exhaustedRetries_terminalUnreachable_checksRunCompletion() {
+        // UNREACHABLE is just as terminal as FAILED for triggering a run-completion check - the
+        // distinction (not counting as a failure) lives inside ScanRunService itself, not here.
+        when(scanJobRepository.findById(jobId)).thenReturn(Optional.of(job("NUCLEI_SCAN")));
+        when(scanJobRepository.fail(jobId, workerId, "dead host", true)).thenReturn(Optional.of("UNREACHABLE"));
+
+        service.fail(jobId, workerId, "dead host", List.of(), true);
 
         verify(scanRunService).checkAndCompleteRun(scanRunId);
     }

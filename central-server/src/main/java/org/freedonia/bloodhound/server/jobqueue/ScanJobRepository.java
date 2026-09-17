@@ -308,11 +308,13 @@ public class ScanJobRepository {
     }
 
     /**
-     * Returns the job's new terminal-or-retry status ("PENDING" or "FAILED"),
-     * or empty if no matching claimed job was found (unknown id / wrong
-     * worker / already terminal).
+     * Returns the job's new terminal-or-retry status ("PENDING", "FAILED", or
+     * "UNREACHABLE" - the latter when {@code confirmedUnreachable} is true and retries are
+     * exhausted, see {@link org.freedonia.bloodhound.common.scanmodule.HostUnreachableException}),
+     * or empty if no matching claimed job was found (unknown id / wrong worker / already
+     * terminal).
      */
-    public Optional<String> fail(UUID id, String workerId, String errorDetail) {
+    public Optional<String> fail(UUID id, String workerId, String errorDetail, boolean confirmedUnreachable) {
         Optional<ScanJob> jobOpt = jdbc.query(
                         "SELECT * FROM scan_jobs WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
                         ROW_MAPPER,
@@ -344,12 +346,18 @@ public class ScanJobRepository {
                     id);
             return Optional.of("PENDING");
         }
+        // A host confirmed unreachable (DNS resolution failure) is a correct scan outcome, not a
+        // failure - still retried the same as any other error above in case it's a transient DNS
+        // blip, but once retries are exhausted it lands on its own terminal status so
+        // ScanRunService#checkAndCompleteRun can exclude it from PARTIAL_FAILURE.
+        String terminalStatus = confirmedUnreachable ? "UNREACHABLE" : "FAILED";
         jdbc.update(
-                "UPDATE scan_jobs SET status = 'FAILED', attempt_count = ?, error_detail = ? WHERE id = ?",
+                "UPDATE scan_jobs SET status = ?, attempt_count = ?, error_detail = ? WHERE id = ?",
+                terminalStatus,
                 nextAttempt,
                 errorDetail,
                 id);
-        return Optional.of("FAILED");
+        return Optional.of(terminalStatus);
     }
 
     /**

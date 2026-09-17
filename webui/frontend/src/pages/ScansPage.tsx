@@ -11,10 +11,13 @@ import { MODULE_STATUS_STYLES } from "../lib/moduleStatusStyles";
 import type { ActiveScan, ActiveScanModule, RecentScan } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
-const TERMINAL = new Set(["COMPLETE", "FAILED", "CANCELLED"]);
+const TERMINAL = new Set(["COMPLETE", "FAILED", "CANCELLED", "UNREACHABLE"]);
 // Worst-first: a group's badge should reflect the most attention-worthy job in it,
-// not just whichever happened to be last in the array.
-const STATUS_PRIORITY = ["FAILED", "RUNNING", "CLAIMED", "PENDING", "COMPLETE"];
+// not just whichever happened to be last in the array. UNREACHABLE ranks just above
+// COMPLETE (not alongside FAILED) - a confirmed-dead host isn't a failure, but a group with
+// one should still surface that rather than reading as uniformly COMPLETE, per the "dead
+// hosts listed separately" design (see HostUnreachableException).
+const STATUS_PRIORITY = ["FAILED", "RUNNING", "CLAIMED", "PENDING", "UNREACHABLE", "COMPLETE"];
 
 interface ModuleGroup {
   moduleType: string;

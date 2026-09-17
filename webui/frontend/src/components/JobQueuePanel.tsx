@@ -33,7 +33,7 @@ interface ModuleGroup {
   limit: number | undefined;
 }
 
-const NOT_QUEUED = new Set(["COMPLETE", "FAILED", "CANCELLED"]);
+const NOT_QUEUED = new Set(["COMPLETE", "FAILED", "CANCELLED", "UNREACHABLE"]);
 
 function groupQueue(scans: ActiveScan[], limits: Record<string, number>): ModuleGroup[] {
   const byType = new Map<string, ModuleGroup>();

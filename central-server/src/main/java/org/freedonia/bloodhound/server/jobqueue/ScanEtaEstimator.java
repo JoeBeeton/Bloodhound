@@ -23,7 +23,8 @@ public final class ScanEtaEstimator {
 
     public record Estimate(int completedJobs, int totalJobs, Long etaSeconds) {}
 
-    private static final java.util.Set<String> TERMINAL = java.util.Set.of("COMPLETE", "FAILED", "CANCELLED");
+    private static final java.util.Set<String> TERMINAL =
+            java.util.Set.of("COMPLETE", "FAILED", "CANCELLED", "UNREACHABLE");
 
     public static Estimate estimate(List<JobProgress> jobs, Map<String, Double> avgSecondsByModuleType, Instant now) {
         int completed = (int) jobs.stream().filter(j -> TERMINAL.contains(j.status())).count();

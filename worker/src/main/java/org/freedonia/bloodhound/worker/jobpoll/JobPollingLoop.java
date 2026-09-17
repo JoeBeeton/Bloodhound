@@ -2,6 +2,7 @@ package org.freedonia.bloodhound.worker.jobpoll;
 
 import java.util.List;
 import java.util.Optional;
+import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ModuleResult;
 import org.freedonia.bloodhound.common.scanmodule.ScanContext;
 import org.freedonia.bloodhound.common.scanmodule.ScanModule;
@@ -83,7 +84,7 @@ public class JobPollingLoop {
         log.info("claimed job {} module={} target={}", job.id(), job.moduleType(), job.hostname());
         Optional<ScanModule> module = registry.find(job.moduleType());
         if (module.isEmpty()) {
-            reportFailure(job, "no worker module registered for type " + job.moduleType(), List.of());
+            reportFailure(job, "no worker module registered for type " + job.moduleType(), List.of(), false);
             return;
         }
         JobHeartbeatSender.Handle heartbeat = heartbeatSender.start(job.id());
@@ -100,10 +101,10 @@ public class JobPollingLoop {
         } catch (ScanModuleException e) {
             String detail = withCause(e);
             log.warn("job {} failed: {}", job.id(), detail);
-            reportFailure(job, detail, JobLogCapture.end());
+            reportFailure(job, detail, JobLogCapture.end(), e instanceof HostUnreachableException);
         } catch (Exception e) {
             log.error("job {} failed unexpectedly", job.id(), e);
-            reportFailure(job, "unexpected error: " + e.getMessage(), JobLogCapture.end());
+            reportFailure(job, "unexpected error: " + e.getMessage(), JobLogCapture.end(), false);
         } finally {
             heartbeat.stop();
         }
@@ -152,12 +153,12 @@ public class JobPollingLoop {
         }
     }
 
-    private void reportFailure(ClaimedJob job, String errorDetail, List<String> logLines) {
+    private void reportFailure(ClaimedJob job, String errorDetail, List<String> logLines, boolean confirmedUnreachable) {
         try {
             centralServerClient
                     .post()
                     .uri("/api/v1/jobs/{id}/fail", job.id())
-                    .body(new FailRequest(workerId, errorDetail, logLines))
+                    .body(new FailRequest(workerId, errorDetail, logLines, confirmedUnreachable))
                     .retrieve()
                     .toBodilessEntity();
         } catch (Exception e) {

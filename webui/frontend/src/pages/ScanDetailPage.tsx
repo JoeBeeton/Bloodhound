@@ -71,6 +71,9 @@ const JOB_STATUS_STYLES: Record<string, string> = {
   // comment on why that shade fails WCAG AA on this app's dark background) keeps it in the same
   // deliberately-de-emphasized family while staying visually distinct from PENDING.
   CANCELLED: "text-muted",
+  // Deliberately not the FAILED red - a confirmed-dead host is a correct scan outcome, not a
+  // bug (see HostUnreachableException). Same de-emphasized family as CANCELLED/PENDING.
+  UNREACHABLE: "text-muted",
 };
 
 const OUTCOME_STYLES: Record<string, string> = {
@@ -133,10 +136,16 @@ function AttemptLogToggle({ logOutput }: { logOutput: string }) {
 
 function JobGroupSection({ group }: { group: JobGroup }) {
   const failedCount = group.jobs.filter((j) => j.status === "FAILED").length;
-  const doneCount = group.jobs.filter((j) => j.status === "COMPLETE" || j.status === "FAILED").length;
-  // Nothing to review by default when every host in this module cleanly succeeded - the
-  // analyst's attention belongs on groups with something still running or gone wrong. Keyed by
-  // moduleType (stable across this page's 3s poll while RUNNING) so a manual toggle sticks.
+  // UNREACHABLE counts toward "done" the same as COMPLETE/FAILED - a confirmed-dead host is a
+  // terminal, correct outcome (see HostUnreachableException), not something still in progress.
+  const unreachableCount = group.jobs.filter((j) => j.status === "UNREACHABLE").length;
+  const doneCount = group.jobs.filter(
+    (j) => j.status === "COMPLETE" || j.status === "FAILED" || j.status === "UNREACHABLE",
+  ).length;
+  // Nothing to review by default when every host in this module cleanly succeeded or was
+  // confirmed unreachable - the analyst's attention belongs on groups with something still
+  // running or genuinely gone wrong. Keyed by moduleType (stable across this page's 3s poll
+  // while RUNNING) so a manual toggle sticks.
   const [collapsed, setCollapsed] = useState(() => failedCount === 0 && doneCount === group.jobs.length);
   return (
     <div className="border-b border-slate-800 py-3 last:border-0">
@@ -152,6 +161,7 @@ function JobGroupSection({ group }: { group: JobGroup }) {
         >
           {doneCount}/{group.jobs.length} complete
           {failedCount > 0 && ` · ${failedCount} failed`}
+          {unreachableCount > 0 && <span className="text-slate-400"> · {unreachableCount} unreachable</span>}
         </span>
       </button>
       {!collapsed && (
@@ -168,7 +178,11 @@ function JobGroupSection({ group }: { group: JobGroup }) {
 function JobRow({ job }: { job: ScanJobStatus }) {
   // A clean single-attempt success doesn't need its history spelled out - only jobs that
   // actually had something happen (a retry, a failure, more than one attempt) show it.
-  const worthShowingHistory = job.attempts.length > 1 || job.status === "FAILED" || job.attempts.some((a) => a.outcome === "TIMED_OUT_REAPED");
+  const worthShowingHistory =
+    job.attempts.length > 1
+    || job.status === "FAILED"
+    || job.status === "UNREACHABLE"
+    || job.attempts.some((a) => a.outcome === "TIMED_OUT_REAPED");
   return (
     <div className="border-b border-slate-800 py-3 last:border-0">
       <div className="flex items-center justify-between gap-3">
@@ -183,6 +197,9 @@ function JobRow({ job }: { job: ScanJobStatus }) {
       </div>
       {job.status === "FAILED" && job.errorDetail && (
         <p className="mt-1 font-mono text-[11px] text-severity-critical">{job.errorDetail}</p>
+      )}
+      {job.status === "UNREACHABLE" && job.errorDetail && (
+        <p className="mt-1 font-mono text-[11px] text-slate-400">{job.errorDetail}</p>
       )}
       {worthShowingHistory && <AttemptHistory attempts={job.attempts} />}
     </div>

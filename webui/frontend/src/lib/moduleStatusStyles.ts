@@ -11,4 +11,8 @@ export const MODULE_STATUS_STYLES: Record<string, string> = {
   // narrow window - added anyway since an undefined entry falls back to this exact same
   // style PENDING gets, same as every other status-style map in this codebase.
   CANCELLED: "bg-slate-800 text-muted",
+  // Deliberately NOT the FAILED red - a confirmed-dead host is a correct scan outcome, not a
+  // bug (see HostUnreachableException), and the run itself now reports COMPLETE rather than
+  // PARTIAL_FAILURE when every other job succeeded. Neutral/muted, same family as PENDING.
+  UNREACHABLE: "bg-slate-700 text-slate-400",
 };

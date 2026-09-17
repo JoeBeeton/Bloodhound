@@ -178,18 +178,23 @@ public class JobLifecycleService {
         scanRunService.checkAndCompleteRun(job.scanRunId());
     }
 
-    public void fail(UUID jobId, String workerId, String errorDetail, List<String> logLines) {
+    public void fail(UUID jobId, String workerId, String errorDetail, List<String> logLines, boolean confirmedUnreachable) {
         ScanJob job = scanJobRepository.findById(jobId).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
-        String newStatus =
-                scanJobRepository.fail(jobId, workerId, errorDetail).orElseThrow(JobLifecycleService::notFoundOrNotOwned);
+        String newStatus = scanJobRepository
+                .fail(jobId, workerId, errorDetail, confirmedUnreachable)
+                .orElseThrow(JobLifecycleService::notFoundOrNotOwned);
         // The attempt itself failed either way - whether the job as a whole is now retrying
-        // (PENDING) or terminal (FAILED) is a separate question from what happened to *this* try.
+        // (PENDING) or terminal (FAILED/UNREACHABLE) is a separate question from what happened to
+        // *this* try.
         scanJobAttemptRepository.completeAttempt(jobId, "FAILED", errorDetail, joinLogLines(logLines));
         // The worker is done with this attempt regardless of whether the job itself is
-        // now retrying (PENDING, no owner) or terminal (FAILED) - either way it's no
+        // now retrying (PENDING, no owner) or terminal (FAILED/UNREACHABLE) - either way it's no
         // longer *this* worker's current job.
         workerRepository.clearCurrentJob(workerId, jobId);
-        if ("FAILED".equals(newStatus)) {
+        // UNREACHABLE is just as terminal as FAILED for the purpose of checking whether the run
+        // as a whole is now done - it's only excluded from counting as a *failure* once inside
+        // ScanRunService#checkAndCompleteRun itself.
+        if ("FAILED".equals(newStatus) || "UNREACHABLE".equals(newStatus)) {
             scanRunService.checkAndCompleteRun(job.scanRunId());
         }
     }

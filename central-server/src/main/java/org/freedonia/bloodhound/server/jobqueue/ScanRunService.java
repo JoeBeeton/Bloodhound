@@ -500,6 +500,9 @@ public class ScanRunService {
     }
 
     private static boolean isTerminal(String status) {
-        return status.equals("COMPLETE") || status.equals("FAILED") || status.equals("CANCELLED");
+        return status.equals("COMPLETE")
+                || status.equals("FAILED")
+                || status.equals("CANCELLED")
+                || status.equals("UNREACHABLE");
     }
 }
