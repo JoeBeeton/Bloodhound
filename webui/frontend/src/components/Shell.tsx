@@ -74,6 +74,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <NavLink to="/targets" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
         Targets
       </NavLink>
+      <NavLink to="/portfolios" className={NAV_LINK_CLASS} onClick={closeMobileMenu}>
+        Portfolios
+      </NavLink>
       {/* end: without it, this would also show "active" on /findings/feed (NavLink otherwise
           matches by path prefix), double-highlighting both pills at once. */}
       <NavLink to="/findings" end className={NAV_LINK_CLASS} onClick={closeMobileMenu}>

@@ -124,6 +124,31 @@ public class TargetRepository {
         jdbc.update("UPDATE targets SET target_type = ? WHERE id = ?", targetType, id);
     }
 
+    /** Member targets of a portfolio - see PortfolioService for the blended score computed over these. */
+    public List<Target> findByPortfolio(UUID portfolioId) {
+        return jdbc.query("SELECT * FROM targets WHERE portfolio_id = ? ORDER BY hostname ASC", ROW_MAPPER, portfolioId);
+    }
+
+    /**
+     * Null removes this target from whatever portfolio it's currently in; a non-null value both
+     * adds it to a portfolio and moves it out of any other it was already in (a plain overwrite
+     * of the single portfolio_id FK - see V63__portfolios.sql for why a target belongs to at most
+     * one portfolio).
+     */
+    public void updatePortfolio(UUID id, UUID portfolioId) {
+        jdbc.update("UPDATE targets SET portfolio_id = ? WHERE id = ?", portfolioId, id);
+    }
+
+    /** Confirms targetId is currently a member of portfolioId - PortfolioController#removeMember uses this to 404 on "remove a target that isn't actually in this portfolio" rather than silently no-op. */
+    public boolean isInPortfolio(UUID targetId, UUID portfolioId) {
+        Boolean result = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM targets WHERE id = ? AND portfolio_id = ?)",
+                Boolean.class,
+                targetId,
+                portfolioId);
+        return Boolean.TRUE.equals(result);
+    }
+
     public void delete(UUID id) {
         jdbc.update("DELETE FROM targets WHERE id = ?", id);
     }

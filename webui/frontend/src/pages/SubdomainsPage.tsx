@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorState } from "../components/ErrorState";
 import { HostingBadge } from "../components/TechHostingPanel";
 import { Shell } from "../components/Shell";
-import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
+import { apiFetch, readErrorMessage, totalCountFromResponse } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Severity, Subdomain, Target } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
@@ -57,6 +57,22 @@ async function downloadSubdomainsCsv(targetId: string, hostnameSearch: string): 
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Lets an analyst attach a hostname the automated sources (crt.sh/subfinder/katana) haven't
+ * found yet - see SubdomainController#add. The new row shows up as source "MANUAL" with no
+ * resolved IPs until the next scan actually resolves it, same as a freshly-discovered,
+ * not-yet-verified hostname from any other source.
+ */
+async function addSubdomain(targetId: string, hostname: string): Promise<Subdomain> {
+  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hostname }),
+  });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to add subdomain."));
+  return res.json();
+}
+
 async function fetchFingerprints(targetId: string): Promise<FingerprintEntry[]> {
   const res = await apiFetch(`/api/v1/targets/${targetId}/fingerprints`);
   if (!res.ok) throw new Error("Failed to load fingerprint data.");
@@ -107,6 +123,9 @@ export function SubdomainsPage() {
   const { id } = useParams<{ id: string }>();
   const targetId = id!;
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [newHostname, setNewHostname] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
   const [search, setSearch] = useState("");
   const [sortByFindings, setSortByFindings] = useState(false);
   // Debounced so typing doesn't fire a request per keystroke - the search now genuinely
@@ -132,6 +151,21 @@ export function SubdomainsPage() {
   const exportCsvMutation = useMutation({
     mutationFn: () => downloadSubdomainsCsv(targetId, debouncedSearch),
   });
+  const addSubdomainMutation = useMutation({
+    mutationFn: (hostname: string) => addSubdomain(targetId, hostname),
+    onSuccess: () => {
+      setNewHostname("");
+      setShowAddForm(false);
+      // Prefix match: invalidates every ["subdomains", targetId, *] entry regardless of the
+      // current search term, same as every other mutation on this page that changes the set.
+      queryClient.invalidateQueries({ queryKey: ["subdomains", targetId] });
+    },
+  });
+
+  function handleAddSubdomain(e: FormEvent) {
+    e.preventDefault();
+    addSubdomainMutation.mutate(newHostname.trim());
+  }
 
   const fingerprintsByHostname = useMemo(
     () => new Map((fingerprintsQuery.data ?? []).map((f) => [f.hostname, f])),
@@ -175,6 +209,12 @@ export function SubdomainsPage() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowAddForm((v) => !v)}
+              className="font-mono text-[10px] uppercase tracking-widest text-slate-400 transition hover:text-neon-cyan"
+            >
+              {showAddForm ? "Cancel" : "+ Add subdomain"}
+            </button>
             {subdomainsQuery.data && subdomainsQuery.data.totalCount > 0 && (
               <button
                 onClick={() => exportCsvMutation.mutate()}
@@ -196,6 +236,40 @@ export function SubdomainsPage() {
         {exportCsvMutation.isError && (
           <p role="alert" className="mb-2 font-mono text-xs text-severity-critical">
             Failed to export subdomains. Try again.
+          </p>
+        )}
+
+        {showAddForm && (
+          <form
+            onSubmit={handleAddSubdomain}
+            className="mb-4 flex flex-col gap-3 rounded-lg border border-neon-cyan/20 bg-panel/80 p-4 sm:flex-row sm:items-end"
+          >
+            <div className="flex-1">
+              <label htmlFor="add-subdomain-hostname" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+                Hostname
+              </label>
+              <input
+                id="add-subdomain-hostname"
+                required
+                autoFocus
+                placeholder={targetQuery.data ? `sub.${targetQuery.data.hostname}` : "sub.example.com"}
+                value={newHostname}
+                onChange={(e) => setNewHostname(e.target.value)}
+                className="w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={addSubdomainMutation.isPending}
+              className="rounded bg-neon-magenta/90 px-4 py-2 font-mono text-sm font-bold uppercase tracking-widest text-void transition hover:bg-neon-magenta disabled:opacity-50"
+            >
+              {addSubdomainMutation.isPending ? "Adding…" : "Add"}
+            </button>
+          </form>
+        )}
+        {addSubdomainMutation.isError && (
+          <p role="alert" className="-mt-2 mb-4 font-mono text-xs text-severity-critical">
+            {(addSubdomainMutation.error as Error).message}
           </p>
         )}
 
