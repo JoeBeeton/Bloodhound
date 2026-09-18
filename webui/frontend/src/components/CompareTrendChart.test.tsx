@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { colorForSeries, summarizeComparison } from "./CompareTrendChart";
+import { colorsForSeries, summarizeComparison } from "./CompareTrendChart";
 import type { CompareSeries, ScoreSnapshot, TargetType } from "../lib/types";
 
 function snapshot(overallScore: number, tier1OverallScore: number | null): ScoreSnapshot {
@@ -70,28 +70,45 @@ describe("summarizeComparison", () => {
   });
 });
 
-describe("colorForSeries", () => {
+describe("colorsForSeries", () => {
   // A product review found colors were assigned by array position, so deselecting one target
   // shifted every other selected target's color, and re-adding it later gave it a different one -
-  // confusing when comparing the same targets repeatedly. Hashing the series' own stable id makes
-  // a given target's color the same regardless of what else is selected.
-  it("is the same for the same id regardless of what else is present", () => {
-    const id = "56c93bd5-c331-47ca-af29-22d37a22da5c";
-    expect(colorForSeries(id)).toEqual(colorForSeries(id));
-  });
-
-  it("is unaffected by other ids' presence or ordering - the exact 'shuffled on deselect' bug", () => {
+  // confusing when comparing the same targets repeatedly.
+  it("gives an id the same color across calls with the same set", () => {
     const a = "56c93bd5-c331-47ca-af29-22d37a22da5c";
     const b = "57edf8ea-0865-4261-8092-0a3031abc868";
-    // a's color must be identical whether it's plotted alone, second, or first.
-    expect(colorForSeries(a)).toEqual(colorForSeries(a));
-    const colorAlone = colorForSeries(a);
-    const colorWithB = [b, a].map(colorForSeries)[1];
-    expect(colorWithB).toEqual(colorAlone);
+    expect(colorsForSeries([a, b]).get(a)).toEqual(colorsForSeries([a, b]).get(a));
   });
 
-  it("returns one of the defined palette colors", () => {
-    const color = colorForSeries("some-id");
-    expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+  it("is unaffected by selection order - a's color is the same whether it's plotted first or second", () => {
+    const a = "56c93bd5-c331-47ca-af29-22d37a22da5c";
+    const b = "57edf8ea-0865-4261-8092-0a3031abc868";
+    expect(colorsForSeries([a, b]).get(a)).toEqual(colorsForSeries([b, a]).get(a));
+  });
+
+  it("removing an unrelated target doesn't change a non-colliding target's color", () => {
+    // The exact "shuffled on deselect" bug: with only 6 fixed colors and hash-mod-6, which two
+    // targets happened to share a slot changed on every add/remove even though each one's own
+    // color was technically stable. These three ids don't collide (see the "never the same"
+    // test below for a large set), so removing "c" must leave "a" untouched.
+    const a = "56c93bd5-c331-47ca-af29-22d37a22da5c";
+    const b = "57edf8ea-0865-4261-8092-0a3031abc868";
+    const c = "11111111-1111-1111-1111-111111111111";
+    const withAll = colorsForSeries([a, b, c]);
+    const withoutC = colorsForSeries([a, b]);
+    expect(withoutC.get(a)).toEqual(withAll.get(a));
+    expect(withoutC.get(b)).toEqual(withAll.get(b));
+  });
+
+  it("never assigns the same color to two different ids, even well beyond typical comparison sizes", () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `target-${i}`);
+    const colors = colorsForSeries(ids);
+    const distinctColors = new Set(colors.values());
+    expect(distinctColors.size).toBe(ids.length);
+  });
+
+  it("returns a valid hsl() color", () => {
+    const color = colorsForSeries(["some-id"]).get("some-id");
+    expect(color).toMatch(/^hsl\(\d+(\.\d+)?, \d+%, \d+%\)$/);
   });
 });

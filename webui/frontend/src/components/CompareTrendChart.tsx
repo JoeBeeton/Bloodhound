@@ -2,25 +2,93 @@ import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContai
 import { GRADE_BANDS } from "../lib/gradeBands";
 import type { CompareSeries } from "../lib/types";
 
-/** cyan/magenta/amber first (the core retro-Tokyo palette), then a few extra hues for larger comparisons. */
-const LINE_COLORS = ["#00f0ff", "#ff2e97", "#ffb800", "#7c3aed", "#34d399", "#f472b6"];
+const SATURATION = 85;
+const LIGHTNESS = 62;
+/** How close two hues are allowed to land before one gets nudged - below this, two lines read as
+ * "the same color" at a glance on this chart's line width/dot size. */
+const PREFERRED_MIN_SEPARATION_DEG = 25;
+/** Fallback resolution once more ids are packed into one comparison than PREFERRED_MIN_SEPARATION_DEG
+ * can fit distinctly (360 / 25 = 14) - still comfortably above MAX_COMPARE_TARGETS (20, see
+ * CompareController) since integer-degree hues give 360 possible values. */
+const HUE_STEP_DEG = 1;
+
+function hashToHue(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return ((hash % 360) + 360) % 360;
+}
+
+function hueDistance(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return Math.min(diff, 360 - diff);
+}
+
+function normalizeHue(hue: number): number {
+  return ((Math.round(hue) % 360) + 360) % 360;
+}
+
+/** Searches outward (both directions) from `preferred`, in HUE_STEP_DEG increments, for the
+ * closest hue that's at least `minSeparation` from every already-assigned hue - staying as close
+ * as possible to the id's own preferred hue rather than jumping to an arbitrary free slot, so a
+ * nudge (when one is needed at all) is the smallest one that resolves the collision. */
+function findHue(preferred: number, assigned: number[], minSeparation: number): number {
+  if (assigned.every((h) => hueDistance(h, preferred) >= minSeparation)) {
+    return preferred;
+  }
+  for (let offset = HUE_STEP_DEG; offset <= 180; offset += HUE_STEP_DEG) {
+    for (const candidate of [preferred + offset, preferred - offset]) {
+      const hue = normalizeHue(candidate);
+      if (assigned.every((h) => hueDistance(h, hue) >= minSeparation)) {
+        return hue;
+      }
+    }
+  }
+  // Only reachable when packing far more ids into one chart than this chart is ever asked to
+  // (MAX_COMPARE_TARGETS is 20, comfortably under the 360 distinct integer-degree hues
+  // available) - falls back to "merely distinct" rather than "well separated".
+  for (let hue = 0; hue < 360; hue += HUE_STEP_DEG) {
+    if (!assigned.includes(hue)) {
+      return hue;
+    }
+  }
+  return preferred;
+}
 
 /**
  * A product review found colors were assigned by each series' position in the `series` array
  * (`LINE_COLORS[i % LINE_COLORS.length]`) - deselecting one target shifted every other selected
  * target's index, so its line's color changed too, and re-adding a target later gave it whatever
- * color its new position happened to land on rather than the one it had before. Hashing the
- * series' own stable id (a target/portfolio UUID, never reused for anything else) into the
- * palette instead means a given target's color is the same every time it's plotted, regardless of
- * what else is selected or the order selections were made in - no state to track, and it survives
- * a page reload too, unlike a "first seen this session" assignment would.
+ * color its new position happened to land on rather than the one it had before.
+ *
+ * <p>A follow-up report found colors were STILL visibly shuffling even after that fix: with only
+ * 6 fixed hex colors and a hash-mod-6 assignment, two different targets landing on the same slot
+ * was the common case, not a rare one (6 items into 6 slots is a >90% chance of at least one
+ * collision) - so which two targets happened to share a color kept changing as the selection
+ * changed, even though each individual target's own color was technically stable. Fixes both
+ * complaints at once: every id still gets a color purely as a function of its own hash (hashed to
+ * a position on the HSL hue wheel instead of an index into a 6-color array), so a target's
+ * preferred color never depends on what else is selected - but this function also takes the
+ * *whole* currently-selected set, sorted by id (not selection order, so the result never depends
+ * on which order targets were added/removed in) and nudges any hue that collides with an
+ * already-assigned one for THIS set just far enough around the wheel to stay visually distinct.
+ * A target's color only ever moves off its preferred hue when another id currently on the same
+ * chart would otherwise be indistinguishable from it - adding or removing an unrelated target
+ * never touches it.
  */
-export function colorForSeries(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+export function colorsForSeries(ids: string[]): Map<string, string> {
+  const sorted = [...new Set(ids)].sort();
+  const assigned: number[] = [];
+  const result = new Map<string, string>();
+  for (const id of sorted) {
+    const preferred = hashToHue(id);
+    const minSeparation = assigned.length === 0 ? 360 : Math.min(PREFERRED_MIN_SEPARATION_DEG, 360 / (assigned.length + 1));
+    const hue = findHue(preferred, assigned, minSeparation);
+    assigned.push(hue);
+    result.set(id, `hsl(${hue}, ${SATURATION}%, ${LIGHTNESS}%)`);
   }
-  return LINE_COLORS[Math.abs(hash) % LINE_COLORS.length];
+  return result;
 }
 
 export type CompareScoreMode = "tier1" | "full";
@@ -69,6 +137,8 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
       </p>
     );
   }
+
+  const colors = colorsForSeries(series.map((s) => s.targetId));
 
   return (
     <div
@@ -129,7 +199,7 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
           />
           <Legend formatter={(value) => <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>{value}</span>} />
           {series.map((s) => {
-            const color = colorForSeries(s.targetId);
+            const color = colors.get(s.targetId)!;
             // Pre-fix snapshots have no tier1OverallScore - fall back to the full score rather
             // than dropping the point, so old history doesn't just vanish from the "tier1" view.
             const data = s.history.map((h) => ({
