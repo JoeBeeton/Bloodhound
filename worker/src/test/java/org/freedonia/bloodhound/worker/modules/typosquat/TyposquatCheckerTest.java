@@ -179,6 +179,49 @@ class TyposquatCheckerTest {
         verifyNoInteractions(screenshotter);
     }
 
+    @Test
+    void genuineCandidateWithMxRecords_mxConfiguredTrue() {
+        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(dnsResolver.resolveMxHosts(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("mail.jjaa.com")));
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
+
+        assertThat(result.get(0).mxConfigured()).isTrue();
+    }
+
+    @Test
+    void genuineCandidateWithNoMxRecords_mxConfiguredFalse() {
+        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(dnsResolver.resolveMxHosts(List.of("jjaa.com"))).thenReturn(Map.of());
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
+
+        assertThat(result.get(0).mxConfigured()).isFalse();
+    }
+
+    @Test
+    void wildcardArtifact_neverProbedForMx() {
+        var candidate = new PermutationGenerator.Candidate("example.c-o.uk", "HYPHENATION");
+        when(dnsResolver.resolveAll(List.of("example.c-o.uk"))).thenReturn(Map.of("example.c-o.uk", List.of("203.0.113.5")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    var hostnames = (java.util.Collection<String>) inv.getArgument(0);
+                    String probeHostname = hostnames.iterator().next();
+                    return Map.of(probeHostname, List.of("203.0.113.99"));
+                });
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
+
+        assertThat(result.get(0).mxConfigured()).isFalse();
+        verifyNoInteractions(whoisFetcher);
+        verify(dnsResolver, never()).resolveMxHosts(any());
+    }
+
     @SuppressWarnings("unchecked")
     private static java.util.Collection<String> argThatContainsAWildcardProbeHostname() {
         return org.mockito.ArgumentMatchers.argThat((java.util.Collection<String> arg) -> arg != null

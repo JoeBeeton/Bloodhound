@@ -55,7 +55,10 @@ public class ExposedPathModule implements ScanModule {
         return new ModuleResult(
                 result.findings(),
                 Map.of(
-                        "probesRun", (ExposedPathFetcher.CATALOG.size() + 1) * result.hostsCovered().size(),
+                        // +2, not +1: the baseline probe plus the homepage fetch EXPOSURE_JS_SOURCE_MAP
+                        // needs (its own variable number of .map probes isn't counted here, same
+                        // approximation this field already accepted for the Redis raw-socket probe).
+                        "probesRun", (ExposedPathFetcher.CATALOG.size() + 2) * result.hostsCovered().size(),
                         "hostsCovered", result.hostsCovered(),
                         "hostsAttempted", result.hostsAttempted()));
     }

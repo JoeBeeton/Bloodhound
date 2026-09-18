@@ -21,7 +21,10 @@ public record TlsFetchResult(
         String hstsHeaderValue,
         String certIssuer,
         String weakCipherNegotiated,
-        List<String> certDnsNames) {
+        List<String> certDnsNames,
+        String certSignatureAlgorithm,
+        String certPublicKeyAlgorithm,
+        Integer certPublicKeyBits) {
 
     /** weakCipherNegotiated: the suite the server accepted when offered only known-weak ones (see WeakCipherProbe), or null. */
     public TlsFetchResult(
@@ -33,7 +36,8 @@ public record TlsFetchResult(
             boolean httpsReachable,
             String hstsHeaderValue,
             String certIssuer) {
-        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue, certIssuer, null, null);
+        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue,
+                certIssuer, null, null, null, null, null);
     }
 
     public TlsFetchResult(
@@ -46,6 +50,22 @@ public record TlsFetchResult(
             String hstsHeaderValue,
             String certIssuer,
             String weakCipherNegotiated) {
-        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue, certIssuer, weakCipherNegotiated, null);
+        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue,
+                certIssuer, weakCipherNegotiated, null, null, null, null);
+    }
+
+    public TlsFetchResult(
+            Instant certNotAfter,
+            boolean chainTrusted,
+            String cipherSuite,
+            boolean tls1Supported,
+            boolean tls11Supported,
+            boolean httpsReachable,
+            String hstsHeaderValue,
+            String certIssuer,
+            String weakCipherNegotiated,
+            List<String> certDnsNames) {
+        this(certNotAfter, chainTrusted, cipherSuite, tls1Supported, tls11Supported, httpsReachable, hstsHeaderValue,
+                certIssuer, weakCipherNegotiated, certDnsNames, null, null, null);
     }
 }

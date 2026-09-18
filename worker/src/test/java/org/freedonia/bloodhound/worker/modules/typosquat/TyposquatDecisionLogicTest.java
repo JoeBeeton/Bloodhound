@@ -14,7 +14,7 @@ class TyposquatDecisionLogicTest {
     @Test
     void resolvingCandidateProducesAHighSeverityBrandFinding() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null)));
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null, false)));
 
         assertThat(findings).hasSize(1);
         RawFinding finding = findings.get(0);
@@ -31,7 +31,7 @@ class TyposquatDecisionLogicTest {
     @Test
     void nonResolvingCandidateProducesNoFinding() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
-                new TyposquatChecker.CheckedCandidate("exampl.com", "OMISSION", List.of(), null, false, null, null)));
+                new TyposquatChecker.CheckedCandidate("exampl.com", "OMISSION", List.of(), null, false, null, null, false)));
         assertThat(findings).isEmpty();
     }
 
@@ -39,17 +39,17 @@ class TyposquatDecisionLogicTest {
     void registrationDateIncludedInEvidenceWhenAvailable() {
         Instant registered = Instant.parse("2026-01-01T00:00:00Z");
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "examp1e.com", "HOMOGLYPH", List.of("198.51.100.1"), registered, false, null, null)));
+                "examp1e.com", "HOMOGLYPH", List.of("198.51.100.1"), registered, false, null, null, false)));
         assertThat(findings.get(0).evidence()).containsEntry("registrationDate", registered.toString());
     }
 
     @Test
     void mixOfResolvingAndNonResolvingOnlyFlagsTheResolvingOnes() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
-                new TyposquatChecker.CheckedCandidate("a.com", "OMISSION", List.of(), null, false, null, null),
+                new TyposquatChecker.CheckedCandidate("a.com", "OMISSION", List.of(), null, false, null, null, false),
                 new TyposquatChecker.CheckedCandidate(
-                        "b.com", "OMISSION", List.of("203.0.113.9"), null, false, null, null),
-                new TyposquatChecker.CheckedCandidate("c.com", "OMISSION", List.of(), null, false, null, null)));
+                        "b.com", "OMISSION", List.of("203.0.113.9"), null, false, null, null, false),
+                new TyposquatChecker.CheckedCandidate("c.com", "OMISSION", List.of(), null, false, null, null, false)));
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).affectedAsset()).isEqualTo("b.com");
     }
@@ -69,7 +69,7 @@ class TyposquatDecisionLogicTest {
     @Test
     void resolvingCandidateFlaggedAsWildcardArtifact_producesNoFinding() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "example.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null)));
+                "example.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null, false)));
         assertThat(findings).isEmpty();
     }
 
@@ -77,9 +77,9 @@ class TyposquatDecisionLogicTest {
     void wildcardArtifactAndGenuineCandidateMixed_onlyGenuineOneFlagged() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(
                 new TyposquatChecker.CheckedCandidate(
-                        "example.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null),
+                        "example.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null, false),
                 new TyposquatChecker.CheckedCandidate(
-                        "jjaa.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false, null, null)));
+                        "jjaa.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false, null, null, false)));
         assertThat(findings).hasSize(1);
         assertThat(findings.get(0).affectedAsset()).isEqualTo("jjaa.com");
     }
@@ -87,7 +87,7 @@ class TyposquatDecisionLogicTest {
     @Test
     void highVisualSimilarity_includedInEvidenceAndFlaggedAsStrongSignalInDescription() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 92)));
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 92, false)));
 
         RawFinding finding = findings.get(0);
         assertThat(finding.evidence()).containsEntry("visualSimilarityPercent", 92);
@@ -97,10 +97,62 @@ class TyposquatDecisionLogicTest {
     @Test
     void lowVisualSimilarity_includedInEvidence_describedAsWeakMatch() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 15)));
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 15, false)));
 
         RawFinding finding = findings.get(0);
         assertThat(finding.evidence()).containsEntry("visualSimilarityPercent", 15);
         assertThat(finding.description()).contains("15%").contains("weak visual match");
+    }
+
+    @Test
+    void mxConfigured_addsEscalationFindingAlongsideBaseOne() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null, true)));
+
+        assertThat(findings).extracting(RawFinding::ruleId)
+                .containsExactlyInAnyOrder("TYPOSQUAT_DOMAIN_REGISTERED", "BRAND_TYPOSQUAT_MX_CONFIGURED");
+        RawFinding escalation = findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_MX_CONFIGURED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(escalation.severity()).isEqualTo(Severity.CRITICAL);
+        assertThat(escalation.category()).isEqualTo(Category.BRAND);
+        assertThat(escalation.affectedAsset()).isEqualTo("exampl.com");
+    }
+
+    @Test
+    void noMxConfigured_noEscalationFinding() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null, false)));
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("BRAND_TYPOSQUAT_MX_CONFIGURED");
+    }
+
+    @Test
+    void liveScreenshotCaptured_addsHostingLiveSiteEscalation() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, null, false)));
+
+        assertThat(findings).extracting(RawFinding::ruleId)
+                .containsExactlyInAnyOrder("TYPOSQUAT_DOMAIN_REGISTERED", "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE");
+        RawFinding escalation = findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(escalation.severity()).isEqualTo(Severity.CRITICAL);
+    }
+
+    @Test
+    void noScreenshotCaptured_noHostingLiveSiteEscalation() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null, false)));
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE");
+    }
+
+    @Test
+    void mxConfiguredAndLiveSite_bothEscalationsFireAlongsideBase() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 92, true)));
+        assertThat(findings).extracting(RawFinding::ruleId).containsExactlyInAnyOrder(
+                "TYPOSQUAT_DOMAIN_REGISTERED", "BRAND_TYPOSQUAT_MX_CONFIGURED", "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE");
     }
 }

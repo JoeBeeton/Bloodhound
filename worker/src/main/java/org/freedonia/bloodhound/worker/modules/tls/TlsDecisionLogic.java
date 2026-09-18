@@ -20,6 +20,8 @@ public final class TlsDecisionLogic {
     private static final long HSTS_PRELOAD_MIN_MAX_AGE_SECONDS = 31_536_000; // 1 year - hstspreload.org's own submission bar
     private static final List<String> WEAK_CIPHER_MARKERS = List.of("RC4", "DES", "3DES", "NULL", "EXPORT", "MD5");
     private static final Pattern MAX_AGE_PATTERN = Pattern.compile("max-age=(\\d+)", Pattern.CASE_INSENSITIVE);
+    private static final List<String> WEAK_SIGNATURE_MARKERS = List.of("MD5", "MD2", "SHA1");
+    private static final int MIN_RSA_DSA_KEY_BITS = 2048;
 
     /**
      * Bounded allowlist of major public CA organization names as they
@@ -109,7 +111,36 @@ public final class TlsDecisionLogic {
                     "TLS_CT_UNEXPECTED_ISSUER", Severity.MEDIUM, hostname, Map.of("issuer", r.certIssuer())));
         }
 
+        if (r.certSignatureAlgorithm() != null && isWeakSignatureAlgorithm(r.certSignatureAlgorithm())) {
+            findings.add(finding(
+                    "TLS_CERT_SIGNATURE_ALGORITHM_WEAK",
+                    Severity.HIGH,
+                    hostname,
+                    Map.of("signatureAlgorithm", r.certSignatureAlgorithm())));
+        }
+
+        if (isKeyTooShort(r.certPublicKeyAlgorithm(), r.certPublicKeyBits())) {
+            findings.add(finding(
+                    "TLS_CERT_KEY_TOO_SHORT",
+                    Severity.HIGH,
+                    hostname,
+                    Map.of("publicKeyAlgorithm", r.certPublicKeyAlgorithm(), "publicKeyBits", r.certPublicKeyBits())));
+        }
+
         return findings;
+    }
+
+    static boolean isWeakSignatureAlgorithm(String sigAlgName) {
+        String upper = sigAlgName.toUpperCase(Locale.ROOT);
+        return WEAK_SIGNATURE_MARKERS.stream().anyMatch(upper::contains);
+    }
+
+    /** Only RSA/DSA are evaluated against a fixed bit-length floor - see TlsFetcher's own javadoc on why an EC key's strength isn't comparable the same way. */
+    static boolean isKeyTooShort(String publicKeyAlgorithm, Integer publicKeyBits) {
+        if (publicKeyBits == null || publicKeyAlgorithm == null) {
+            return false;
+        }
+        return ("RSA".equals(publicKeyAlgorithm) || "DSA".equals(publicKeyAlgorithm)) && publicKeyBits < MIN_RSA_DSA_KEY_BITS;
     }
 
     private static RawFinding legacyProtocol(String hostname, String protocol) {
@@ -190,34 +221,34 @@ public final class TlsDecisionLogic {
         return new RawFinding(ruleId, severity, Category.TLS, copy[0], copy[1], asset, evidence);
     }
 
-    private static final Map<String, String[]> COPY = Map.of(
-            "TLS_CERT_EXPIRED",
-                    new String[] {"TLS certificate expired", "The certificate presented for this host has already expired."},
-            "TLS_CERT_EXPIRING_SOON",
+    private static final Map<String, String[]> COPY = Map.ofEntries(
+            Map.entry("TLS_CERT_EXPIRED",
+                    new String[] {"TLS certificate expired", "The certificate presented for this host has already expired."}),
+            Map.entry("TLS_CERT_EXPIRING_SOON",
                     new String[] {
                         "TLS certificate expiring soon", "The certificate presented for this host expires within 30 days."
-                    },
-            "TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN",
+                    }),
+            Map.entry("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN",
                     new String[] {
                         "Untrusted or self-signed TLS certificate chain",
                         "The certificate chain does not validate against a public trust root."
-                    },
-            "TLS_WEAK_PROTOCOL_SUPPORTED",
-                    new String[] {"Legacy TLS protocol supported", "The server accepted a handshake using a deprecated TLS protocol version."},
-            "TLS_WEAK_CIPHER_SUITE",
+                    }),
+            Map.entry("TLS_WEAK_PROTOCOL_SUPPORTED",
+                    new String[] {"Legacy TLS protocol supported", "The server accepted a handshake using a deprecated TLS protocol version."}),
+            Map.entry("TLS_WEAK_CIPHER_SUITE",
                     new String[] {
                         "Weak TLS cipher suite accepted",
                         "The server is willing to negotiate a cipher suite using a known-weak algorithm (RC4, DES/3DES, "
                                 + "export-grade, NULL encryption, or anonymous key exchange) when a client offers it."
-                    },
-            "TLS_NO_HSTS",
-                    new String[] {"Missing HSTS header", "The response has no Strict-Transport-Security header."},
-            "TLS_HSTS_SHORT_MAX_AGE",
+                    }),
+            Map.entry("TLS_NO_HSTS",
+                    new String[] {"Missing HSTS header", "The response has no Strict-Transport-Security header."}),
+            Map.entry("TLS_HSTS_SHORT_MAX_AGE",
                     new String[] {
                         "Weak HSTS policy",
                         "The Strict-Transport-Security header's max-age is under 6 months and/or missing includeSubDomains."
-                    },
-            "TLS_HSTS_PRELOAD_NOT_ELIGIBLE",
+                    }),
+            Map.entry("TLS_HSTS_PRELOAD_NOT_ELIGIBLE",
                     new String[] {
                         "HSTS preload token present without meeting preload requirements",
                         "The Strict-Transport-Security header includes the preload token, but hstspreload.org "
@@ -225,21 +256,36 @@ public final class TlsDecisionLogic {
                                 + "1 year and includeSubDomains before it will accept a submission. The token gives a "
                                 + "false sense of protection: browsers ignore it entirely unless the site is actually "
                                 + "on the list, and it won't be while the underlying policy is this weak."
-                    },
-            "TLS_CERT_HOSTNAME_MISMATCH",
+                    }),
+            Map.entry("TLS_CERT_HOSTNAME_MISMATCH",
                     new String[] {
                         "TLS certificate does not match hostname",
                         "The certificate presented for this host is not valid for its name - none of its Subject "
                                 + "Alternative Names cover it. Every browser and API client will refuse the connection "
                                 + "(or users will be trained to click through warnings); the host is typically serving "
                                 + "another site's certificate through a shared load balancer or a copy-pasted config."
-                    },
-            "TLS_CT_UNEXPECTED_ISSUER",
+                    }),
+            Map.entry("TLS_CT_UNEXPECTED_ISSUER",
                     new String[] {
                         "Certificate issued by an unrecognized CA",
                         "The presented certificate was issued by a Certificate Authority outside a curated list of "
                                 + "major, well-known public CAs. This can be entirely legitimate, but is also a "
                                 + "pattern seen with MITM interception, phishing infrastructure impersonating this "
                                 + "domain, or a misconfigured issuance pipeline - worth a human review."
-                    });
+                    }),
+            Map.entry("TLS_CERT_SIGNATURE_ALGORITHM_WEAK",
+                    new String[] {
+                        "Certificate signed with a weak signature algorithm",
+                        "The certificate is signed using MD5 or SHA-1, both of which are cryptographically broken "
+                                + "for signature purposes and are no longer trusted by modern browsers - a "
+                                + "forged certificate with a colliding signature is feasible for an attacker with "
+                                + "sufficient resources."
+                    }),
+            Map.entry("TLS_CERT_KEY_TOO_SHORT",
+                    new String[] {
+                        "Certificate public key too short",
+                        "The certificate's RSA/DSA public key is under 2048 bits, below the minimum modern CAs and "
+                                + "browsers require - a key this size is within range of being factored, undermining "
+                                + "every guarantee the certificate is meant to provide."
+                    }));
 }

@@ -146,6 +146,14 @@ public final class ExposedPathDecisionLogic {
         addIfMatches(findings, hostname, r, "EXPOSURE_SECURITY_TXT_PRESENT", baselineBody, b -> b.contains("Contact:"));
         addIfMatches(findings, hostname, r, "EXPOSURE_DS_STORE", baselineBody, ExposedPathDecisionLogic::looksLikeDsStore);
         addIfMatches(findings, hostname, r, "EXPOSURE_DIRECTORY_LISTING", baselineBody, ExposedPathDecisionLogic::looksLikeDirectoryListing);
+        addIfMatches(findings, hostname, r, "EXPOSURE_BACKUP_ARCHIVE", baselineBody,
+                b -> looksLikeArchive(b, r.get("EXPOSURE_BACKUP_ARCHIVE")));
+        addIfMatches(findings, hostname, r, "EXPOSURE_SQL_DUMP_FILE", baselineBody, ExposedPathDecisionLogic::looksLikeSqlDump);
+        addIfMatches(findings, hostname, r, "EXPOSURE_PHP_INFO", baselineBody,
+                b -> b.contains("phpinfo()") && b.contains("PHP Version"));
+        addIfMatches(findings, hostname, r, "EXPOSURE_SSH_PRIVATE_KEY", baselineBody, ExposedPathDecisionLogic::looksLikePrivateKey);
+        addIfMatches(findings, hostname, r, "EXPOSURE_PROMETHEUS_METRICS", baselineBody,
+                b -> b.contains("# HELP ") && b.contains("# TYPE "));
 
         // Alt-port probes: different port/protocol than the baseline probe, so no soft-404-dupe guard applies -
         // the content signature (a specific JSON shape) is the sole, sufficient guard here.
@@ -157,6 +165,17 @@ public final class ExposedPathDecisionLogic {
 
         if (isRedisPositive(result.redisResponse())) {
             findings.add(finding("EXPOSURE_REDIS_UNAUTH", hostname + ":6379", Map.of()));
+        }
+
+        // No soft-404/baseline-dupe guard needed here, same reasoning as the alt-port checks
+        // above: each of these URLs is unique to the script it was derived from, and the positive
+        // signature (a genuine source-map JSON shape) is specific enough on its own that a generic
+        // catch-all page could only false-positive by coincidentally containing all three markers.
+        for (Map.Entry<String, ProbeResponse> entry : result.sourceMapResponses().entrySet()) {
+            ProbeResponse mapResponse = entry.getValue();
+            if (mapResponse != null && mapResponse.status() == 200 && looksLikeSourceMap(mapResponse.body())) {
+                findings.add(finding("EXPOSURE_JS_SOURCE_MAP", entry.getKey() + ".map", mapResponse));
+            }
         }
 
         return findings;
@@ -317,6 +336,48 @@ public final class ExposedPathDecisionLogic {
         return body.contains("Index of /");
     }
 
+    /**
+     * ZIP's own magic bytes ("PK\x03\x04"/"PK\x05\x06"/"PK\x07\x08") are all pure ASCII in their
+     * first two bytes and only single-byte control characters after - unlike gzip's magic (0x1f
+     * 0x8b), where the second byte is outside the ASCII range and gets mangled by this codebase's
+     * lossy UTF-8 body decoding (same reasoning as {@link #looksLikeDsStore}'s own javadoc on why
+     * "Bud1" alone is checked). So the body-prefix check only reliably covers ZIP; a gzip/tar
+     * archive is instead caught via its Content-Type, which servers set correctly far more
+     * consistently for a binary download than for, say, a JSON API error page.
+     */
+    static boolean looksLikeArchive(String body, ProbeResponse response) {
+        if (body != null && body.startsWith("PK")) {
+            return true;
+        }
+        if (response == null || response.contentType() == null) {
+            return false;
+        }
+        String ct = response.contentType().toLowerCase(Locale.ROOT);
+        return ct.contains("zip") || ct.contains("gzip") || ct.contains("x-tar") || ct.contains("x-compressed");
+    }
+
+    /** A handful of phrases that appear verbatim near the top of a real mysqldump/pg_dump output - specific enough that an unrelated page mentioning "CREATE TABLE" in passing (documentation, a blog post) won't also match every one of them. */
+    static boolean looksLikeSqlDump(String body) {
+        return body.contains("-- MySQL dump")
+                || body.contains("-- PostgreSQL database dump")
+                || body.contains("CREATE TABLE IF NOT EXISTS")
+                || (body.contains("CREATE TABLE") && body.contains("INSERT INTO"));
+    }
+
+    /** PEM's own header line is the standard, format-defining marker for every private-key flavor (RSA/DSA/EC/OpenSSH/PKCS8) - a file without one, however it's named, isn't a private key in this format. */
+    static boolean looksLikePrivateKey(String body) {
+        return body.contains("-----BEGIN RSA PRIVATE KEY-----")
+                || body.contains("-----BEGIN OPENSSH PRIVATE KEY-----")
+                || body.contains("-----BEGIN DSA PRIVATE KEY-----")
+                || body.contains("-----BEGIN EC PRIVATE KEY-----")
+                || body.contains("-----BEGIN PRIVATE KEY-----");
+    }
+
+    /** "mappings"/"sources"/"version":3 together are the source-map spec's own defining shape - an unrelated JSON response would need to coincidentally contain all three to false-positive. */
+    static boolean looksLikeSourceMap(String body) {
+        return body != null && body.contains("\"mappings\"") && body.contains("\"sources\"") && body.contains("\"version\":3");
+    }
+
     /** A NOAUTH/ERR refusal means "properly secured" - not a finding; only a genuine bulk-string INFO reply counts. */
     static boolean isRedisPositive(String redisResponse) {
         return redisResponse != null && redisResponse.startsWith("$") && redisResponse.contains("redis_version:");
@@ -435,6 +496,32 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
                     "The Consul HTTP API is reachable without authentication.")),
+            Map.entry("EXPOSURE_BACKUP_ARCHIVE", new RuleMeta(Severity.CRITICAL,
+                    "Exposed backup archive",
+                    "A publicly readable backup archive (.zip/.tar.gz) was found at a commonly-guessed path, "
+                            + "potentially containing the full site source, configuration, or a database export.")),
+            Map.entry("EXPOSURE_SQL_DUMP_FILE", new RuleMeta(Severity.CRITICAL,
+                    "Exposed SQL database dump",
+                    "A publicly readable SQL dump file was found at a commonly-guessed path, directly disclosing "
+                            + "database contents.")),
+            Map.entry("EXPOSURE_PHP_INFO", new RuleMeta(Severity.HIGH,
+                    "phpinfo() page exposed",
+                    "A publicly reachable phpinfo() page discloses detailed server configuration - loaded "
+                            + "extensions, filesystem paths, and sometimes environment variables containing secrets.")),
+            Map.entry("EXPOSURE_SSH_PRIVATE_KEY", new RuleMeta(Severity.CRITICAL,
+                    "Exposed private key file",
+                    "A publicly readable PEM-format private key (RSA/DSA/EC/OpenSSH) was found at a commonly-"
+                            + "guessed path, potentially allowing SSH access or TLS impersonation.")),
+            Map.entry("EXPOSURE_PROMETHEUS_METRICS", new RuleMeta(Severity.MEDIUM,
+                    "Prometheus metrics endpoint exposed",
+                    "An unauthenticated /metrics endpoint in Prometheus's text exposition format is publicly "
+                            + "reachable, disclosing internal service names, request counts, and other operational "
+                            + "telemetry useful for reconnaissance.")),
+            Map.entry("EXPOSURE_JS_SOURCE_MAP", new RuleMeta(Severity.MEDIUM,
+                    "JavaScript source map exposed",
+                    "A publicly readable source map for one of this page's own JS bundles was found, disclosing "
+                            + "the original, unminified source code - including any comments, internal file/folder "
+                            + "structure, and business logic the build process would otherwise have stripped out.")),
             Map.entry("EXPOSURE_LIVE_SECRET_DETECTED", new RuleMeta(Severity.CRITICAL,
                     "Live-looking secret found in exposed file",
                     "The contents of an already-exposed file (.env, .git/config, or AWS credentials) contain one "

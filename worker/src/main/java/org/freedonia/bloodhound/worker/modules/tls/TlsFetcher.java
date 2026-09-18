@@ -7,9 +7,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.DSAPublicKey;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -104,7 +107,31 @@ public class TlsFetcher {
                 hsts.headerValue(),
                 capture.issuer(),
                 weakCipher,
-                capture.dnsNames());
+                capture.dnsNames(),
+                capture.sigAlgName(),
+                capture.publicKeyAlgorithm(),
+                capture.publicKeyBits());
+    }
+
+    /** Only RSA/DSA key sizes are meaningful to compare against a fixed bit-length floor - an EC key of 256 bits is not weak the way an RSA key of 256 bits would be (roughly equivalent strength to a 3072-bit RSA key), so this deliberately returns null (not evaluated) for anything else. */
+    private static String publicKeyAlgorithm(PublicKey key) {
+        if (key instanceof RSAPublicKey) {
+            return "RSA";
+        }
+        if (key instanceof DSAPublicKey) {
+            return "DSA";
+        }
+        return key.getAlgorithm();
+    }
+
+    private static Integer publicKeyBits(PublicKey key) {
+        if (key instanceof RSAPublicKey rsa) {
+            return rsa.getModulus().bitLength();
+        }
+        if (key instanceof DSAPublicKey dsa) {
+            return dsa.getParams().getP().bitLength();
+        }
+        return null;
     }
 
     /** The one connection that must succeed - if we can't even complete a permissive handshake, the module fails outright. */
@@ -122,7 +149,10 @@ public class TlsFetcher {
                         session.getCipherSuite(),
                         issuer,
                         socket.getInetAddress().getHostAddress(),
-                        dnsNames(leaf));
+                        dnsNames(leaf),
+                        leaf.getSigAlgName(),
+                        publicKeyAlgorithm(leaf.getPublicKey()),
+                        publicKeyBits(leaf.getPublicKey()));
             }
         } catch (Exception e) {
             throw new ScanModuleException("TLS handshake failed for " + hostname + ":" + PORT, e);
@@ -273,7 +303,14 @@ public class TlsFetcher {
 
     /** connectedAddress: the SafeAddressValidator-resolved IP this handshake actually used - reused by the zgrab2 probe so it can't resolve differently. */
     private record CapturedHandshake(
-            java.time.Instant notAfter, String cipherSuite, String issuer, String connectedAddress, List<String> dnsNames) {}
+            java.time.Instant notAfter,
+            String cipherSuite,
+            String issuer,
+            String connectedAddress,
+            List<String> dnsNames,
+            String sigAlgName,
+            String publicKeyAlgorithm,
+            Integer publicKeyBits) {}
 
     private record HstsResult(boolean reachable, String headerValue) {}
 }

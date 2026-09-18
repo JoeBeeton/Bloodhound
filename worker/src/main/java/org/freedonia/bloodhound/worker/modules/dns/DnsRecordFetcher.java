@@ -10,6 +10,7 @@ import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.worker.modules.common.FallbackDnsLookup;
+import org.xbill.DNS.MXRecord;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.TXTRecord;
 import org.xbill.DNS.Type;
@@ -80,9 +81,32 @@ public class DnsRecordFetcher {
         }
 
         boolean wildcard = probeWildcard(hostname);
+        List<String> danglingMx = findDanglingMxHosts(hostname);
 
         return new DnsRecords(
-                txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound, wildcard);
+                txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound,
+                wildcard, danglingMx);
+    }
+
+    /**
+     * MX targets that don't resolve at all (no A, no AAAA) - the same takeover shape
+     * SUBDOMAIN_DANGLING_CNAME already covers for CNAMEs, applied to mail routing instead: a
+     * dangling MX still means "this domain accepts mail routed to a host nobody controls
+     * anymore," which anyone able to register or re-point that dangling name can intercept.
+     */
+    private List<String> findDanglingMxHosts(String hostname) {
+        List<String> dangling = new ArrayList<>();
+        for (Record record : queryRecords(hostname, Type.MX)) {
+            if (!(record instanceof MXRecord mx)) {
+                continue;
+            }
+            String target = mx.getTarget().toString(true);
+            boolean resolves = !queryRecords(target, Type.A).isEmpty() || !queryRecords(target, Type.AAAA).isEmpty();
+            if (!resolves) {
+                dangling.add(target);
+            }
+        }
+        return dangling;
     }
 
     /** A definitely-nonexistent name resolving at all means the zone has wildcard DNS configured on its apex. */

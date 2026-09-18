@@ -433,4 +433,129 @@ class ExposedPathDecisionLogicTest {
                 BASELINE_404, Map.of("EXPOSURE_DIRECTORY_LISTING", new ProbeResponse(200, "text/html", 9L, "not found")));
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DIRECTORY_LISTING");
     }
+
+    @Test
+    void backupArchive_zipMagicBytes_flaggedCritical() {
+        String body = "PK" + "rest of a real zip's local file header, not valid UTF-8 in practice";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_BACKUP_ARCHIVE", new ProbeResponse(200, "application/octet-stream", 40L, body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_BACKUP_ARCHIVE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void backupArchive_gzipContentTypeNoMagicBytesInBody_stillFlagged() {
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_BACKUP_ARCHIVE", new ProbeResponse(200, "application/gzip", 40L, "unreadable binary")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).contains("EXPOSURE_BACKUP_ARCHIVE");
+    }
+
+    @Test
+    void backupArchive_plainHtmlNotAnArchive_notFlagged() {
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_BACKUP_ARCHIVE", new ProbeResponse(200, "text/html", 20L, "<html>a real site</html>")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_BACKUP_ARCHIVE");
+    }
+
+    @Test
+    void sqlDumpFile_mysqlDumpHeader_flaggedCritical() {
+        String body = "-- MySQL dump 10.13  Distrib 8.0.33\nCREATE TABLE `users` (...);\nINSERT INTO `users` VALUES (1);";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_SQL_DUMP_FILE", new ProbeResponse(200, "application/sql", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SQL_DUMP_FILE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void sqlDumpFile_unrelatedPageMentioningCreateTable_notFlagged() {
+        String body = "<html><body>Our docs explain how to use CREATE TABLE in SQL.</body></html>";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_SQL_DUMP_FILE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SQL_DUMP_FILE");
+    }
+
+    @Test
+    void phpInfo_realPhpinfoMarkers_flaggedHigh() {
+        String body = "<html><head><title>phpinfo()</title></head><body><h1>PHP Version 8.2.1</h1></body></html>";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_PHP_INFO", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_PHP_INFO");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+        });
+    }
+
+    @Test
+    void sshPrivateKey_pemHeader_flaggedCritical() {
+        String body = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n-----END OPENSSH PRIVATE KEY-----";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_SSH_PRIVATE_KEY", new ProbeResponse(200, "application/octet-stream", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SSH_PRIVATE_KEY");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void prometheusMetrics_realExpositionFormat_flaggedMedium() {
+        String body = "# HELP http_requests_total Total HTTP requests\n# TYPE http_requests_total counter\nhttp_requests_total 1027";
+        ExposedPathFetchResult result =
+                resultWith(BASELINE_404, Map.of("EXPOSURE_PROMETHEUS_METRICS", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_PROMETHEUS_METRICS");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void prometheusMetrics_plainTextWithoutExpositionMarkers_notFlagged() {
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_PROMETHEUS_METRICS", new ProbeResponse(200, "text/plain", 20L, "just some plain text")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_PROMETHEUS_METRICS");
+    }
+
+    @Test
+    void jsSourceMap_genuineSourceMapShape_flaggedMedium() {
+        String body = "{\"version\":3,\"sources\":[\"webpack:///./src/App.js\"],\"mappings\":\"AAAA\"}";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of("https://example.com/static/main.abc123.js", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_JS_SOURCE_MAP");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.affectedAsset()).isEqualTo("https://example.com/static/main.abc123.js.map");
+        });
+    }
+
+    @Test
+    void jsSourceMap_404Response_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of("https://example.com/static/main.abc123.js", new ProbeResponse(404, "text/html", 9L, "not found")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JS_SOURCE_MAP");
+    }
+
+    @Test
+    void jsSourceMap_200ButNotSourceMapShaped_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of("https://example.com/static/main.abc123.js", new ProbeResponse(200, "text/html", 20L, "<html>a real site</html>")));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JS_SOURCE_MAP");
+    }
 }

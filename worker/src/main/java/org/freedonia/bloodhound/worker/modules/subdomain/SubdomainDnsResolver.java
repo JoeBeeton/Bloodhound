@@ -15,6 +15,7 @@ import org.xbill.DNS.ARecord;
 import org.xbill.DNS.AAAARecord;
 import org.xbill.DNS.CNAMERecord;
 import org.xbill.DNS.Lookup;
+import org.xbill.DNS.MXRecord;
 import org.xbill.DNS.NSRecord;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
@@ -171,6 +172,66 @@ public class SubdomainDnsResolver {
             return results;
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Resolves MX target hostnames for a batch of domains, same bounded-pool shape as
+     * {@link #resolveAll}. Most typosquat candidates have none at all (a resolving domain with no
+     * mail routing configured) - those simply come back absent from the map, not as an error.
+     */
+    public Map<String, List<String>> resolveMxHosts(Collection<String> hostnames) {
+        if (hostnames.isEmpty()) {
+            return Map.of();
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(POOL_SIZE, hostnames.size()));
+        try {
+            Map<String, Future<List<String>>> futures = new LinkedHashMap<>();
+            for (String hostname : hostnames) {
+                futures.put(hostname, pool.submit(() -> resolveMxOne(hostname)));
+            }
+            Map<String, List<String>> results = new LinkedHashMap<>();
+            for (Map.Entry<String, Future<List<String>>> entry : futures.entrySet()) {
+                try {
+                    List<String> mx = entry.getValue().get(PER_LOOKUP_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+                    if (!mx.isEmpty()) {
+                        results.put(entry.getKey(), mx);
+                    }
+                } catch (Exception ignored) {
+                    // no MX records, timed out, or resolution failed - treated the same as "no mail routing".
+                }
+            }
+            return results;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private List<String> resolveMxOne(String hostname) {
+        List<String> primary = mxRecords(hostname, resolver);
+        if (!primary.isEmpty() || systemResolver == null) {
+            return primary;
+        }
+        return mxRecords(hostname, systemResolver);
+    }
+
+    private List<String> mxRecords(String hostname, Resolver r) {
+        try {
+            Lookup lookup = new Lookup(hostname, Type.MX);
+            lookup.setResolver(r);
+            Record[] records = lookup.run();
+            if (records == null) {
+                return List.of();
+            }
+            List<String> targets = new ArrayList<>();
+            for (Record record : records) {
+                if (record instanceof MXRecord mx) {
+                    targets.add(mx.getTarget().toString(true));
+                }
+            }
+            return targets;
+        } catch (Exception e) {
+            return List.of();
         }
     }
 
