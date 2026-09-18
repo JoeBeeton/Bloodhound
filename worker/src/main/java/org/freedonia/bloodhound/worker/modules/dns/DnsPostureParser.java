@@ -33,8 +33,17 @@ public final class DnsPostureParser {
                 .findFirst();
         if (dmarc.isEmpty()) {
             findings.add(finding("DNS_DMARC_MISSING", Severity.HIGH, dmarcHost, Map.of()));
-        } else if (dmarc.get().toLowerCase().contains("p=none")) {
-            findings.add(finding("DNS_DMARC_POLICY_NONE", Severity.MEDIUM, dmarcHost, Map.of("record", dmarc.get())));
+        } else {
+            String v = dmarc.get().toLowerCase();
+            // Independent of the p=none check below - a record can have p=reject and still have
+            // nobody watching aggregate reports, or p=none with reports configured. Both gaps
+            // matter on their own.
+            if (v.contains("p=none")) {
+                findings.add(finding("DNS_DMARC_POLICY_NONE", Severity.MEDIUM, dmarcHost, Map.of("record", dmarc.get())));
+            }
+            if (!v.contains("rua=")) {
+                findings.add(finding("EMAIL_DMARC_RUA_MISSING", Severity.LOW, dmarcHost, Map.of("record", dmarc.get())));
+            }
         }
 
         if (!records.caaPresent()) {
@@ -70,6 +79,14 @@ public final class DnsPostureParser {
             // "not detected" here, same caveat every ASM tool has for this
             // check - kept at LOW severity to reflect that low confidence.
             findings.add(finding("DNS_DKIM_NOT_DETECTED", Severity.LOW, hostname, Map.of()));
+        }
+
+        for (String danglingHost : records.danglingMxHosts()) {
+            findings.add(finding(
+                    "DNS_MX_TO_DANGLING_HOST",
+                    Severity.HIGH,
+                    danglingHost,
+                    Map.of("mxHost", danglingHost)));
         }
 
         if (records.wildcardDnsDetected()) {
@@ -156,6 +173,24 @@ public final class DnsPostureParser {
                         "No default._bimi TXT record was found. BIMI lets supporting mail clients display a "
                                 + "verified brand logo next to authenticated mail from this domain - its absence is "
                                 + "a maturity signal, not a vulnerability."
+                    }),
+            Map.entry(
+                    "EMAIL_DMARC_RUA_MISSING",
+                    new String[] {
+                        "DMARC record has no aggregate report address",
+                        "A DMARC record exists but has no rua= tag, so nobody receives aggregate reports of "
+                                + "authentication failures - even a strict p=reject policy is running with no "
+                                + "visibility into what's actually being blocked or who's sending unauthenticated "
+                                + "mail as this domain."
+                    }),
+            Map.entry(
+                    "DNS_MX_TO_DANGLING_HOST",
+                    new String[] {
+                        "MX record points to a non-resolving host",
+                        "This domain's MX record points to a mail server hostname that no longer resolves (no A "
+                                + "or AAAA record) - the same takeover shape as a dangling CNAME, applied to mail "
+                                + "routing: anyone able to register or re-point that abandoned hostname could "
+                                + "intercept mail addressed to this domain."
                     }),
             Map.entry(
                     "DNS_DKIM_NOT_DETECTED",

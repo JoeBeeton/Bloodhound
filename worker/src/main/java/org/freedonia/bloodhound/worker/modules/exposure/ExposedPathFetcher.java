@@ -11,15 +11,19 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.worker.ratelimit.HostnameRateLimiter;
@@ -66,6 +70,15 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get(
                     "EXPOSURE_DIRECTORY_LISTING",
                     List.of("/backup/", "/backups/", "/uploads/", "/files/", "/old/", "/tmp/", "/logs/", "/assets/", "/images/")),
+            ExposureProbeSpec.get(
+                    "EXPOSURE_BACKUP_ARCHIVE",
+                    List.of("/backup.zip", "/www.zip", "/site.zip", "/backup.tar.gz", "/www.tar.gz")),
+            ExposureProbeSpec.get(
+                    "EXPOSURE_SQL_DUMP_FILE",
+                    List.of("/backup.sql", "/db.sql", "/database.sql", "/dump.sql", "/site.sql")),
+            ExposureProbeSpec.get("EXPOSURE_PHP_INFO", List.of("/phpinfo.php", "/info.php", "/php_info.php", "/test.php")),
+            ExposureProbeSpec.get("EXPOSURE_SSH_PRIVATE_KEY", List.of("/id_rsa", "/.ssh/id_rsa", "/id_dsa", "/server.key", "/private.key")),
+            ExposureProbeSpec.get("EXPOSURE_PROMETHEUS_METRICS", List.of("/metrics")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             ExposureProbeSpec.altPort("EXPOSURE_ELASTICSEARCH_UNAUTH", "/", 9200),
             ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500));
@@ -93,7 +106,85 @@ public class ExposedPathFetcher {
         }
 
         String redisResponse = probeRedis(hostname);
-        return new ExposedPathFetchResult(baseline, responses, redisResponse);
+        Map<String, ProbeResponse> sourceMapResponses = fetchSourceMapCandidates(hostname);
+        return new ExposedPathFetchResult(baseline, responses, redisResponse, sourceMapResponses);
+    }
+
+    /** Same-host {@code <script src>} URLs referenced by the homepage, capped and bounded - the input to EXPOSURE_JS_SOURCE_MAP. */
+    private static final Pattern SCRIPT_SRC_PATTERN = Pattern.compile("(?i)<script\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"']");
+    private static final int MAX_SOURCE_MAP_PROBES = 6;
+
+    /**
+     * Unlike every other check in this class, a source map isn't reachable at a fixed, guessable
+     * path - modern bundlers (Next.js, webpack, Vite) emit a content-hashed filename per build, so
+     * the only way to find one is to fetch the homepage, read which JS files it actually
+     * references, and check whether each one's own ".map" counterpart is also publicly served.
+     * Same-host only (never follows a script src to a different origin - that's a CDN/third-party
+     * script, not this target's own build output, and fetching it would be exactly the kind of
+     * SSRF-adjacent "connect wherever a response on this page happens to point" this codebase's
+     * same-host discipline exists to avoid), and bounded to MAX_SOURCE_MAP_PROBES distinct scripts
+     * so a page with dozens of chunks doesn't balloon this module's request count.
+     */
+    private Map<String, ProbeResponse> fetchSourceMapCandidates(String hostname) {
+        ProbeResponse homepage = probe(hostname, "/", "GET", null, null, false);
+        if (homepage.body() == null || homepage.url() == null) {
+            return Map.of();
+        }
+        Set<String> scriptUrls = extractSameHostScriptUrls(hostname, homepage.url(), homepage.body());
+        if (scriptUrls.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, ProbeResponse> results = new ConcurrentHashMap<>();
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(4, scriptUrls.size()));
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (String scriptUrl : scriptUrls) {
+                futures.add(pool.submit(() -> results.put(scriptUrl, probeAbsoluteUrl(scriptUrl + ".map"))));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get(15, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // leaves that script's entry absent; decision logic treats a missing entry as "no finding"
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        return results;
+    }
+
+    private static Set<String> extractSameHostScriptUrls(String hostname, String homepageUrl, String body) {
+        URI base = URI.create(homepageUrl);
+        Set<String> result = new LinkedHashSet<>();
+        Matcher m = SCRIPT_SRC_PATTERN.matcher(body);
+        while (m.find() && result.size() < MAX_SOURCE_MAP_PROBES) {
+            String src = m.group(1);
+            if (src.startsWith("data:")) {
+                continue;
+            }
+            try {
+                URI resolved = base.resolve(src);
+                if (hostname.equalsIgnoreCase(resolved.getHost())
+                        && resolved.getPath() != null
+                        && resolved.getPath().endsWith(".js")) {
+                    result.add(resolved.toString());
+                }
+            } catch (Exception ignored) {
+                // an unparseable src attribute just isn't probed - not fatal to the rest of the page
+            }
+        }
+        return result;
+    }
+
+    private ProbeResponse probeAbsoluteUrl(String url) {
+        URI uri = URI.create(url);
+        HostnameRateLimiter.shared().acquire(uri.getHost());
+        try {
+            return doProbe(uri, "GET", null, false, false);
+        } catch (Exception e) {
+            return ProbeResponse.unreachable();
+        }
     }
 
     private ProbeResponse fetchFirstMatch(String hostname, ExposureProbeSpec spec) {

@@ -273,4 +273,67 @@ class TlsDecisionLogicTest {
         assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
                 .doesNotContain("TLS_CERT_HOSTNAME_MISMATCH");
     }
+
+    private static TlsFetchResult withSignatureAndKey(String sigAlg, String keyAlg, Integer keyBits) {
+        return new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, sigAlg, keyAlg, keyBits);
+    }
+
+    @Test
+    void sha1SignedCertificate_flaggedHigh() {
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", withSignatureAndKey("SHA1withRSA", "RSA", 2048), NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_CERT_SIGNATURE_ALGORITHM_WEAK");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.evidence()).containsEntry("signatureAlgorithm", "SHA1withRSA");
+        });
+    }
+
+    @Test
+    void md5SignedCertificate_flaggedHigh() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", withSignatureAndKey("MD5withRSA", "RSA", 2048), NOW)))
+                .contains("TLS_CERT_SIGNATURE_ALGORITHM_WEAK");
+    }
+
+    @Test
+    void sha256SignedCertificate_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", withSignatureAndKey("SHA256withRSA", "RSA", 2048), NOW)))
+                .doesNotContain("TLS_CERT_SIGNATURE_ALGORITHM_WEAK");
+    }
+
+    @Test
+    void unknownSignatureAlgorithm_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_CERT_SIGNATURE_ALGORITHM_WEAK");
+    }
+
+    @Test
+    void rsa1024BitKey_flaggedHigh() {
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", withSignatureAndKey("SHA256withRSA", "RSA", 1024), NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_CERT_KEY_TOO_SHORT");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.evidence()).containsEntry("publicKeyBits", 1024);
+        });
+    }
+
+    @Test
+    void rsa2048BitKey_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", withSignatureAndKey("SHA256withRSA", "RSA", 2048), NOW)))
+                .doesNotContain("TLS_CERT_KEY_TOO_SHORT");
+    }
+
+    /** A 256-bit EC key is roughly as strong as a 3072-bit RSA key - the fixed bit-length floor only applies to RSA/DSA. */
+    @Test
+    void ecKeySmallBitLength_notFlaggedAsTooShort() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", withSignatureAndKey("SHA256withECDSA", "EC", 256), NOW)))
+                .doesNotContain("TLS_CERT_KEY_TOO_SHORT");
+    }
+
+    @Test
+    void unknownKeyInfo_notFlaggedAsTooShort() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_CERT_KEY_TOO_SHORT");
+    }
 }

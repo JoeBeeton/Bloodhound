@@ -46,7 +46,8 @@ public class TyposquatChecker {
             Instant registrationDate,
             boolean wildcardArtifact,
             byte[] screenshotPng,
-            Integer visualSimilarityPercent) {}
+            Integer visualSimilarityPercent,
+            boolean mxConfigured) {}
 
     /** realSiteScreenshotPng is null whenever no candidate ended up genuine enough to need the comparison baseline at all. */
     public record CheckResult(byte[] realSiteScreenshotPng, List<CheckedCandidate> candidates) {}
@@ -116,12 +117,26 @@ public class TyposquatChecker {
             realSiteHash = PerceptualHash.hash(realScreenshot);
         }
 
+        // Batched upfront (same shape as the IP resolution above), not per-candidate in the loop
+        // below - only for genuine candidates, since a wildcard-artifact or non-resolving one is
+        // never going to produce a finding regardless of its MX configuration.
+        List<String> genuineDomains = candidates.stream()
+                .map(PermutationGenerator.Candidate::domain)
+                .filter(domain -> {
+                    List<String> ips = resolved.getOrDefault(domain, List.of());
+                    return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(domain));
+                })
+                .toList();
+        Map<String, List<String>> mxHosts =
+                genuineDomains.isEmpty() ? Map.of() : dnsResolver.resolveMxHosts(genuineDomains);
+
         List<CheckedCandidate> result = new ArrayList<>();
         for (PermutationGenerator.Candidate candidate : candidates) {
             List<String> ips = resolved.getOrDefault(candidate.domain(), List.of());
             boolean wildcardArtifact = !ips.isEmpty() && wildcardParents.contains(wildcardParent(candidate.domain()));
             boolean genuine = !ips.isEmpty() && !wildcardArtifact;
             Instant registrationDate = genuine ? tryWhois(candidate.domain()) : null;
+            boolean mxConfigured = mxHosts.containsKey(candidate.domain());
 
             byte[] candidateScreenshot = null;
             Integer similarity = null;
@@ -142,7 +157,8 @@ public class TyposquatChecker {
                     registrationDate,
                     wildcardArtifact,
                     candidateScreenshot,
-                    similarity));
+                    similarity,
+                    mxConfigured));
         }
         return new CheckResult(realScreenshot, result);
     }

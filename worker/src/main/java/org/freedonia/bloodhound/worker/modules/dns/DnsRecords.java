@@ -13,4 +13,5 @@ public record DnsRecords(
         boolean tlsRptTxtPresent,
         boolean bimiTxtPresent,
         List<String> dkimSelectorsFound,
-        boolean wildcardDnsDetected) {}
+        boolean wildcardDnsDetected,
+        List<String> danglingMxHosts) {}
