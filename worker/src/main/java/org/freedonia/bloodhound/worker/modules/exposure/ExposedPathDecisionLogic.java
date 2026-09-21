@@ -144,6 +144,17 @@ public final class ExposedPathDecisionLogic {
                 b -> b.contains("Groovy script") || b.contains("Script Console"));
         addIfMatches(findings, hostname, r, "EXPOSURE_KIBANA_UNAUTH", baselineBody, b -> b.contains("kbn-injected-metadata"));
         addIfMatches(findings, hostname, r, "EXPOSURE_SECURITY_TXT_PRESENT", baselineBody, b -> b.contains("Contact:"));
+        // Same already-fetched response the presence check above just used, no second probe -
+        // security.txt's own spec (RFC 9116) requires an Expires: field; a policy past that date
+        // is a stale/possibly-abandoned disclosure channel rather than a currently-maintained one.
+        ProbeResponse securityTxtResponse = r.get("EXPOSURE_SECURITY_TXT_PRESENT");
+        if (matches(securityTxtResponse, baselineBody, b -> b.contains("Contact:"))) {
+            java.time.Instant expires = parseSecurityTxtExpires(securityTxtResponse.body());
+            if (expires != null && expires.isBefore(java.time.Instant.now())) {
+                findings.add(finding(
+                        "EXPOSURE_SECURITY_TXT_EXPIRED", hostname, Map.of("expires", expires.toString())));
+            }
+        }
         addIfMatches(findings, hostname, r, "EXPOSURE_DS_STORE", baselineBody, ExposedPathDecisionLogic::looksLikeDsStore);
         addIfMatches(findings, hostname, r, "EXPOSURE_DIRECTORY_LISTING", baselineBody, ExposedPathDecisionLogic::looksLikeDirectoryListing);
         addIfMatches(findings, hostname, r, "EXPOSURE_BACKUP_ARCHIVE", baselineBody,
@@ -154,6 +165,21 @@ public final class ExposedPathDecisionLogic {
         addIfMatches(findings, hostname, r, "EXPOSURE_SSH_PRIVATE_KEY", baselineBody, ExposedPathDecisionLogic::looksLikePrivateKey);
         addIfMatches(findings, hostname, r, "EXPOSURE_PROMETHEUS_METRICS", baselineBody,
                 b -> b.contains("# HELP ") && b.contains("# TYPE "));
+        addIfMatches(findings, hostname, r, "EXPOSURE_SPRING_BOOT_H2_CONSOLE", baselineBody,
+                b -> b.contains("H2 Console") && b.contains("Driver Class"));
+        addIfMatches(findings, hostname, r, "EXPOSURE_LARAVEL_TELESCOPE", baselineBody, b -> b.contains("id=\"telescope\""));
+        addIfMatches(findings, hostname, r, "EXPOSURE_ASPNET_TRACE_AXD", baselineBody,
+                b -> b.contains("Application Trace") && b.contains("Requests to the Application"));
+        addIfMatches(findings, hostname, r, "EXPOSURE_ASPNET_ELMAH", baselineBody, b -> b.contains("Error Log for"));
+        addIfMatches(findings, hostname, r, "EXPOSURE_ADMINER", baselineBody, b -> b.contains("name=\"auth[driver]\""));
+
+        // Not a catalog probe at all: reuses the baseline's own already-fetched response (a GET
+        // to a deliberately-nonexistent path) rather than adding a new one, since the signal
+        // this check needs - "does an error page leak a full debug/stack-trace view" - is exactly
+        // what a 404 to a made-up path already exercises for free when debug mode is on.
+        if (looksLikeLaravelDebugPage(baselineBody)) {
+            findings.add(finding("EXPOSURE_LARAVEL_DEBUG_MODE", hostname, result.baseline()));
+        }
 
         // Alt-port probes: different port/protocol than the baseline probe, so no soft-404-dupe guard applies -
         // the content signature (a specific JSON shape) is the sole, sufficient guard here.
@@ -162,6 +188,16 @@ public final class ExposedPathDecisionLogic {
                 b -> b.contains("\"cluster_name\"") || b.contains("you_know_for_search"));
         addAltPortIfMatches(findings, hostname + ":8500", r, "EXPOSURE_CONSUL_UNAUTH",
                 b -> b.trim().matches("(?s)\"[0-9.]+:[0-9]+\""));
+        // Grafana/Mongo Express/Traefik's own conventional default ports - not independently
+        // live-verified against a real running instance the way some other checks in this file
+        // were (see ProductSlugMapper's own analogous caveat for an example of this codebase's
+        // convention for flagging that), worth confirming for real if these ever look
+        // suspiciously silent in production.
+        addAltPortIfMatches(findings, hostname + ":3000", r, "EXPOSURE_GRAFANA_UNAUTH",
+                b -> b.contains("\"database\"") && b.contains("\"version\""));
+        addAltPortIfMatches(findings, hostname + ":8081", r, "EXPOSURE_MONGO_EXPRESS_UNAUTH", b -> b.contains("Mongo Express"));
+        addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH",
+                b -> b.contains("\"backends\"") && b.contains("\"frontends\""));
 
         if (isRedisPositive(result.redisResponse())) {
             findings.add(finding("EXPOSURE_REDIS_UNAUTH", hostname + ":6379", Map.of()));
@@ -378,6 +414,38 @@ public final class ExposedPathDecisionLogic {
         return body != null && body.contains("\"mappings\"") && body.contains("\"sources\"") && body.contains("\"version\":3");
     }
 
+    /**
+     * Two Laravel debug-page renderers exist depending on version: older releases (<=5.4) use
+     * filp/whoops directly, newer ones wrap it in Ignition. Each marker pair requires two
+     * independent substrings so a page merely mentioning "Whoops" or "Ignition" in passing
+     * (a brand name, a blog post) can't false-positive on its own.
+     */
+    static boolean looksLikeLaravelDebugPage(String body) {
+        if (body == null) {
+            return false;
+        }
+        return (body.contains("Whoops!") && body.contains("whoops-container"))
+                || (body.contains("Ignition") && body.contains("Illuminate\\"));
+    }
+
+    /** RFC 9116's Expires field is a single ISO-8601 datetime line; absent or unparseable means "unknown", not "expired". */
+    static java.time.Instant parseSecurityTxtExpires(String body) {
+        if (body == null) {
+            return null;
+        }
+        for (String line : body.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.regionMatches(true, 0, "Expires:", 0, "Expires:".length())) {
+                try {
+                    return java.time.Instant.parse(trimmed.substring("Expires:".length()).trim());
+                } catch (java.time.format.DateTimeParseException e) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
     /** A NOAUTH/ERR refusal means "properly secured" - not a finding; only a genuine bulk-string INFO reply counts. */
     static boolean isRedisPositive(String redisResponse) {
         return redisResponse != null && redisResponse.startsWith("$") && redisResponse.contains("redis_version:");
@@ -526,5 +594,46 @@ public final class ExposedPathDecisionLogic {
                     "Live-looking secret found in exposed file",
                     "The contents of an already-exposed file (.env, .git/config, or AWS credentials) contain one "
                             + "or more strings matching known live-credential formats, confirming the exposed file "
-                            + "carries working-looking secrets, not just configuration structure.")));
+                            + "carries working-looking secrets, not just configuration structure.")),
+            Map.entry("EXPOSURE_SPRING_BOOT_H2_CONSOLE", new RuleMeta(Severity.CRITICAL,
+                    "H2 database console exposed",
+                    "The H2 embedded database's web console is publicly reachable, allowing arbitrary SQL "
+                            + "execution and, via H2's own JDBC ALIAS mechanism, remote code execution.")),
+            Map.entry("EXPOSURE_LARAVEL_TELESCOPE", new RuleMeta(Severity.HIGH,
+                    "Laravel Telescope exposed",
+                    "Laravel's Telescope debugging dashboard is publicly reachable, disclosing application "
+                            + "requests, queries, queued jobs, and exceptions - often including request "
+                            + "parameters and session/cookie data.")),
+            Map.entry("EXPOSURE_LARAVEL_DEBUG_MODE", new RuleMeta(Severity.HIGH,
+                    "Laravel debug mode enabled",
+                    "Laravel's APP_DEBUG is enabled in production, causing unhandled errors to render a full "
+                            + "stack trace - including file paths, code context, and sometimes environment "
+                            + "variables - to any visitor who triggers one.")),
+            Map.entry("EXPOSURE_ASPNET_TRACE_AXD", new RuleMeta(Severity.HIGH,
+                    "ASP.NET trace.axd exposed",
+                    "ASP.NET's trace.axd diagnostic page is publicly reachable, disclosing recent request "
+                            + "details including headers, session state, and server variables.")),
+            Map.entry("EXPOSURE_ASPNET_ELMAH", new RuleMeta(Severity.HIGH,
+                    "ASP.NET ELMAH error log exposed",
+                    "The ELMAH error-logging endpoint is publicly reachable, disclosing application exception "
+                            + "history - often including stack traces and request details.")),
+            Map.entry("EXPOSURE_ADMINER", new RuleMeta(Severity.HIGH,
+                    "Adminer database console exposed",
+                    "An Adminer database-administration login console is publicly reachable.")),
+            Map.entry("EXPOSURE_GRAFANA_UNAUTH", new RuleMeta(Severity.HIGH,
+                    "Grafana exposed without authentication",
+                    "A Grafana instance's API is reachable without authentication, disclosing dashboard "
+                            + "configuration and potentially connected data-source details.")),
+            Map.entry("EXPOSURE_MONGO_EXPRESS_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Mongo Express exposed without authentication",
+                    "A Mongo Express web console is publicly reachable without authentication, allowing full "
+                            + "read/write access to the underlying MongoDB data.")),
+            Map.entry("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", new RuleMeta(Severity.HIGH,
+                    "Traefik dashboard exposed without authentication",
+                    "The Traefik reverse-proxy dashboard/API is reachable without authentication, disclosing "
+                            + "internal backend routing and service topology.")),
+            Map.entry("EXPOSURE_SECURITY_TXT_EXPIRED", new RuleMeta(Severity.INFO,
+                    "security.txt has expired",
+                    "The published /.well-known/security.txt file's Expires field is in the past, indicating "
+                            + "the disclosure policy may be stale or no longer actively maintained.")));
 }

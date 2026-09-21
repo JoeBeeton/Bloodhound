@@ -79,9 +79,17 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_PHP_INFO", List.of("/phpinfo.php", "/info.php", "/php_info.php", "/test.php")),
             ExposureProbeSpec.get("EXPOSURE_SSH_PRIVATE_KEY", List.of("/id_rsa", "/.ssh/id_rsa", "/id_dsa", "/server.key", "/private.key")),
             ExposureProbeSpec.get("EXPOSURE_PROMETHEUS_METRICS", List.of("/metrics")),
+            ExposureProbeSpec.get("EXPOSURE_SPRING_BOOT_H2_CONSOLE", List.of("/h2-console", "/h2-console/login.jsp")),
+            ExposureProbeSpec.get("EXPOSURE_LARAVEL_TELESCOPE", List.of("/telescope", "/telescope/requests")),
+            ExposureProbeSpec.get("EXPOSURE_ASPNET_TRACE_AXD", List.of("/trace.axd")),
+            ExposureProbeSpec.get("EXPOSURE_ASPNET_ELMAH", List.of("/elmah.axd")),
+            ExposureProbeSpec.get("EXPOSURE_ADMINER", List.of("/adminer.php", "/adminer/index.php", "/adminer/")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             ExposureProbeSpec.altPort("EXPOSURE_ELASTICSEARCH_UNAUTH", "/", 9200),
-            ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500));
+            ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500),
+            ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
+            ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
+            ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080));
 
     public ExposedPathFetchResult fetch(String hostname) {
         ProbeResponse baseline =

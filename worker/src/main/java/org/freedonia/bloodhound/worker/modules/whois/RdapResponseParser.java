@@ -55,7 +55,11 @@ public final class RdapResponseParser {
                 }
             }
             Map<String, Object> raw = MAPPER.convertValue(root, Map.class);
-            return new WhoisFields(registrar, created, expiry, null, nameServers, raw, false);
+            List<String> statusCodes = new ArrayList<>();
+            for (JsonNode status : root.path("status")) {
+                statusCodes.add(status.asText());
+            }
+            return new WhoisFields(registrar, created, expiry, null, nameServers, raw, false, statusCodes);
         } catch (Exception e) {
             return WhoisFields.empty(false);
         }

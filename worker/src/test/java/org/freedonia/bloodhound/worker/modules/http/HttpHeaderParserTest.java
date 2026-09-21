@@ -21,6 +21,8 @@ class HttpHeaderParserTest {
         h.put("x-content-type-options", "nosniff");
         h.put("referrer-policy", "strict-origin-when-cross-origin");
         h.put("permissions-policy", "geolocation=()");
+        h.put("cross-origin-opener-policy", "same-origin");
+        h.put("cross-origin-resource-policy", "same-origin");
         h.put("server", "cloudflare");
         return h;
     }
@@ -32,7 +34,7 @@ class HttpHeaderParserTest {
     }
 
     @Test
-    void allHeadersMissing_flagsAllFiveHeaderRules() {
+    void allHeadersMissing_flagsAllSevenHeaderRules() {
         FetchResult result = new FetchResult(true, Map.of(), List.of());
         List<String> ids = ruleIds(HttpHeaderParser.parse("example.com", result));
         assertThat(ids)
@@ -41,7 +43,9 @@ class HttpHeaderParserTest {
                         "HEADER_XFO_MISSING",
                         "HEADER_XCTO_MISSING",
                         "HEADER_REFERRER_POLICY_MISSING",
-                        "HEADER_PERMISSIONS_POLICY_MISSING");
+                        "HEADER_PERMISSIONS_POLICY_MISSING",
+                        "HEADER_COOP_MISSING",
+                        "HEADER_CORP_MISSING");
     }
 
     @Test
@@ -91,15 +95,40 @@ class HttpHeaderParserTest {
     @Test
     void cookieWithAllFlags_flagsNothing() {
         FetchResult result = new FetchResult(
-                true, allSecureHeaders(), List.of("session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax"));
+                true, allSecureHeaders(), List.of("__Host-session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax"));
         assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
     }
 
     @Test
     void cookiePartiallyFlagged_onlyMissingAttributeReported() {
-        FetchResult result = new FetchResult(true, allSecureHeaders(), List.of("session_id=abc123; Secure; HttpOnly"));
+        FetchResult result =
+                new FetchResult(true, allSecureHeaders(), List.of("__Host-session_id=abc123; Secure; HttpOnly"));
         List<String> ids = ruleIds(HttpHeaderParser.parse("example.com", result));
         assertThat(ids).containsExactly("COOKIE_MISSING_SAMESITE");
+    }
+
+    @Test
+    void secureCookieWithoutHostOrSecurePrefix_flagged() {
+        FetchResult result = new FetchResult(
+                true, allSecureHeaders(), List.of("session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax"));
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).containsExactly("COOKIE_MISSING_HOST_PREFIX");
+    }
+
+    @Test
+    void secureCookieWithSecurePrefix_notFlagged() {
+        FetchResult result = new FetchResult(
+                true, allSecureHeaders(), List.of("__Secure-session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax"));
+        assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
+    }
+
+    @Test
+    void nonSecureCookieMissingPrefix_notDoubleFlagged() {
+        // Missing Secure entirely is already COOKIE_MISSING_SECURE_FLAG's job - the prefix check
+        // only applies once Secure is present, so this shouldn't also produce a redundant
+        // COOKIE_MISSING_HOST_PREFIX finding.
+        FetchResult result =
+                new FetchResult(true, allSecureHeaders(), List.of("session_id=abc123; HttpOnly; SameSite=Lax"));
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).containsExactly("COOKIE_MISSING_SECURE_FLAG");
     }
 
     private static FetchResult withPlainHttp(boolean https, FetchResult.PlainHttpProbe plain) {

@@ -1,9 +1,14 @@
 package org.freedonia.bloodhound.worker.modules.dns;
 
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
@@ -17,15 +22,33 @@ public final class DnsPostureParser {
         List<RawFinding> findings = new ArrayList<>();
         String dmarcHost = "_dmarc." + hostname;
 
-        Optional<String> spf =
-                records.txtRecords().stream().filter(t -> t.toLowerCase().startsWith("v=spf1")).findFirst();
-        if (spf.isEmpty()) {
+        List<String> spfRecords =
+                records.txtRecords().stream().filter(t -> t.toLowerCase().startsWith("v=spf1")).toList();
+        if (spfRecords.isEmpty()) {
             findings.add(finding("DNS_SPF_MISSING", Severity.HIGH, hostname, Map.of()));
         } else {
-            String v = spf.get().toLowerCase();
-            if (v.endsWith("+all") || v.endsWith("?all")) {
-                findings.add(finding("DNS_SPF_TOO_PERMISSIVE", Severity.MEDIUM, hostname, Map.of("record", spf.get())));
+            // RFC 7208 4.5: more than one SPF-type TXT record makes the domain's SPF evaluate to
+            // PermError regardless of what either record says - "broken", not merely "weak",
+            // independent of and worth reporting alongside the permissiveness check below (which
+            // still runs against the first record, since that's what most implementations
+            // actually read before failing).
+            if (spfRecords.size() > 1) {
+                findings.add(finding(
+                        "DNS_SPF_MULTIPLE_RECORDS", Severity.HIGH, hostname, Map.of("records", spfRecords)));
             }
+            String v = spfRecords.get(0).toLowerCase();
+            if (v.endsWith("+all") || v.endsWith("?all")) {
+                findings.add(finding(
+                        "DNS_SPF_TOO_PERMISSIVE", Severity.MEDIUM, hostname, Map.of("record", spfRecords.get(0))));
+            }
+        }
+
+        for (String danglingInclude : records.danglingSpfIncludes()) {
+            findings.add(finding(
+                    "DNS_SPF_INCLUDE_DANGLING",
+                    Severity.HIGH,
+                    danglingInclude,
+                    Map.of("includeDomain", danglingInclude)));
         }
 
         Optional<String> dmarc = records.dmarcTxtRecords().stream()
@@ -43,6 +66,15 @@ public final class DnsPostureParser {
             }
             if (!v.contains("rua=")) {
                 findings.add(finding("EMAIL_DMARC_RUA_MISSING", Severity.LOW, dmarcHost, Map.of("record", dmarc.get())));
+            }
+            // pct= defaults to 100 per RFC 7489 5.3 when absent - only a record that explicitly
+            // sets it below 100 is a real gap (enforcement applies to just a sampled fraction of
+            // mail), never its mere absence.
+            Integer pct = parsePct(v);
+            if (pct != null && pct < 100) {
+                findings.add(finding(
+                        "EMAIL_DMARC_PCT_BELOW_100", Severity.LOW, dmarcHost,
+                        Map.of("record", dmarc.get(), "pct", pct)));
             }
         }
 
@@ -89,6 +121,20 @@ public final class DnsPostureParser {
                     Map.of("mxHost", danglingHost)));
         }
 
+        if (records.soaSerial() != null) {
+            LocalDate encoded = tryParseSoaSerialAsDate(records.soaSerial());
+            if (encoded != null) {
+                long yearsOld = ChronoUnit.YEARS.between(encoded, LocalDate.now(ZoneOffset.UTC));
+                if (yearsOld >= 2) {
+                    findings.add(finding(
+                            "DNS_SOA_SERIAL_STALE",
+                            Severity.LOW,
+                            hostname,
+                            Map.of("serial", records.soaSerial(), "encodedDate", encoded.toString())));
+                }
+            }
+        }
+
         if (records.wildcardDnsDetected()) {
             // Emitted from here (not SubdomainEnumModule) since it's a
             // single apex-level DNS probe with no per-subdomain fan-out
@@ -107,6 +153,41 @@ public final class DnsPostureParser {
         }
 
         return findings;
+    }
+
+    private static final Pattern PCT_PATTERN = Pattern.compile("pct=(\\d{1,3})");
+
+    private static Integer parsePct(String dmarcRecordLowercase) {
+        Matcher m = PCT_PATTERN.matcher(dmarcRecordLowercase);
+        return m.find() ? Integer.parseInt(m.group(1)) : null;
+    }
+
+    /**
+     * Interprets a SOA serial under the near-universal YYYYMMDDnn convention (the two trailing
+     * digits are a same-day revision counter) - not every zone actually follows it (a plain
+     * incrementing integer is equally valid per RFC 1035), so this only returns a date when the
+     * serial is exactly 10 digits AND those digits form a real calendar date within a sane range
+     * (1990 through the current year) - anything else (a 5-digit incrementing counter, a
+     * randomly-seeded value, a future-dated typo) is "can't tell", not "must be very old",
+     * matching this file's own DNS_DKIM_NOT_DETECTED precedent for a best-effort, low-confidence
+     * signal: LOW severity, and silence rather than a guess when the convention doesn't hold.
+     */
+    static LocalDate tryParseSoaSerialAsDate(long serial) {
+        if (serial < 1_000_000_000L || serial > 9_999_999_999L) {
+            return null;
+        }
+        String digits = Long.toString(serial);
+        try {
+            int year = Integer.parseInt(digits.substring(0, 4));
+            int month = Integer.parseInt(digits.substring(4, 6));
+            int day = Integer.parseInt(digits.substring(6, 8));
+            if (year < 1990 || year > LocalDate.now(ZoneOffset.UTC).getYear()) {
+                return null;
+            }
+            return LocalDate.of(year, month, day);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
@@ -191,6 +272,42 @@ public final class DnsPostureParser {
                                 + "or AAAA record) - the same takeover shape as a dangling CNAME, applied to mail "
                                 + "routing: anyone able to register or re-point that abandoned hostname could "
                                 + "intercept mail addressed to this domain."
+                    }),
+            Map.entry(
+                    "DNS_SPF_MULTIPLE_RECORDS",
+                    new String[] {
+                        "Multiple SPF records published",
+                        "More than one SPF-type TXT record was found at this domain's apex. Per RFC 7208, this "
+                                + "makes SPF evaluation return PermError regardless of what either record says - "
+                                + "mail servers checking SPF for this domain get a hard failure, not the weaker of "
+                                + "the two policies."
+                    }),
+            Map.entry(
+                    "DNS_SPF_INCLUDE_DANGLING",
+                    new String[] {
+                        "SPF record includes a domain with no SPF record of its own",
+                        "This domain's SPF record references another domain via include: that has no SPF TXT "
+                                + "record of its own - the same takeover shape as a dangling CNAME or MX, applied to "
+                                + "SPF: whoever can register or reconfigure that referenced domain could add "
+                                + "themselves as an authorized sender for this domain's mail."
+                    }),
+            Map.entry(
+                    "EMAIL_DMARC_PCT_BELOW_100",
+                    new String[] {
+                        "DMARC policy applies to only a fraction of mail",
+                        "The DMARC record's pct= value is below 100, so its policy (quarantine/reject) is only "
+                                + "enforced for a sampled percentage of messages that fail authentication - the rest "
+                                + "are treated as if the policy were p=none, regardless of how strict the policy "
+                                + "itself looks."
+                    }),
+            Map.entry(
+                    "DNS_SOA_SERIAL_STALE",
+                    new String[] {
+                        "SOA serial suggests an unmaintained zone",
+                        "This zone's SOA serial number, read under the common YYYYMMDDnn convention, encodes a "
+                                + "date more than 2 years in the past - a signal (not proof, since not every zone "
+                                + "uses this convention) that the zone's DNS records haven't been updated in a long "
+                                + "time and may reflect abandoned or unmaintained infrastructure."
                     }),
             Map.entry(
                     "DNS_DKIM_NOT_DETECTED",

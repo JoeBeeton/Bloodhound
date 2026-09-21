@@ -12,9 +12,10 @@ public record WhoisFields(
         String registrantOrg,
         List<String> nameServers,
         Map<String, Object> raw,
-        boolean viaFallback) {
+        boolean viaFallback,
+        List<String> statusCodes) {
 
     static WhoisFields empty(boolean viaFallback) {
-        return new WhoisFields(null, null, null, null, List.of(), Map.of(), viaFallback);
+        return new WhoisFields(null, null, null, null, List.of(), Map.of(), viaFallback, List.of());
     }
 }

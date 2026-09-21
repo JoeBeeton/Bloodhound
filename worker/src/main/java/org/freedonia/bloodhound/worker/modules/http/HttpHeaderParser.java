@@ -29,6 +29,10 @@ public final class HttpHeaderParser {
         requireHeader(findings, headers, hostname, "referrer-policy", "HEADER_REFERRER_POLICY_MISSING", Severity.INFO);
         requireHeader(
                 findings, headers, hostname, "permissions-policy", "HEADER_PERMISSIONS_POLICY_MISSING", Severity.INFO);
+        requireHeader(
+                findings, headers, hostname, "cross-origin-opener-policy", "HEADER_COOP_MISSING", Severity.INFO);
+        requireHeader(
+                findings, headers, hostname, "cross-origin-resource-policy", "HEADER_CORP_MISSING", Severity.INFO);
 
         findings.addAll(httpsRedirectFindings(hostname, result));
         findings.addAll(corsReflectionFindings(hostname, result));
@@ -59,6 +63,19 @@ public final class HttpHeaderParser {
             }
             if (!lower.contains("samesite")) {
                 findings.add(finding("COOKIE_MISSING_SAMESITE", Severity.LOW, asset, Map.of("cookie", setCookie)));
+            }
+            // Only worth flagging once Secure is already present - a cookie missing Secure
+            // entirely is already covered by COOKIE_MISSING_SECURE_FLAG above, and neither
+            // prefix is valid without it anyway. __Host- (Secure + Path=/ + no Domain) is the
+            // stronger of the two - the browser refuses to even accept a same-named cookie set
+            // by a subdomain - but __Secure- alone is still worth crediting as a step up from a
+            // bare Secure cookie.
+            if (lower.contains("secure")) {
+                String name = cookieName(setCookie);
+                if (!name.startsWith("__Host-") && !name.startsWith("__Secure-")) {
+                    findings.add(finding(
+                            "COOKIE_MISSING_HOST_PREFIX", Severity.INFO, asset, Map.of("cookie", setCookie)));
+                }
             }
         }
 
@@ -217,5 +234,29 @@ public final class HttpHeaderParser {
                     new String[] {
                         "Cookie missing SameSite attribute",
                         "A cookie was set without a SameSite attribute, offering no baseline CSRF protection from the browser."
+                    }),
+            Map.entry(
+                    "HEADER_COOP_MISSING",
+                    new String[] {
+                        "Missing Cross-Origin-Opener-Policy header",
+                        "The response has no Cross-Origin-Opener-Policy header, leaving the page's window open to "
+                                + "being referenced by cross-origin popups/tabs it opens - a prerequisite for several "
+                                + "browser side-channel attacks (e.g. Spectre-style cross-origin data leaks)."
+                    }),
+            Map.entry(
+                    "HEADER_CORP_MISSING",
+                    new String[] {
+                        "Missing Cross-Origin-Resource-Policy header",
+                        "The response has no Cross-Origin-Resource-Policy header, so this resource can be loaded "
+                                + "cross-origin (e.g. embedded via <script>/<img>) by any other site without an explicit opt-out."
+                    }),
+            Map.entry(
+                    "COOKIE_MISSING_HOST_PREFIX",
+                    new String[] {
+                        "Cookie not using __Host-/__Secure- name prefix",
+                        "A cookie sets the Secure flag but its name doesn't use the __Host- or __Secure- prefix. "
+                                + "These prefixes get the browser itself to enforce the cookie's security properties "
+                                + "(__Host- additionally blocks it from being overwritten by a subdomain or a "
+                                + "non-root path) rather than relying solely on attributes a misconfiguration could drop."
                     }));
 }

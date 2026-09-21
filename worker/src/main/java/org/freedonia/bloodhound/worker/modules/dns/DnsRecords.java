@@ -14,4 +14,6 @@ public record DnsRecords(
         boolean bimiTxtPresent,
         List<String> dkimSelectorsFound,
         boolean wildcardDnsDetected,
-        List<String> danglingMxHosts) {}
+        List<String> danglingMxHosts,
+        List<String> danglingSpfIncludes,
+        Long soaSerial) {}

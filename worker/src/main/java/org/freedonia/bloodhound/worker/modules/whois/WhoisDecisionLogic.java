@@ -21,11 +21,10 @@ public final class WhoisDecisionLogic {
     private WhoisDecisionLogic() {}
 
     public static List<RawFinding> decide(String hostname, WhoisFields fields, Instant now) {
-        if (fields.expiryDate() == null) {
-            return List.of();
-        }
-        if (fields.expiryDate().isBefore(now.plus(EXPIRING_SOON_DAYS, ChronoUnit.DAYS))) {
-            return List.of(new RawFinding(
+        List<RawFinding> findings = new java.util.ArrayList<>();
+
+        if (fields.expiryDate() != null && fields.expiryDate().isBefore(now.plus(EXPIRING_SOON_DAYS, ChronoUnit.DAYS))) {
+            findings.add(new RawFinding(
                     "WHOIS_EXPIRY_APPROACHING",
                     Severity.HIGH,
                     Category.WHOIS,
@@ -34,6 +33,35 @@ public final class WhoisDecisionLogic {
                     hostname,
                     Map.of("expiryDate", fields.expiryDate().toString())));
         }
-        return List.of();
+
+        // Only judged when statusCodes actually came back non-empty - a registry this app
+        // couldn't get status data from at all (RDAP omits it, or the raw-text fallback's
+        // "Domain Status:" line format didn't match) means "unknown", not "unlocked". Matches
+        // this module's own DNS-sibling's best-effort-signal precedent (DNS_DKIM_NOT_DETECTED):
+        // silence over a guess when the data just isn't there.
+        //
+        // Spaces stripped before matching: RDAP's own EPP status vocabulary is spaced lowercase
+        // ("client transfer prohibited"), while ICANN-2013-RAA raw-WHOIS text uses concatenated
+        // camelCase ("clientTransferProhibited") - lowercasing then stripping spaces normalizes
+        // both fetch paths' shapes to the same comparable form.
+        if (!fields.statusCodes().isEmpty()
+                && fields.statusCodes().stream().noneMatch(s -> normalizeStatus(s).contains("transferprohibited"))) {
+            findings.add(new RawFinding(
+                    "WHOIS_NO_TRANSFER_LOCK",
+                    Severity.MEDIUM,
+                    Category.WHOIS,
+                    "Domain has no transfer lock",
+                    "This domain's WHOIS/RDAP status shows no clientTransferProhibited (or equivalent registry) "
+                            + "lock, making it easier for an attacker with access to the registrant account or "
+                            + "registrar to initiate an unauthorized transfer away from the current registrar.",
+                    hostname,
+                    Map.of("statusCodes", fields.statusCodes())));
+        }
+
+        return findings;
+    }
+
+    private static String normalizeStatus(String status) {
+        return status.toLowerCase(java.util.Locale.ROOT).replace(" ", "");
     }
 }
