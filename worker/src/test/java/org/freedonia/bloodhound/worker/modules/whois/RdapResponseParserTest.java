@@ -73,4 +73,22 @@ class RdapResponseParserTest {
         assertThat(fields.registrar()).isNull();
         assertThat(fields.expiryDate()).isNull();
     }
+
+    @Test
+    void parseDomainResponse_noStatusField_emptyStatusCodes() {
+        assertThat(RdapResponseParser.parseDomainResponse(DOMAIN_JSON).statusCodes()).isEmpty();
+    }
+
+    @Test
+    void parseDomainResponse_extractsTopLevelStatusArray() {
+        String json =
+                """
+                {
+                  "objectClassName": "domain",
+                  "status": ["client transfer prohibited", "active"]
+                }
+                """;
+        assertThat(RdapResponseParser.parseDomainResponse(json).statusCodes())
+                .containsExactly("client transfer prohibited", "active");
+    }
 }

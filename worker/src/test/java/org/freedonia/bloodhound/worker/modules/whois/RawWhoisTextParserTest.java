@@ -65,4 +65,18 @@ class RawWhoisTextParserTest {
     void parseReferralServer_noReferLine_returnsNull() {
         assertThat(RawWhoisTextParser.parseReferralServer("no refer here")).isNull();
     }
+
+    @Test
+    void parse_extractsMultipleDomainStatusLines() {
+        String text = "Registrar: Some Registrar\n"
+                + "Domain Status: clientTransferProhibited https://icann.org/epp#clientTransferProhibited\n"
+                + "Domain Status: clientUpdateProhibited https://icann.org/epp#clientUpdateProhibited\n";
+        assertThat(RawWhoisTextParser.parse(text).statusCodes())
+                .containsExactly("clientTransferProhibited", "clientUpdateProhibited");
+    }
+
+    @Test
+    void parse_noDomainStatusLines_emptyStatusCodes() {
+        assertThat(RawWhoisTextParser.parse("Registrar: Some Registrar\n").statusCodes()).isEmpty();
+    }
 }

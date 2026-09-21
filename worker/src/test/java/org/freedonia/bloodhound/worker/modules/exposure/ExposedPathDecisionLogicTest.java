@@ -558,4 +558,157 @@ class ExposedPathDecisionLogicTest {
                 Map.of("https://example.com/static/main.abc123.js", new ProbeResponse(200, "text/html", 20L, "<html>a real site</html>")));
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JS_SOURCE_MAP");
     }
+
+    @Test
+    void h2Console_realMarkers_flaggedCritical() {
+        String body = "<html><body><h1>H2 Console</h1><form><input name=\"Driver Class\"></form></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_SPRING_BOOT_H2_CONSOLE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SPRING_BOOT_H2_CONSOLE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void h2Console_onlyOneMarkerPresent_notFlagged() {
+        String body = "<html><body><h1>H2 Console</h1></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_SPRING_BOOT_H2_CONSOLE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SPRING_BOOT_H2_CONSOLE");
+    }
+
+    @Test
+    void laravelTelescope_rootDivMarker_flaggedHigh() {
+        String body = "<html><body><div id=\"telescope\"></div></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_LARAVEL_TELESCOPE", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_LARAVEL_TELESCOPE");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+        });
+    }
+
+    @Test
+    void aspNetTraceAxd_realMarkers_flaggedHigh() {
+        String body = "<html><body><h1>Application Trace</h1><p>Requests to the Application</p></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_ASPNET_TRACE_AXD", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("EXPOSURE_ASPNET_TRACE_AXD"));
+    }
+
+    @Test
+    void aspNetElmah_errorLogMarker_flaggedHigh() {
+        String body = "<html><body><h1>Error Log for /site</h1></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_ASPNET_ELMAH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("EXPOSURE_ASPNET_ELMAH"));
+    }
+
+    @Test
+    void adminer_loginFormFieldMarker_flaggedHigh() {
+        String body = "<html><body><form><select name=\"auth[driver]\"></select></form></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_ADMINER", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("EXPOSURE_ADMINER"));
+    }
+
+    @Test
+    void laravelDebugMode_whoopsMarkers_flaggedOnBaselineResponse() {
+        String body = "<html><body><div class=\"whoops-container\">Whoops! There was an error.</div></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                new ProbeResponse(404, "text/html", (long) body.length(), body), Map.of());
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_LARAVEL_DEBUG_MODE");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+        });
+    }
+
+    @Test
+    void laravelDebugMode_ignitionMarkers_flaggedOnBaselineResponse() {
+        String body = "<html><body>Ignition<pre>Illuminate\\Foundation\\Application::run</pre></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                new ProbeResponse(500, "text/html", (long) body.length(), body), Map.of());
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("EXPOSURE_LARAVEL_DEBUG_MODE"));
+    }
+
+    @Test
+    void laravelDebugMode_ordinary404Page_notFlagged() {
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of());
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_LARAVEL_DEBUG_MODE");
+    }
+
+    @Test
+    void grafanaAltPort_positiveJsonShape_flaggedWithPortInAssetName() {
+        String body = "{\"database\":\"ok\",\"version\":\"10.4.2\"}";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_GRAFANA_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_GRAFANA_UNAUTH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:3000");
+        });
+    }
+
+    @Test
+    void mongoExpressAltPort_positiveMarker_flaggedCriticalWithPortInAssetName() {
+        String body = "<html><head><title>Mongo Express</title></head><body></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_MONGO_EXPRESS_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_MONGO_EXPRESS_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8081");
+        });
+    }
+
+    @Test
+    void traefikAltPort_positiveJsonShape_flaggedWithPortInAssetName() {
+        String body = "{\"backends\":{},\"frontends\":{}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8080");
+        });
+    }
+
+    @Test
+    void securityTxtExpired_pastExpiresDate_flaggedInfo() {
+        String body = "Contact: mailto:security@example.com\nExpires: 2020-01-01T00:00:00Z\n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_SECURITY_TXT_PRESENT", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_SECURITY_TXT_PRESENT", "EXPOSURE_SECURITY_TXT_EXPIRED");
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SECURITY_TXT_EXPIRED");
+            assertThat(f.severity().name()).isEqualTo("INFO");
+        });
+    }
+
+    @Test
+    void securityTxtNotExpired_futureExpiresDate_onlyPresentFindingFires() {
+        String body = "Contact: mailto:security@example.com\nExpires: 2099-01-01T00:00:00Z\n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_SECURITY_TXT_PRESENT", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_SECURITY_TXT_PRESENT").doesNotContain("EXPOSURE_SECURITY_TXT_EXPIRED");
+    }
+
+    @Test
+    void securityTxtNoExpiresLine_notFlaggedExpired() {
+        String body = "Contact: mailto:security@example.com\n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_SECURITY_TXT_PRESENT", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SECURITY_TXT_EXPIRED");
+    }
 }

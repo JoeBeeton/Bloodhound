@@ -6,12 +6,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
 import org.freedonia.bloodhound.worker.modules.common.FallbackDnsLookup;
 import org.xbill.DNS.MXRecord;
 import org.xbill.DNS.Record;
+import org.xbill.DNS.SOARecord;
 import org.xbill.DNS.TXTRecord;
 import org.xbill.DNS.Type;
 
@@ -82,10 +85,52 @@ public class DnsRecordFetcher {
 
         boolean wildcard = probeWildcard(hostname);
         List<String> danglingMx = findDanglingMxHosts(hostname);
+        List<String> danglingSpfIncludes = findDanglingSpfIncludes(txt);
+        Long soaSerial = querySoaSerial(hostname);
 
         return new DnsRecords(
                 txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound,
-                wildcard, danglingMx);
+                wildcard, danglingMx, danglingSpfIncludes, soaSerial);
+    }
+
+    private static final Pattern SPF_INCLUDE_PATTERN = Pattern.compile("include:([^\\s]+)", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Top-level {@code include:} mechanisms (nested includes-of-includes aren't followed - same
+     * best-effort scope this file's DKIM selector probing already accepts) whose referenced
+     * domain has no SPF TXT record of its own at all. The same takeover shape as a dangling MX
+     * or CNAME: an SPF include only works because the referenced domain publishes SPF for it to
+     * inherit - if nobody's there to answer, whoever registers that domain (if it's not even
+     * registered at all) can add their own permissive SPF record and become an authorized
+     * sender for this domain's mail.
+     */
+    private List<String> findDanglingSpfIncludes(List<String> txtRecords) {
+        List<String> dangling = new ArrayList<>();
+        for (String record : txtRecords) {
+            if (!record.toLowerCase().startsWith("v=spf1")) {
+                continue;
+            }
+            Matcher matcher = SPF_INCLUDE_PATTERN.matcher(record);
+            while (matcher.find()) {
+                String includeDomain = matcher.group(1);
+                boolean hasSpf =
+                        queryTxt(includeDomain).stream().anyMatch(t -> t.toLowerCase().startsWith("v=spf1"));
+                if (!hasSpf && !dangling.contains(includeDomain)) {
+                    dangling.add(includeDomain);
+                }
+            }
+        }
+        return dangling;
+    }
+
+    /** Null if the apex has no SOA (shouldn't normally happen for a zone that answered the earlier NS canary, but DNS is DNS) - see DnsPostureParser for how the serial is interpreted. */
+    private Long querySoaSerial(String hostname) {
+        for (Record record : queryRecords(hostname, Type.SOA)) {
+            if (record instanceof SOARecord soa) {
+                return soa.getSerial();
+            }
+        }
+        return null;
     }
 
     /**

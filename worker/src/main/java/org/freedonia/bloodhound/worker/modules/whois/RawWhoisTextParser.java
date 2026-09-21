@@ -25,6 +25,10 @@ public final class RawWhoisTextParser {
             Pattern.compile("(?im)^(?:Creation Date|Registered On|Domain Registration Date):\\s*(.+)$");
     private static final Pattern NAME_SERVER = Pattern.compile("(?im)^Name Server:\\s*(.+)$");
     private static final Pattern REFER = Pattern.compile("(?im)^refer:\\s*(\\S+)");
+    // ICANN-2013-RAA's standard "Domain Status:" line is "<code> <url>" - only the code (the
+    // first token) is captured, same as RDAP's own bare status-keyword array, so both fetch
+    // paths feed WhoisDecisionLogic identically-shaped data.
+    private static final Pattern DOMAIN_STATUS = Pattern.compile("(?im)^Domain Status:\\s*(\\S+)");
 
     private RawWhoisTextParser() {}
 
@@ -40,7 +44,13 @@ public final class RawWhoisTextParser {
         while (nsMatcher.find()) {
             nameServers.add(nsMatcher.group(1).trim().toLowerCase(java.util.Locale.ROOT));
         }
-        return new WhoisFields(registrar, created, expiry, null, nameServers, Map.of("rawText", text), true);
+        List<String> statusCodes = new ArrayList<>();
+        Matcher statusMatcher = DOMAIN_STATUS.matcher(text);
+        while (statusMatcher.find()) {
+            statusCodes.add(statusMatcher.group(1).trim());
+        }
+        return new WhoisFields(
+                registrar, created, expiry, null, nameServers, Map.of("rawText", text), true, statusCodes);
     }
 
     /** Extracts the referral WHOIS server hostname from an IANA "whois.iana.org" TLD response. */
