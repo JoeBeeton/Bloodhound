@@ -6,10 +6,16 @@ import java.util.Optional;
 /**
  * Pure decision logic for dangling-CNAME / subdomain-takeover detection.
  * Deliberately a small, high-confidence subset of the well-known
- * "can-i-take-over-xyz"-style reference list (which runs to 60+ entries) -
- * these 7 cover the most common real-world takeover vectors; expanding the
- * table further is a reasonable future addition, not something this
- * milestone needs to exhaustively replicate.
+ * "can-i-take-over-xyz"-style reference list (which runs to 60+ entries),
+ * expanded once already (8 -&gt; 14, see EdOverflow/can-i-take-over-xyz and
+ * vulnsy.com's cheat sheet cross-referenced while adding these) - covers the
+ * most common real-world takeover vectors with a high-confidence, sufficiently
+ * distinctive fingerprint for each, deliberately excluding that reference
+ * list's own "Edge case"/"Not vulnerable" entries (Tumblr, WordPress.com,
+ * Netlify, Vercel, Intercom, Webflow, Ghost, CloudFront, Unbounce, StatusPage)
+ * where the same-looking response can occur without the subdomain actually
+ * being claimable, or where the provider now requires additional
+ * domain-ownership verification the fingerprint alone can't detect.
  *
  * Matching a CNAME against {@link #matchProvider} only identifies which
  * service *type* a subdomain points at - it says nothing about whether the
@@ -39,7 +45,14 @@ final class DanglingCnameDecisionLogic {
             new TakeoverService(".azurewebsites.net", "Azure Web App", "404 Web Site not found"),
             new TakeoverService(".zendesk.com", "Zendesk", "Help Center Closed"),
             new TakeoverService(".myshopify.com", "Shopify", "Sorry, this shop is currently unavailable"),
-            new TakeoverService(".fastly.net", "Fastly", "Fastly error: unknown domain"));
+            new TakeoverService(".fastly.net", "Fastly", "Fastly error: unknown domain"),
+            new TakeoverService(".bitbucket.io", "Bitbucket", "Repository not found"),
+            new TakeoverService(
+                    ".pantheonsite.io", "Pantheon", "The gods are wise, but do not know of the site which you seek"),
+            new TakeoverService(".surge.sh", "Surge.sh", "project not found"),
+            new TakeoverService(".readme.io", "Readme.io", "Project doesnt exist... yet!"),
+            new TakeoverService(".helpscoutdocs.com", "Help Scout", "No settings were found for this company"),
+            new TakeoverService(".cargocollective.com", "Cargo Collective", "moving your domain away from Cargo"));
 
     private DanglingCnameDecisionLogic() {}
 
