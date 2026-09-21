@@ -55,6 +55,37 @@ class DanglingCnameDecisionLogicTest {
     }
 
     @Test
+    void bitbucketCname() {
+        assertTruePositive("myorg.bitbucket.io", "Bitbucket", "Repository not found");
+    }
+
+    @Test
+    void pantheonCname() {
+        assertTruePositive(
+                "myapp.pantheonsite.io", "Pantheon", "The gods are wise, but do not know of the site which you seek");
+    }
+
+    @Test
+    void surgeShCname() {
+        assertTruePositive("myproject.surge.sh", "Surge.sh", "project not found");
+    }
+
+    @Test
+    void readmeIoCname() {
+        assertTruePositive("mydocs.readme.io", "Readme.io", "Project doesnt exist... yet!");
+    }
+
+    @Test
+    void helpScoutCname() {
+        assertTruePositive("mydocs.helpscoutdocs.com", "Help Scout", "No settings were found for this company");
+    }
+
+    @Test
+    void cargoCollectiveCname() {
+        assertTruePositive("mysite.cargocollective.com", "Cargo Collective", "moving your domain away from Cargo");
+    }
+
+    @Test
     void matchedProviderButBodyDoesNotContainFingerprint_mustNotFlag() {
         Optional<DanglingCnameDecisionLogic.TakeoverService> match =
                 DanglingCnameDecisionLogic.matchProvider("myapp.herokuapp.com");
