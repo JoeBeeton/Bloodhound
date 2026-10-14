@@ -59,6 +59,7 @@ public class TlsFetcher {
     private static final Logger log = LoggerFactory.getLogger(TlsFetcher.class);
 
     private final WeakCipherProbe weakCipherProbe = new WeakCipherProbe();
+    private final HstsPreloadClient hstsPreloadClient = new HstsPreloadClient();
 
     private static final X509TrustManager PERMISSIVE_TRUST_MANAGER = new X509TrustManager() {
         @Override
@@ -87,12 +88,18 @@ public class TlsFetcher {
                     .orElseThrow(() -> handshakeFailure);
             log.info("{} rejected a modern handshake but accepted {} - reporting as weak-suite-only", hostname, weakOnly);
             HstsResult hsts = fetchHstsHeader(hostname);
-            return new TlsFetchResult(null, true, null, false, false, hsts.reachable(), hsts.headerValue(), null, weakOnly);
+            String preloadStatus = preloadListStatusIfClaimed(hostname, hsts.headerValue());
+            return new TlsFetchResult(
+                    null, true, null, false, false, hsts.reachable(), hsts.headerValue(), null, weakOnly, null, null,
+                    null, null, false, null, false, preloadStatus);
         }
         boolean chainTrusted = isChainTrusted(hostname);
-        boolean tls1 = probeLegacyProtocol(hostname, "TLSv1");
-        boolean tls11 = probeLegacyProtocol(hostname, "TLSv1.1");
+        boolean sslv3 = probeProtocol(hostname, "SSLv3");
+        boolean tls1 = probeProtocol(hostname, "TLSv1");
+        boolean tls11 = probeProtocol(hostname, "TLSv1.1");
+        boolean tls13 = probeProtocol(hostname, "TLSv1.3");
         HstsResult hsts = fetchHstsHeader(hostname);
+        String preloadStatus = preloadListStatusIfClaimed(hostname, hsts.headerValue());
         String weakCipher = weakCipherProbe
                 .negotiatedWeakSuite(capture.connectedAddress(), hostname, PORT)
                 .orElse(null);
@@ -110,7 +117,30 @@ public class TlsFetcher {
                 capture.dnsNames(),
                 capture.sigAlgName(),
                 capture.publicKeyAlgorithm(),
-                capture.publicKeyBits());
+                capture.publicKeyBits(),
+                sslv3,
+                capture.protocolVersion(),
+                tls13,
+                preloadStatus);
+    }
+
+    /**
+     * hstspreload.org's status API is only ever worth calling for the small subset of hosts whose
+     * own HSTS header already claims the preload token - everyone else can't have a meaningful
+     * mismatch between "what the header claims" and "what's really on browsers' preload lists".
+     * Failure (network error, non-200, unparseable body) yields null - "unknown", not a finding -
+     * same silence-over-guess precedent as every other best-effort signal in this codebase.
+     */
+    private String preloadListStatusIfClaimed(String hostname, String hstsHeaderValue) {
+        if (hstsHeaderValue == null || !hstsHeaderValue.toLowerCase(java.util.Locale.ROOT).contains("preload")) {
+            return null;
+        }
+        try {
+            return hstsPreloadClient.parseStatus(hstsPreloadClient.fetchRaw(hostname));
+        } catch (Exception e) {
+            log.warn("hstspreload.org status lookup failed for {}: {}", hostname, e.toString());
+            return null;
+        }
     }
 
     /** Only RSA/DSA key sizes are meaningful to compare against a fixed bit-length floor - an EC key of 256 bits is not weak the way an RSA key of 256 bits would be (roughly equivalent strength to a 3072-bit RSA key), so this deliberately returns null (not evaluated) for anything else. */
@@ -152,7 +182,8 @@ public class TlsFetcher {
                         dnsNames(leaf),
                         leaf.getSigAlgName(),
                         publicKeyAlgorithm(leaf.getPublicKey()),
-                        publicKeyBits(leaf.getPublicKey()));
+                        publicKeyBits(leaf.getPublicKey()),
+                        session.getProtocol());
             }
         } catch (Exception e) {
             throw new ScanModuleException("TLS handshake failed for " + hostname + ":" + PORT, e);
@@ -185,20 +216,23 @@ public class TlsFetcher {
     }
 
     /**
-     * Attempts a handshake restricted to exactly one legacy protocol. Whether the JDK will even
-     * offer TLSv1/TLSv1.1 is decided once, at JVM startup, by LegacyTlsProbeSupport (called from
+     * Attempts a handshake restricted to exactly one protocol version - used both for legacy
+     * protocols (SSLv3/TLSv1/TLSv1.1, where a true result is a finding) and for TLSv1.3 (where a
+     * false result is the finding - see TLS_1_3_NOT_SUPPORTED). Whether the JDK will even offer
+     * SSLv3/TLSv1/TLSv1.1 is decided once, at JVM startup, by LegacyTlsProbeSupport (called from
      * WorkerApplication.main) - this method used to relax jdk.tls.disabledAlgorithms itself, per
      * probe, under a class-wide lock, and that never worked: the JDK had already frozen protocol
      * availability during the permissive handshake that precedes this, so every probe failed with
      * "No appropriate protocol" and the finding was dead. If startup config is ever missing again,
      * {@code getEnabledProtocols()} comes back empty and the guard below logs it loudly instead of
-     * silently reporting "no legacy TLS" for every host.
+     * silently reporting "no legacy TLS" for every host. TLSv1.3 needs no such relaxation - it was
+     * never in the disabled list - so this same method works for it unmodified.
      *
      * <p>setEnabledProtocols pins the probe to the one version asked for: the JDK's "TLSv1.1"
      * context enables TLSv1.1 <em>and</em> TLSv1, so without it a TLSv1-only server would be
      * reported as supporting TLSv1.1 as well. The negotiated version is checked for the same reason.
      */
-    private boolean probeLegacyProtocol(String hostname, String protocol) {
+    private boolean probeProtocol(String hostname, String protocol) {
         try {
             SSLContext ctx = SSLContext.getInstance(protocol);
             ctx.init(null, new TrustManager[] {PERMISSIVE_TRUST_MANAGER}, new SecureRandom());
@@ -310,7 +344,8 @@ public class TlsFetcher {
             List<String> dnsNames,
             String sigAlgName,
             String publicKeyAlgorithm,
-            Integer publicKeyBits) {}
+            Integer publicKeyBits,
+            String protocolVersion) {}
 
     private record HstsResult(boolean reachable, String headerValue) {}
 }

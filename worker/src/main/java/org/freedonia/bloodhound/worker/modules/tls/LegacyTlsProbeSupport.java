@@ -6,9 +6,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * JVM-startup configuration that makes TlsFetcher's TLSv1/TLSv1.1 probes possible at all.
+ * JVM-startup configuration that makes TlsFetcher's TLSv1/TLSv1.1/SSLv3 probes possible at all.
  *
- * <p>Modern JDKs list TLSv1 and TLSv1.1 in the {@code jdk.tls.disabledAlgorithms} security
+ * <p>Modern JDKs list TLSv1, TLSv1.1 and SSLv3 in the {@code jdk.tls.disabledAlgorithms} security
  * property. TlsFetcher used to relax that property around each probe at scan time, but the JDK
  * reads it exactly once: {@code sun.security.ssl.ProtocolVersion} computes each version's
  * {@code isAvailable} flag in its enum constructor, so by the time the first handshake of the
@@ -19,9 +19,15 @@ import java.util.Set;
  * flagging deprecated TLS on the same hosts. Reproduced in-container; the only working fix is to
  * set the property before any TLS class initializes, i.e. from main().
  *
- * <p>Removing the two versions from the disabled list would, on its own, also make every
+ * <p>SSLv3 joined the same relaxed set once a rules-comparison audit found this module had no
+ * SSLv3 probe at all (Qualys SSL Labs instant-fails a server that still speaks it) - confirmed
+ * live in-container that {@code SSLContext.getInstance("SSLv3")} still succeeds on this JDK (the
+ * implementation itself was never removed, only disabled by this same property, unlike SSLv2
+ * which throws {@code NoSuchAlgorithmException} - no implementation exists to probe at all).
+ *
+ * <p>Removing these versions from the disabled list would, on its own, also make every
  * default-context client in this worker (HttpClient to crt.sh, HIBP, the target's own HTTPS
- * endpoints, ...) offer TLSv1/TLSv1.1 in its ClientHello. That's not a downgrade vulnerability
+ * endpoints, ...) offer TLSv1/TLSv1.1/SSLv3 in its ClientHello. That's not a downgrade vulnerability
  * against a TLS 1.2+ server (the Finished MAC covers the offered versions), but there's no reason
  * to widen it either: {@code jdk.tls.client.protocols} pins the <em>default</em> client protocol
  * list to 1.3/1.2 and, per the JDK's SSLContextImpl, is consulted only by the "TLS"/"Default"
@@ -33,7 +39,7 @@ public final class LegacyTlsProbeSupport {
 
     static final String DISABLED_ALGORITHMS_PROPERTY = "jdk.tls.disabledAlgorithms";
     static final String CLIENT_PROTOCOLS_PROPERTY = "jdk.tls.client.protocols";
-    private static final Set<String> LEGACY_PROTOCOLS = Set.of("TLSv1", "TLSv1.1");
+    private static final Set<String> LEGACY_PROTOCOLS = Set.of("TLSv1", "TLSv1.1", "SSLv3");
 
     private LegacyTlsProbeSupport() {}
 

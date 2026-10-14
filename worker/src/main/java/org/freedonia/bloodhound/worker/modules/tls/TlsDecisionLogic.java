@@ -22,6 +22,7 @@ public final class TlsDecisionLogic {
     private static final Pattern MAX_AGE_PATTERN = Pattern.compile("max-age=(\\d+)", Pattern.CASE_INSENSITIVE);
     private static final List<String> WEAK_SIGNATURE_MARKERS = List.of("MD5", "MD2", "SHA1");
     private static final int MIN_RSA_DSA_KEY_BITS = 2048;
+    private static final List<String> FORWARD_SECRECY_MARKERS = List.of("ECDHE", "DHE");
 
     /**
      * Bounded allowlist of major public CA organization names as they
@@ -72,11 +73,36 @@ public final class TlsDecisionLogic {
         // hostname only in evidence, a second host in the same target supporting TLSv1 was silently
         // dropped as a duplicate of the first. Went unnoticed because the rule had never fired at all
         // until the probe itself was fixed (see LegacyTlsProbeSupport).
+        if (r.sslv3Supported()) {
+            findings.add(legacyProtocol(hostname, "SSLv3"));
+        }
         if (r.tls1Supported()) {
             findings.add(legacyProtocol(hostname, "TLSv1"));
         }
         if (r.tls11Supported()) {
             findings.add(legacyProtocol(hostname, "TLSv1.1"));
+        }
+
+        // Positive-signal gap closed by a rules-comparison audit against Qualys SSL Labs (which caps
+        // its grade at A- without TLS1.3): absence of any legacy-protocol finding above could mean
+        // either "modern and clean" or "we never checked" - this makes that distinction explicit
+        // rather than leaving it to be inferred from silence.
+        if (!r.tls13Supported()) {
+            findings.add(finding("TLS_1_3_NOT_SUPPORTED", Severity.LOW, hostname, Map.of()));
+        }
+
+        // Only evaluated when a protocol/cipher was actually captured (skipped for the weak-suite-
+        // only path, where both are null) - and never for TLS1.3, whose own cipher suite names
+        // (e.g. TLS_AES_128_GCM_SHA256) never encode a key-exchange algorithm at all, since every
+        // TLS1.3 suite is inherently forward-secret by design. For 1.2 and earlier, the *server's*
+        // choice from this client's offer (which includes both ECDHE/DHE and plain RSA/DH suites)
+        // is a direct signal of what it prefers/requires - same reasoning WeakCipherProbe's own
+        // javadoc gives for treating a modern client's negotiated suite as meaningful evidence.
+        if (r.cipherSuite() != null
+                && !"TLSv1.3".equals(r.negotiatedProtocol())
+                && FORWARD_SECRECY_MARKERS.stream().noneMatch(r.cipherSuite().toUpperCase(Locale.ROOT)::contains)) {
+            findings.add(finding(
+                    "TLS_NO_FORWARD_SECRECY", Severity.MEDIUM, hostname, Map.of("cipherSuite", r.cipherSuite())));
         }
 
         // Two sources, one finding: the suite our own (strong-only) client negotiated can only be
@@ -95,7 +121,7 @@ public final class TlsDecisionLogic {
         }
 
         if (r.httpsReachable()) {
-            findings.addAll(hstsFindings(hostname, r.hstsHeaderValue()));
+            findings.addAll(hstsFindings(hostname, r.hstsHeaderValue(), r.hstsPreloadListStatus()));
         }
 
         if (r.certDnsNames() != null && !r.certDnsNames().isEmpty() && !certCovers(hostname, r.certDnsNames())) {
@@ -178,7 +204,7 @@ public final class TlsDecisionLogic {
         return KNOWN_CA_MARKERS.stream().anyMatch(lower::contains);
     }
 
-    private static List<RawFinding> hstsFindings(String hostname, String hstsHeaderValue) {
+    private static List<RawFinding> hstsFindings(String hostname, String hstsHeaderValue, String preloadListStatus) {
         if (hstsHeaderValue == null) {
             return List.of(finding("TLS_NO_HSTS", Severity.MEDIUM, hostname, Map.of()));
         }
@@ -202,6 +228,19 @@ public final class TlsDecisionLogic {
         if (lower.contains("preload") && (maxAge < HSTS_PRELOAD_MIN_MAX_AGE_SECONDS || !includesSubDomains)) {
             findings.add(finding(
                     "TLS_HSTS_PRELOAD_NOT_ELIGIBLE", Severity.LOW, hostname, Map.of("header", hstsHeaderValue)));
+        }
+        // Orthogonal to the eligibility check above: a site can technically clear hstspreload.org's
+        // submission bar (or have cleared it once) without ever actually being on the real list
+        // browsers ship - or have been removed from it since. The header's own claims say nothing
+        // about this; only hstspreload.org's own status API does. preloadListStatus is null whenever
+        // the header has no preload token at all (never queried) or the lookup itself failed - either
+        // way, silence, not a finding, matching this codebase's own best-effort-signal precedent.
+        if (lower.contains("preload") && preloadListStatus != null && !"preloaded".equals(preloadListStatus)) {
+            findings.add(finding(
+                    "TLS_HSTS_NOT_ON_PRELOAD_LIST",
+                    Severity.LOW,
+                    hostname,
+                    Map.of("header", hstsHeaderValue, "preloadListStatus", preloadListStatus)));
         }
         return findings;
     }
@@ -287,5 +326,32 @@ public final class TlsDecisionLogic {
                         "The certificate's RSA/DSA public key is under 2048 bits, below the minimum modern CAs and "
                                 + "browsers require - a key this size is within range of being factored, undermining "
                                 + "every guarantee the certificate is meant to provide."
+                    }),
+            Map.entry("TLS_1_3_NOT_SUPPORTED",
+                    new String[] {
+                        "TLS 1.3 not supported",
+                        "This host does not negotiate TLS 1.3, the current protocol version. Qualys SSL Labs caps "
+                                + "its grade at A- for a server missing it - every supported connection is still "
+                                + "using an older protocol generation, with weaker default cipher/handshake choices "
+                                + "and strictly more historical attack surface than 1.3 was designed to remove."
+                    }),
+            Map.entry("TLS_NO_FORWARD_SECRECY",
+                    new String[] {
+                        "No forward secrecy",
+                        "The negotiated cipher suite does not use an ephemeral (ECDHE/DHE) key exchange, meaning "
+                                + "this connection's session key is derived from the server's long-term private key "
+                                + "rather than a fresh per-session one. If that private key is ever compromised, "
+                                + "every past session recorded by an eavesdropper (not just future ones) can be "
+                                + "decrypted retroactively - the exact property forward secrecy exists to prevent."
+                    }),
+            Map.entry("TLS_HSTS_NOT_ON_PRELOAD_LIST",
+                    new String[] {
+                        "HSTS preload token present but domain is not on the real preload list",
+                        "The Strict-Transport-Security header includes the preload token, but hstspreload.org's own "
+                                + "status API confirms this domain is not actually included in the list browsers "
+                                + "ship (it may never have been submitted, or may have since been removed). Unlike "
+                                + "TLS_HSTS_PRELOAD_NOT_ELIGIBLE (which checks whether the header's own values meet "
+                                + "the submission bar), this checks the real-world outcome: browsers give this site "
+                                + "no preload protection regardless of how the header reads."
                     }));
 }

@@ -6,14 +6,14 @@ import org.junit.jupiter.api.Test;
 
 class LegacyTlsProbeSupportTest {
 
-    /** The real JDK 21 default, verbatim - the point is that only the two TLS entries go. */
+    /** The real JDK 21 default, verbatim - the point is that only the three legacy-protocol entries go. */
     private static final String JDK21_DEFAULT = "SSLv3, TLSv1, TLSv1.1, DTLSv1.0, RC4, DES, MD5withRSA, "
             + "DH keySize < 1024, EC keySize < 224, 3DES_EDE_CBC, anon, NULL, ECDH";
 
     @Test
-    void removesOnlyTls1AndTls11_leavingEveryOtherEntryIncludingDtls() {
+    void removesTls1Tls11AndSslv3_leavingEveryOtherEntryIncludingDtls() {
         assertThat(LegacyTlsProbeSupport.withoutLegacyProtocols(JDK21_DEFAULT))
-                .isEqualTo("SSLv3, DTLSv1.0, RC4, DES, MD5withRSA, DH keySize < 1024, EC keySize < 224, "
+                .isEqualTo("DTLSv1.0, RC4, DES, MD5withRSA, DH keySize < 1024, EC keySize < 224, "
                         + "3DES_EDE_CBC, anon, NULL, ECDH");
     }
 
@@ -31,6 +31,6 @@ class LegacyTlsProbeSupportTest {
 
     @Test
     void alreadyRelaxedList_isUnchanged() {
-        assertThat(LegacyTlsProbeSupport.withoutLegacyProtocols("SSLv3, RC4")).isEqualTo("SSLv3, RC4");
+        assertThat(LegacyTlsProbeSupport.withoutLegacyProtocols("RC4")).isEqualTo("RC4");
     }
 }
