@@ -75,6 +75,21 @@ public class Zgrab2Fetcher {
                 "--connect-timeout", "4s", "--read-timeout", "2000"), ip);
     }
 
+    /**
+     * A full SSH transport-layer handshake, reporting the server's own offered KEX/host-key/
+     * cipher/MAC algorithm lists (not just what a client happened to pick) - the same "what will
+     * this server accept if offered" signal WeakCipherProbe's own javadoc describes for TLS,
+     * applied to SSH. Verified live against a real server (github.com:22) before building the
+     * parser: {@code data.ssh.result.server_key_exchange} carries {@code kex_algorithms}/
+     * {@code host_key_algorithms}/{@code client_to_server_ciphers}/{@code server_to_client_ciphers}/
+     * {@code client_to_server_macs}/{@code server_to_client_macs}, each a plain array of algorithm
+     * name strings.
+     */
+    public String sshJson(String ip, int port) throws ScanModuleException {
+        return run(
+                List.of("zgrab2", "ssh", "-b", BLOCKLIST_FILE, "-p", String.valueOf(port), "--connect-timeout", "4s"), ip);
+    }
+
     public String httpJson(String ip, int port, boolean tls) throws ScanModuleException {
         // --user-agent: the http submodule is the only zgrab2 mode that speaks HTTP at all
         // (banner grabs below are raw TCP for self-announcing protocols with no header

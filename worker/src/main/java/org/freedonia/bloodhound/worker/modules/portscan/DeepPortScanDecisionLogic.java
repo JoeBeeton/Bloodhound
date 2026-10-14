@@ -127,6 +127,11 @@ public final class DeepPortScanDecisionLogic {
                         hostname + ":" + portId,
                         Map.of("port", portId, "scriptOutput", ftpAnon, "addressFamilies", addressFamilies(ftpAnonDetails))));
             }
+
+            details.stream()
+                    .filter(d -> hasAnySshWeakAlgorithm(d.scriptOutputs()))
+                    .findFirst()
+                    .ifPresent(d -> findings.add(sshWeakAlgorithmFinding(hostname, portId, d.scriptOutputs())));
         }
 
         List<Integer> allOpenPortIds = new ArrayList<>(byPort.keySet());
@@ -149,5 +154,38 @@ public final class DeepPortScanDecisionLogic {
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
+    }
+
+    private static final List<String> SSH_WEAK_SCRIPT_OUTPUT_KEYS =
+            List.of("ssh-weak-kex", "ssh-weak-hostkey", "ssh-weak-cipher", "ssh-weak-mac");
+
+    private static boolean hasAnySshWeakAlgorithm(Map<String, String> scriptOutputs) {
+        return SSH_WEAK_SCRIPT_OUTPUT_KEYS.stream()
+                .anyMatch(key -> scriptOutputs.get(key) != null && !scriptOutputs.get(key).isBlank());
+    }
+
+    private static RawFinding sshWeakAlgorithmFinding(String hostname, int portId, Map<String, String> scriptOutputs) {
+        Map<String, Object> evidence = new LinkedHashMap<>();
+        evidence.put("port", portId);
+        List<String> summaryParts = new ArrayList<>();
+        for (String key : SSH_WEAK_SCRIPT_OUTPUT_KEYS) {
+            String value = scriptOutputs.get(key);
+            if (value != null && !value.isBlank()) {
+                evidence.put(key.replace("ssh-weak-", "weak") + "Algorithms", value);
+                summaryParts.add(key.substring("ssh-weak-".length()) + ": " + value);
+            }
+        }
+        return new RawFinding(
+                "NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED",
+                Severity.HIGH,
+                Category.NETWORK,
+                "SSH server offers a deprecated/weak algorithm",
+                "The deep scan's SSH handshake probe found this server is willing to negotiate at least one "
+                        + "deprecated or cryptographically weak algorithm (" + String.join("; ", summaryParts)
+                        + ") - a client that still offers it (an outdated SSH client, or one deliberately "
+                        + "downgraded by an attacker) can still use it, regardless of what a modern client "
+                        + "would normally pick.",
+                hostname + ":" + portId,
+                evidence);
     }
 }

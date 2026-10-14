@@ -7,6 +7,59 @@ import org.junit.jupiter.api.Test;
 /** Fixtures below are real zgrab2 v1.0.0 output captured against live hosts, not hand-guessed. */
 class Zgrab2JsonParserTest {
 
+    /** Captured live against github.com:22 - a fully modern, no-weak-algorithm SSH configuration. */
+    private static final String REAL_SSH_SUCCESS_JSON =
+            """
+            {"ip":"4.208.26.197","domain":"github.com","data":{"ssh":{"status":"success","protocol":"ssh","port":22,\
+            "result":{"server_id":{"raw":"SSH-2.0-e7b94b6","version":"2.0","software":"e7b94b6"},\
+            "server_key_exchange":{"kex_algorithms":["curve25519-sha256","curve25519-sha256@libssh.org",\
+            "ecdh-sha2-nistp256","diffie-hellman-group-exchange-sha256"],\
+            "host_key_algorithms":["ssh-ed25519","ecdsa-sha2-nistp256","rsa-sha2-512","rsa-sha2-256"],\
+            "client_to_server_ciphers":["chacha20-poly1305@openssh.com","aes256-gcm@openssh.com","aes256-ctr"],\
+            "server_to_client_ciphers":["chacha20-poly1305@openssh.com","aes256-gcm@openssh.com","aes256-ctr"],\
+            "client_to_server_macs":["hmac-sha2-512-etm@openssh.com","hmac-sha2-256-etm@openssh.com"],\
+            "server_to_client_macs":["hmac-sha2-512-etm@openssh.com","hmac-sha2-256-etm@openssh.com"]}},\
+            "timestamp":"2026-10-14T17:19:50Z"}}}""";
+
+    @Test
+    void parsesSshAlgorithms_realModernConfig() {
+        Zgrab2JsonParser.SshAlgorithms algorithms = Zgrab2JsonParser.parseSshAlgorithms(REAL_SSH_SUCCESS_JSON).orElseThrow();
+
+        assertThat(algorithms.kexAlgorithms()).contains("curve25519-sha256", "diffie-hellman-group-exchange-sha256");
+        assertThat(algorithms.hostKeyAlgorithms()).contains("ssh-ed25519", "rsa-sha2-512");
+        assertThat(algorithms.ciphers()).contains("chacha20-poly1305@openssh.com", "aes256-ctr");
+        assertThat(algorithms.macs()).contains("hmac-sha2-512-etm@openssh.com");
+    }
+
+    @Test
+    void sshAlgorithms_unionsClientToServerAndServerToClientDirections() {
+        String json = """
+                {"ip":"1.2.3.4","data":{"ssh":{"status":"success","result":{"server_key_exchange":{\
+                "kex_algorithms":[],"host_key_algorithms":[],\
+                "client_to_server_ciphers":["aes256-ctr"],"server_to_client_ciphers":["aes128-cbc"],\
+                "client_to_server_macs":["hmac-sha2-256"],"server_to_client_macs":["hmac-md5"]}}}}}""";
+
+        Zgrab2JsonParser.SshAlgorithms algorithms = Zgrab2JsonParser.parseSshAlgorithms(json).orElseThrow();
+
+        assertThat(algorithms.ciphers()).containsExactlyInAnyOrder("aes256-ctr", "aes128-cbc");
+        assertThat(algorithms.macs()).containsExactlyInAnyOrder("hmac-sha2-256", "hmac-md5");
+    }
+
+    @Test
+    void sshConnectionFailureYieldsEmpty() {
+        String json = """
+                {"ip":"1.2.3.4","data":{"ssh":{"status":"connection-timeout","protocol":"ssh","port":22,\
+                "error":"dial context failed"}}}""";
+
+        assertThat(Zgrab2JsonParser.parseSshAlgorithms(json)).isEmpty();
+    }
+
+    @Test
+    void sshMalformedJsonYieldsEmptyRatherThanThrowing() {
+        assertThat(Zgrab2JsonParser.parseSshAlgorithms("not json")).isEmpty();
+        assertThat(Zgrab2JsonParser.parseSshAlgorithms(null)).isEmpty();
+    }
+
     @Test
     void parsesSuccessfulSshBanner() {
         String json = """

@@ -36,7 +36,10 @@ import org.springframework.stereotype.Component;
  * drop-in for a full protocol-fingerprinting script library or a
  * decades-accumulated service/version signature database - this is an
  * honest, narrower identification pass, not a feature-for-feature port of
- * every capability a heavier commercial-licensed scanner might offer.
+ * every capability a heavier commercial-licensed scanner might offer. Port
+ * 22 additionally gets a full zgrab2 SSH handshake (not just a banner grab)
+ * so {@link SshAlgorithmDecisionLogic} can flag weak KEX/host-key/cipher/MAC
+ * algorithms the server is willing to offer - see NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED.
  *
  * <p>ScanRunService#createDeepScan dispatches one job per host (root plus
  * known subdomains, capped) rather than one job carrying every host - so
@@ -63,6 +66,7 @@ public class DeepPortScanModule implements ScanModule {
     private static final int IDENTIFY_POOL_SIZE = 8;
     private static final long PER_PORT_TIMEOUT_SECONDS = 20;
     private static final int FTP_PORT = 21;
+    private static final int SSH_PORT = 22;
 
     private final NaabuFetcher naabuFetcher = new NaabuFetcher();
     private final Zgrab2Fetcher zgrab2Fetcher = new Zgrab2Fetcher();
@@ -165,6 +169,21 @@ public class DeepPortScanModule implements ScanModule {
             String anon = FtpAnonymousChecker.checkAnonymousLogin(address);
             if (anon != null) {
                 scriptOutputs.put("ftp-anon", anon);
+            }
+        } else if (port == SSH_PORT) {
+            try {
+                var algorithms = Zgrab2JsonParser.parseSshAlgorithms(zgrab2Fetcher.sshJson(ip, port));
+                if (algorithms.isPresent()) {
+                    var weak = SshAlgorithmDecisionLogic.findWeak(algorithms.get());
+                    if (!weak.isEmpty()) {
+                        scriptOutputs.put("ssh-weak-kex", String.join(", ", weak.kex()));
+                        scriptOutputs.put("ssh-weak-hostkey", String.join(", ", weak.hostKey()));
+                        scriptOutputs.put("ssh-weak-cipher", String.join(", ", weak.ciphers()));
+                        scriptOutputs.put("ssh-weak-mac", String.join(", ", weak.macs()));
+                    }
+                }
+            } catch (ScanModuleException e) {
+                log.debug("SSH algorithm check for {}:{} failed: {}", ip, port, e.getMessage());
             }
         }
 
