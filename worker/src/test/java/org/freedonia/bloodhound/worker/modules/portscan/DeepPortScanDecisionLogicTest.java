@@ -25,6 +25,10 @@ class DeepPortScanDecisionLogicTest {
         return new PortDetail(id, "ftp", "vsftpd", "3.0.3", Map.of(scriptId, output), "IPv4");
     }
 
+    private static PortDetail sshPortWithWeakAlgorithms(Map<String, String> scriptOutputs) {
+        return new PortDetail(22, "ssh", "OpenSSH", "6.6.1p1", scriptOutputs, "IPv4");
+    }
+
     @Test
     void noOpenPorts_onlySummaryFindingWithZeroCount() {
         List<RawFinding> findings = DeepPortScanDecisionLogic.decide("example.com", List.of());
@@ -82,6 +86,40 @@ class DeepPortScanDecisionLogicTest {
         List<RawFinding> findings =
                 DeepPortScanDecisionLogic.decide("example.com", List.of(portWithScript(443, "http-title", "Example")));
         assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("NETWORK_ANONYMOUS_FTP");
+    }
+
+    @Test
+    void sshWeakAlgorithmScriptOutputs_flagsHighSeverityFinding() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "example.com",
+                List.of(sshPortWithWeakAlgorithms(Map.of(
+                        "ssh-weak-kex", "diffie-hellman-group1-sha1", "ssh-weak-hostkey", "ssh-rsa"))));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.severity().name()).isEqualTo("HIGH");
+        assertThat(finding.affectedAsset()).isEqualTo("example.com:22");
+        assertThat(finding.evidence())
+                .containsEntry("weakkexAlgorithms", "diffie-hellman-group1-sha1")
+                .containsEntry("weakhostkeyAlgorithms", "ssh-rsa");
+        assertThat(finding.description()).contains("diffie-hellman-group1-sha1").contains("ssh-rsa");
+    }
+
+    @Test
+    void sshNoWeakAlgorithmScriptOutputs_noFinding() {
+        List<RawFinding> findings =
+                DeepPortScanDecisionLogic.decide("example.com", List.of(sshPortWithWeakAlgorithms(Map.of())));
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED");
+    }
+
+    @Test
+    void sshWeakAlgorithmScriptOutputsPresentButBlank_noFinding() {
+        // DeepPortScanModule only ever puts a key in scriptOutputs when its weak list is non-empty,
+        // but guard the blank-value case defensively too, same tolerant style as the rest of this class.
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "example.com", List.of(sshPortWithWeakAlgorithms(Map.of("ssh-weak-kex", ""))));
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED");
     }
 
     @Test
