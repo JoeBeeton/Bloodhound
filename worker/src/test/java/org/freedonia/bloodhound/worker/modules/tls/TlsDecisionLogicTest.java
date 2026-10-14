@@ -106,6 +106,28 @@ class TlsDecisionLogicTest {
         });
     }
 
+    /** SSLv3's own CBC-mode design flaw is POODLE itself - no separate probe needed, just a distinct, explicitly-named finding alongside the generic legacy-protocol one. */
+    @Test
+    void sslv3Supported_alsoFlaggedAsPoodleVulnerable() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, true, "SSLv3",
+                false, null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(ruleIds(findings)).contains("TLS_WEAK_PROTOCOL_SUPPORTED", "TLS_POODLE_VULNERABLE");
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_POODLE_VULNERABLE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com");
+        });
+    }
+
+    @Test
+    void sslv3NotSupported_notFlaggedAsPoodleVulnerable() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_POODLE_VULNERABLE");
+    }
+
     @Test
     void tls13NotSupported_flaggedLow() {
         TlsFetchResult r = new TlsFetchResult(

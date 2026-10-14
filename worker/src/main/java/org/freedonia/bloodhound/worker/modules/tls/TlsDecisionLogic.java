@@ -75,6 +75,15 @@ public final class TlsDecisionLogic {
         // until the probe itself was fixed (see LegacyTlsProbeSupport).
         if (r.sslv3Supported()) {
             findings.add(legacyProtocol(hostname, "SSLv3"));
+            // POODLE (CVE-2014-3566) exploits SSLv3's own CBC-mode padding design directly - there
+            // is no patch for this short of disabling SSLv3 entirely, so the protocol being
+            // reachable at all (independent of which cipher suite actually gets negotiated) is
+            // sufficient to conclude vulnerability, matching every major scanner's own treatment of
+            // this specific named CVE. A distinct, explicitly-named finding (not just folded into
+            // the generic legacy-protocol one above) closes a real gap found comparing this module
+            // against Qualys SSL Labs/testssl.sh: a security team searching for "POODLE" by name
+            // would otherwise find nothing here even though the exact same signal already exists.
+            findings.add(finding("TLS_POODLE_VULNERABLE", Severity.CRITICAL, hostname, Map.of()));
         }
         if (r.tls1Supported()) {
             findings.add(legacyProtocol(hostname, "TLSv1"));
@@ -274,6 +283,15 @@ public final class TlsDecisionLogic {
                     }),
             Map.entry("TLS_WEAK_PROTOCOL_SUPPORTED",
                     new String[] {"Legacy TLS protocol supported", "The server accepted a handshake using a deprecated TLS protocol version."}),
+            Map.entry("TLS_POODLE_VULNERABLE",
+                    new String[] {
+                        "Vulnerable to POODLE (CVE-2014-3566)",
+                        "This server still accepts SSLv3, whose CBC-mode cipher suites have a padding "
+                                + "design flaw with no fix short of disabling the protocol entirely - an "
+                                + "attacker able to intercept and manipulate traffic (e.g. on a shared network) "
+                                + "can use repeated padding-oracle requests to decrypt small amounts of "
+                                + "plaintext, such as session cookies, one byte at a time."
+                    }),
             Map.entry("TLS_WEAK_CIPHER_SUITE",
                     new String[] {
                         "Weak TLS cipher suite accepted",
