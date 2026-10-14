@@ -51,7 +51,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>Candidates come from {@link BucketNameGenerator} (target-hostname stem
  * crossed with common bucket-naming conventions, capped) checked against
- * five S3-API-compatible providers via {@link CloudBucketDecisionLogic}.
+ * five S3-API-compatible providers plus Azure Blob Storage (its own,
+ * differently-shaped API and candidate space - see
+ * {@link BucketNameGenerator#generateAzureAccountCandidates}) via {@link CloudBucketDecisionLogic}.
  * Rate-limited per *provider* host (see {@link
  * CloudBucketDecisionLogic#rateLimitKeyFor}), not per generated candidate
  * hostname - hundreds of distinct candidate hostnames all resolve to the
@@ -122,13 +124,40 @@ public class BucketBruteForceModule implements ScanModule {
         candidateSet.addAll(largeBatch.candidates());
         List<String> candidates = new ArrayList<>(candidateSet);
 
+        // Single-name providers (every one except Azure) share the same candidate list - see
+        // CloudBucketDecisionLogic.Provider. Azure needs an account name AND a container name
+        // crossed together (a different, smaller candidate space - see
+        // BucketNameGenerator#generateAzureAccountCandidates), so it's built as its own set of
+        // compound "account/container" candidateNames rather than forced into the uniform loop.
+        List<CloudBucketDecisionLogic.Provider> singleNameProviders = new ArrayList<>();
+        for (CloudBucketDecisionLogic.Provider provider : CloudBucketDecisionLogic.Provider.values()) {
+            if (provider != CloudBucketDecisionLogic.Provider.AZURE_BLOB) {
+                singleNameProviders.add(provider);
+            }
+        }
+        List<String> azureCandidates = new ArrayList<>();
+        for (String account : BucketNameGenerator.generateAzureAccountCandidates(hostname)) {
+            for (String container : BucketNameGenerator.AZURE_CONTAINER_NAMES) {
+                azureCandidates.add(account + "/" + container);
+            }
+        }
+
         List<Check> checks = new ArrayList<>();
+        int totalPossibleChecks = 0;
         for (String candidate : candidates) {
-            for (CloudBucketDecisionLogic.Provider provider : CloudBucketDecisionLogic.Provider.values()) {
+            for (CloudBucketDecisionLogic.Provider provider : singleNameProviders) {
+                totalPossibleChecks++;
                 Check check = new Check(candidate, provider);
                 if (!excludeKeys.contains(check.key())) {
                     checks.add(check);
                 }
+            }
+        }
+        for (String azureCandidate : azureCandidates) {
+            totalPossibleChecks++;
+            Check check = new Check(azureCandidate, CloudBucketDecisionLogic.Provider.AZURE_BLOB);
+            if (!excludeKeys.contains(check.key())) {
+                checks.add(check);
             }
         }
 
@@ -150,7 +179,8 @@ public class BucketBruteForceModule implements ScanModule {
 
         Map<String, Object> rawMetadata = new LinkedHashMap<>();
         rawMetadata.put("candidatesGenerated", candidates.size());
-        rawMetadata.put("checksSkippedAlreadyChecked", (candidates.size() * CloudBucketDecisionLogic.Provider.values().length) - checks.size());
+        rawMetadata.put("azureCandidatesGenerated", azureCandidates.size());
+        rawMetadata.put("checksSkippedAlreadyChecked", totalPossibleChecks - checks.size());
         rawMetadata.put("checksAttempted", checks.size());
         rawMetadata.put("checkedCandidates", checkedCandidates);
         // Reported unconditionally (even when largeWordlistBatchSize is 0, where nextOffset just
@@ -238,6 +268,11 @@ public class BucketBruteForceModule implements ScanModule {
             HttpRequest request = HttpRequest.newBuilder(uri)
                     .timeout(REQUEST_TIMEOUT)
                     .header("User-Agent", ScanUserAgent.VALUE)
+                    // Required for a clean 200/401 distinction from Azure Blob Storage specifically
+                    // (verified live: omitting it returns a generic "FeatureVersionMismatch" error
+                    // regardless of whether the container is actually public) - harmless no-op
+                    // header for every other provider.
+                    .header("x-ms-version", "2020-04-08")
                     .GET()
                     .build();
             HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());

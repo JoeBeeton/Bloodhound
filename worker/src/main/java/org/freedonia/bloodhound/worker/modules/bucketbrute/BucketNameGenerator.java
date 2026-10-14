@@ -129,6 +129,55 @@ final class BucketNameGenerator {
         return LARGE_WORDLIST.size();
     }
 
+    /**
+     * Common Azure Blob Storage container names - a different naming convention entirely from the
+     * bucket-name wordlists above: container names are short and often generic, and "$web"
+     * specifically is Azure's own fixed, reserved container name for static-website hosting (not
+     * a guess at all - any storage account with that feature enabled uses exactly this name).
+     */
+    static final List<String> AZURE_CONTAINER_NAMES = List.of(
+            "$web", "public", "backup", "backups", "data", "files", "uploads", "images", "assets", "media",
+            "documents", "static", "container1");
+
+    /**
+     * Azure needs an account-name guess AND a container-name guess crossed together (see
+     * CloudBucketDecisionLogic's own javadoc on why passive CNAME-based discovery can't identify
+     * Azure containers at all) - keeping this side of the cross-product close to brand-exact
+     * variants, not the full ~400-candidate {@link #generate} list, keeps total request volume for
+     * this one extra provider proportionate to what the other five already budget for combined
+     * (see BucketBruteForceModule's own OVERALL_BUDGET reasoning).
+     *
+     * <p>Azure storage account names are stricter than S3 bucket names: lowercase letters and
+     * digits only (no hyphens), 3-24 characters - {@link #sanitizedStem} allows hyphens (needed
+     * for multi-label domains like "jaja.co.uk" -> "jaja-co"), so hyphens are stripped again here
+     * specifically for this candidate set.
+     */
+    static List<String> generateAzureAccountCandidates(String rootHostname) {
+        String stem = sanitizedStem(rootHostname);
+        if (stem == null) {
+            return List.of();
+        }
+        Set<String> candidates = new LinkedHashSet<>();
+        candidates.add(azureSafe(stem));
+        for (String prefix : PREFIXES) {
+            candidates.add(azureSafe(prefix + stem));
+        }
+        for (String year : YEARS) {
+            candidates.add(azureSafe(stem + year));
+        }
+        candidates.removeIf(c -> c.length() < 3);
+        return new ArrayList<>(candidates);
+    }
+
+    private static final int AZURE_ACCOUNT_NAME_MAX_LENGTH = 24;
+
+    private static String azureSafe(String candidate) {
+        String stripped = candidate.replace("-", "");
+        return stripped.length() > AZURE_ACCOUNT_NAME_MAX_LENGTH
+                ? stripped.substring(0, AZURE_ACCOUNT_NAME_MAX_LENGTH)
+                : stripped;
+    }
+
     /** Tolerant of a missing resource (returns empty, same "degrade, don't fail the module"
      * philosophy as the rest of this class) - the classpath resource not being found would mean a
      * packaging bug, not a runtime condition worth throwing over. */

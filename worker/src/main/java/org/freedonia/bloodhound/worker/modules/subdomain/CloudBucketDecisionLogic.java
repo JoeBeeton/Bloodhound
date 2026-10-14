@@ -29,11 +29,17 @@ import java.util.Optional;
  * CNAME target alone never identifies which container to check, and
  * guessing container names would cross into the brute-forcing this specific
  * method deliberately avoids. A real, documented gap, not an oversight.
- * {@link #directBucketUrl} covers three more providers on top of S3/GCS
- * (DigitalOcean Spaces, Linode, Scaleway) since brute-force naturally lifts
- * the CNAME-derivability constraint that limited passive discovery - each
- * checked against one representative/default region only (a scoped
- * limitation, not full multi-region coverage).
+ * {@link #directBucketUrl} covers four more providers on top of S3/GCS
+ * (DigitalOcean Spaces, Linode, Scaleway, Azure Blob Storage) since brute-force naturally lifts
+ * the CNAME-derivability constraint that limited passive discovery - DigitalOcean/Linode/Scaleway
+ * each checked against one representative/default region only (a scoped limitation, not full
+ * multi-region coverage). Azure closes the one gap this class's own javadoc used to flag as "a
+ * real, documented gap, not an oversight" - brute-force needs a *candidate* name rather than a
+ * discovered CNAME anyway, so the reason passive discovery couldn't identify an Azure container
+ * (the CNAME alone never names it) doesn't apply here; see BucketNameGenerator's own
+ * generateAzureAccountCandidates for why Azure gets a smaller, two-dimensional candidate set
+ * (account name x container name) rather than reusing the single-name list every other provider
+ * shares.
  */
 public final class CloudBucketDecisionLogic {
 
@@ -42,13 +48,23 @@ public final class CloudBucketDecisionLogic {
         GCS,
         DIGITALOCEAN_SPACES,
         LINODE,
-        SCALEWAY
+        SCALEWAY,
+        AZURE_BLOB
     }
 
     record Match(Provider provider, String checkUrl) {}
 
     /** Both S3 and GCS's public/no-auth listing responses share this exact root element - GCS's XML API deliberately mimics S3's for compatibility, confirmed public knowledge from both providers' own docs. DigitalOcean Spaces, Linode Object Storage, and Scaleway Object Storage all implement the S3 API directly, so they share it too. */
     private static final String LISTING_MARKER = "<ListBucketResult";
+
+    /** Azure Blob Storage's container-listing API is NOT S3-compatible (a completely different
+     * REST API), so a public listing has its own distinct root element - verified live against a
+     * real public Azure storage account (Microsoft's own azureopendatastorage, nyctlc container):
+     * HTTP 200 with a body starting "<EnumerationResults ServiceEndpoint=...". A private/
+     * nonexistent container on a real account instead returns HTTP 401 with an
+     * "AuthenticationErrorDetail"/"NoAuthenticationInformation" error body - confirmed against the
+     * same real account with a made-up container name. */
+    private static final String AZURE_LISTING_MARKER = "<EnumerationResults";
 
     private CloudBucketDecisionLogic() {}
 
@@ -68,7 +84,24 @@ public final class CloudBucketDecisionLogic {
             case DIGITALOCEAN_SPACES -> "https://" + bucketName + ".nyc3.digitaloceanspaces.com/";
             case LINODE -> "https://" + bucketName + ".us-east-1.linodeobjects.com/";
             case SCALEWAY -> "https://" + bucketName + ".s3.fr-par.scw.cloud/";
+            case AZURE_BLOB -> azureContainerUrl(bucketName);
         };
+    }
+
+    /**
+     * Azure is the one provider needing two names, not one - {@code candidateName} is the compound
+     * "account/container" form BucketBruteForceModule builds (see its own AzureCheck handling),
+     * keeping the shared Check/exclude-list machinery working unchanged for every provider rather
+     * than giving Azure its own parallel bookkeeping. Falls back to "$web" (the one container name
+     * every Azure static-website-hosting account is guaranteed to use, not a guess) if the compound
+     * form wasn't actually provided - defensive, not an expected path given the module always
+     * builds this with a slash.
+     */
+    private static String azureContainerUrl(String candidateName) {
+        int slash = candidateName.indexOf('/');
+        String account = slash < 0 ? candidateName : candidateName.substring(0, slash);
+        String container = slash < 0 ? "$web" : candidateName.substring(slash + 1);
+        return "https://" + account + ".blob.core.windows.net/" + container + "?restype=container&comp=list&maxresults=1";
     }
 
     /** The shared provider hostname brute-force checks against {@code provider} should be
@@ -84,6 +117,11 @@ public final class CloudBucketDecisionLogic {
             case DIGITALOCEAN_SPACES -> "digitaloceanspaces.com";
             case LINODE -> "linodeobjects.com";
             case SCALEWAY -> "scw.cloud";
+            // One shared logical key despite each account living on its own subdomain
+            // (<account>.blob.core.windows.net) - still the same underlying Azure edge network,
+            // and the module's own courtesy rate-limiting is about not bursting one provider's
+            // infrastructure, not about any single hostname.
+            case AZURE_BLOB -> "blob.core.windows.net";
         };
     }
 
@@ -108,6 +146,8 @@ public final class CloudBucketDecisionLogic {
     }
 
     public static boolean isPubliclyListable(int statusCode, String responseBody) {
-        return statusCode == 200 && responseBody != null && responseBody.contains(LISTING_MARKER);
+        return statusCode == 200
+                && responseBody != null
+                && (responseBody.contains(LISTING_MARKER) || responseBody.contains(AZURE_LISTING_MARKER));
     }
 }

@@ -127,4 +127,47 @@ class BucketNameGeneratorTest {
 
         assertThat(batch.candidates()).isEmpty();
     }
+
+    @Test
+    void generateAzureAccountCandidates_strippedOfHyphens_unlikeGenerate() {
+        // "jaja-co" (the regular generate() stem for jaja.co.uk) is invalid as an Azure storage
+        // account name - hyphens aren't allowed at all, unlike S3 bucket names.
+        List<String> candidates = BucketNameGenerator.generateAzureAccountCandidates("jaja.co.uk");
+
+        assertThat(candidates).contains("jajaco");
+        assertThat(candidates).allSatisfy(c -> assertThat(c).matches("[a-z0-9]+"));
+    }
+
+    @Test
+    void generateAzureAccountCandidates_cappedAtAzuresOwn24CharLimit() {
+        List<String> candidates = BucketNameGenerator.generateAzureAccountCandidates("acme.com");
+
+        assertThat(candidates).allSatisfy(c -> assertThat(c.length()).isLessThanOrEqualTo(24));
+    }
+
+    @Test
+    void generateAzureAccountCandidates_muchSmallerThanTheFullWordlistCrossProduct() {
+        // Deliberately scoped down (see the method's own javadoc) - not the ~400-candidate range
+        // generate() produces, since Azure crosses this list against container names too.
+        List<String> candidates = BucketNameGenerator.generateAzureAccountCandidates("acme.com");
+
+        assertThat(candidates.size()).isLessThan(30);
+    }
+
+    @Test
+    void generateAzureAccountCandidates_tooShortStem_yieldsNoCandidates() {
+        assertThat(BucketNameGenerator.generateAzureAccountCandidates("a.com")).isEmpty();
+    }
+
+    @Test
+    void generateAzureAccountCandidates_nullHostname_yieldsNoCandidates() {
+        assertThat(BucketNameGenerator.generateAzureAccountCandidates(null)).isEmpty();
+    }
+
+    @Test
+    void azureContainerNames_includesTheReservedStaticWebsiteContainer() {
+        // "$web" isn't a guess - it's Azure's own fixed, reserved container name for static
+        // website hosting, used verbatim by any account with that feature enabled.
+        assertThat(BucketNameGenerator.AZURE_CONTAINER_NAMES).contains("$web");
+    }
 }

@@ -76,6 +76,25 @@ class CloudBucketDecisionLogicTest {
                 .isTrue();
     }
 
+    /** The real, live-captured response shape from a genuinely public Azure storage account (Microsoft's own azureopendatastorage/nyctlc). */
+    @Test
+    void publiclyListable_azureEnumerationResultsMarker_alsoRecognized() {
+        assertThat(CloudBucketDecisionLogic.isPubliclyListable(
+                        200,
+                        "﻿<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults "
+                                + "ServiceEndpoint=\"https://acme.blob.core.windows.net/\" "
+                                + "ContainerName=\"public\"><Blobs>...</Blobs></EnumerationResults>"))
+                .isTrue();
+    }
+
+    /** The real, live-captured response shape for a private/nonexistent container on a real Azure account. */
+    @Test
+    void azureNoAuthError_notListable() {
+        assertThat(CloudBucketDecisionLogic.isPubliclyListable(
+                        401, "<?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>NoAuthenticationInformation</Code></Error>"))
+                .isFalse();
+    }
+
     @Test
     void accessDenied_notListable() {
         assertThat(CloudBucketDecisionLogic.isPubliclyListable(403, "<Error><Code>AccessDenied</Code></Error>"))
@@ -108,6 +127,19 @@ class CloudBucketDecisionLogicTest {
     }
 
     @Test
+    void directBucketUrl_azure_splitsCompoundAccountSlashContainerName() {
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.AZURE_BLOB, "acme/public"))
+                .isEqualTo("https://acme.blob.core.windows.net/public?restype=container&comp=list&maxresults=1");
+    }
+
+    /** No slash in the candidate (shouldn't happen given how BucketBruteForceModule always builds it) falls back to "$web" rather than throwing. */
+    @Test
+    void directBucketUrl_azure_missingSlash_fallsBackToWebContainer() {
+        assertThat(CloudBucketDecisionLogic.directBucketUrl(CloudBucketDecisionLogic.Provider.AZURE_BLOB, "acme"))
+                .isEqualTo("https://acme.blob.core.windows.net/$web?restype=container&comp=list&maxresults=1");
+    }
+
+    @Test
     void rateLimitKeyFor_isTheSharedProviderHost_notThePerCandidateHostname() {
         // Every candidate resolves to a distinct hostname on the same shared provider
         // infrastructure - the rate-limit key must be the provider host, not the candidate's
@@ -117,5 +149,7 @@ class CloudBucketDecisionLogicTest {
                 .isEqualTo("s3.amazonaws.com");
         assertThat(CloudBucketDecisionLogic.rateLimitKeyFor(CloudBucketDecisionLogic.Provider.GCS))
                 .isEqualTo("storage.googleapis.com");
+        assertThat(CloudBucketDecisionLogic.rateLimitKeyFor(CloudBucketDecisionLogic.Provider.AZURE_BLOB))
+                .isEqualTo("blob.core.windows.net");
     }
 }
