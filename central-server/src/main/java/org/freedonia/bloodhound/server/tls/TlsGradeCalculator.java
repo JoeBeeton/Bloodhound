@@ -12,12 +12,19 @@ import org.freedonia.bloodhound.server.findings.FindingRepository.TlsFindingRow;
  * page, on top of the existing per-finding detail already shown in the Findings tab.
  *
  * <p>This is a deliberate, documented simplification of Qualys's own methodology, not a claim of
- * parity with it: Qualys also factors in several named-vulnerability checks (Heartbleed, POODLE,
- * DROWN, ROBOT, Ticketbleed, insecure renegotiation, TLS compression/CRIME) that this product does
- * not yet implement (see TLS module capability comparison) - those simply can't contribute to or
- * cap this grade until they exist as findings. What's implemented here mirrors Qualys's own
- * published grading caps (see https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide)
- * for every check this product's TLS module actually performs.
+ * parity with it: Qualys also factors in several named-vulnerability checks this product does not
+ * implement - Heartbleed, DROWN, ROBOT, Ticketbleed, insecure renegotiation, and TLS compression/
+ * CRIME are all deliberately out of scope (each individually documented in TlsDecisionLogic/
+ * TlsAnalysisModule's own comments: either structurally blocked by this codebase's TLS stack - no
+ * SSLv2 implementation for DROWN, no compression-method visibility for CRIME - or disproportionate
+ * engineering/verification risk for a vulnerability class with near-zero real-world prevalence in
+ * 2026 traffic, e.g. Heartbleed needing hand-crafted raw protocol bytes this team has no way to
+ * verify against a genuinely vulnerable test target). POODLE, by contrast, is implemented
+ * (TLS_POODLE_VULNERABLE) since it needed no new probe at all - SSLv3's CBC-mode flaw has no fix
+ * short of disabling the protocol, so the existing SSLv3-support signal already proves it. What's
+ * implemented here mirrors Qualys's own published grading caps (see
+ * https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide) for every check this product's
+ * TLS module actually performs.
  *
  * <p><b>Known limitation: A+ is not reachable with the current rule set.</b> Every TLS-category
  * rule this calculator recognizes either caps the grade or disqualifies the A+ tier specifically
@@ -74,7 +81,10 @@ public final class TlsGradeCalculator {
 
         for (TlsFindingRow f : findings) {
             Integer cap = switch (f.ruleId()) {
-                case "TLS_CERT_EXPIRED", "TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN", "TLS_CERT_HOSTNAME_MISMATCH" -> RANK_F;
+                case "TLS_CERT_EXPIRED",
+                        "TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN",
+                        "TLS_CERT_HOSTNAME_MISMATCH",
+                        "TLS_POODLE_VULNERABLE" -> RANK_F;
                 case "TLS_WEAK_PROTOCOL_SUPPORTED" -> "SSLv3".equals(f.protocol()) ? RANK_F : RANK_B;
                 case "TLS_WEAK_CIPHER_SUITE" -> weakCipherCap(f.cipherSuite());
                 case "TLS_NO_FORWARD_SECRECY", "TLS_CERT_SIGNATURE_ALGORITHM_WEAK", "TLS_CT_UNEXPECTED_ISSUER" -> RANK_B;

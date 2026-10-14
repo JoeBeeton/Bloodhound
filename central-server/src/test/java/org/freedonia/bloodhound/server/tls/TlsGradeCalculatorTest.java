@@ -61,6 +61,15 @@ class TlsGradeCalculatorTest {
     }
 
     @Test
+    void poodleVulnerable_gradeF() {
+        TlsGradeCalculator.Result result = TlsGradeCalculator.calculate(
+                List.of(new TlsFindingRow("TLS_POODLE_VULNERABLE", "Vulnerable to POODLE (CVE-2014-3566)", null, null)));
+        assertThat(result.grade()).isEqualTo("F");
+        assertThat(result.factors()).hasSize(1);
+        assertThat(result.factors().get(0).ruleId()).isEqualTo("TLS_POODLE_VULNERABLE");
+    }
+
+    @Test
     void tls1Supported_cappedB_notF() {
         assertThat(TlsGradeCalculator.calculate(
                         List.of(new TlsFindingRow("TLS_WEAK_PROTOCOL_SUPPORTED", "title", "TLSv1", null)))
