@@ -663,15 +663,25 @@ public class FindingRepository {
     /** One row per open TLS-category finding for a hostname - the input to TlsGradeCalculator. Only the evidence keys the calculator actually needs are pulled out via ->> (same precedent as findWafStatusByTarget's own matcherName extraction) rather than deserializing the whole evidence blob. */
     public record TlsFindingRow(String ruleId, String title, String protocol, String cipherSuite) {}
 
-    /** Every open TLS finding for this target, grouped by scan_scope (hostname) - see TlsGradeCalculator for how these become a letter grade. */
+    /**
+     * Every open TLS finding for this target, grouped by hostname - see TlsGradeCalculator for how
+     * these become a letter grade. Grouped by {@code affected_asset}, not {@code scan_scope}: unlike
+     * NUCLEI (a per-host Tier 2 job, see findWafStatusByTarget), TLS_ANALYSIS is a Tier 1 module
+     * that fans out across subdomains internally within one whole-target job, so scan_scope is
+     * always null for its findings - confirmed live (every TLS_1_3_NOT_SUPPORTED row for a real
+     * target had scan_scope NULL despite a correctly host-specific affected_asset). affected_asset
+     * is the one field that's always the real per-host hostname - exactly (most rules) or as
+     * "hostname: protocol" (TLS_WEAK_PROTOCOL_SUPPORTED's own convention, see TlsDecisionLogic#legacyProtocol) -
+     * so the host is extracted by splitting on the first ": " when present.
+     */
     public Map<String, List<TlsFindingRow>> findTlsFindingsByTarget(UUID targetId) {
         Map<String, List<TlsFindingRow>> result = new HashMap<>();
         jdbc.query(
-                "SELECT scan_scope, rule_id, title, evidence->>'protocol' AS protocol, "
+                "SELECT affected_asset, rule_id, title, evidence->>'protocol' AS protocol, "
                         + "evidence->>'cipherSuite' AS cipher_suite FROM findings "
-                        + "WHERE target_id = ? AND status = 'OPEN' AND category = 'TLS' AND scan_scope IS NOT NULL",
+                        + "WHERE target_id = ? AND status = 'OPEN' AND category = 'TLS'",
                 rs -> {
-                    String host = rs.getString("scan_scope");
+                    String host = hostFromAffectedAsset(rs.getString("affected_asset"));
                     result.computeIfAbsent(host, k -> new ArrayList<>())
                             .add(new TlsFindingRow(
                                     rs.getString("rule_id"),
@@ -681,6 +691,11 @@ public class FindingRepository {
                 },
                 targetId);
         return result;
+    }
+
+    private static String hostFromAffectedAsset(String affectedAsset) {
+        int separator = affectedAsset.indexOf(": ");
+        return separator < 0 ? affectedAsset : affectedAsset.substring(0, separator);
     }
 
     private String writeJson(Object value) {
