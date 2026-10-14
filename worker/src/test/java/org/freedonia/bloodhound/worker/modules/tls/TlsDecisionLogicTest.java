@@ -17,10 +17,12 @@ class TlsDecisionLogicTest {
         return findings.stream().map(RawFinding::ruleId).toList();
     }
 
+    /** Genuinely clean under every rule in this class, including the newer protocol/PFS/preload-list ones - the fixture behind the one true isEmpty() assertion. */
     private static TlsFetchResult healthy(Instant notAfter) {
         return new TlsFetchResult(
                 notAfter, true, "TLS_AES_128_GCM_SHA256", false, false, true,
-                "max-age=31536000; includeSubDomains", KNOWN_ISSUER);
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.3", true, null);
     }
 
     @Test
@@ -88,6 +90,79 @@ class TlsDecisionLogicTest {
     void neitherLegacyProtocolSupported_notFlagged() {
         List<RawFinding> findings = TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW);
         assertThat(ruleIds(findings)).doesNotContain("TLS_WEAK_PROTOCOL_SUPPORTED");
+    }
+
+    /** SSLv3 shares the same TLS_WEAK_PROTOCOL_SUPPORTED rule and "<host>: <protocol>" asset convention as TLSv1/TLSv1.1. */
+    @Test
+    void sslv3Supported_flaggedUnderTheSameLegacyProtocolRule() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, true, "SSLv3",
+                false, null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_WEAK_PROTOCOL_SUPPORTED");
+            assertThat(f.affectedAsset()).isEqualTo("example.com: SSLv3");
+        });
+    }
+
+    @Test
+    void tls13NotSupported_flaggedLow() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.2", false, null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_1_3_NOT_SUPPORTED");
+            assertThat(f.severity().name()).isEqualTo("LOW");
+        });
+    }
+
+    @Test
+    void tls13Supported_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_1_3_NOT_SUPPORTED");
+    }
+
+    /** RSA key exchange (no ECDHE/DHE) at TLS1.2 - the server's own choice from a client offering both. */
+    @Test
+    void nonPfsCipherAtTls12_flaggedNoForwardSecrecy() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_RSA_WITH_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.2", false, null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_NO_FORWARD_SECRECY");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.evidence()).containsEntry("cipherSuite", "TLS_RSA_WITH_AES_128_GCM_SHA256");
+        });
+    }
+
+    @Test
+    void ecdheCipherAtTls12_notFlaggedNoForwardSecrecy() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.2", false, null);
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).doesNotContain("TLS_NO_FORWARD_SECRECY");
+    }
+
+    /** TLS1.3 cipher suite names never encode key exchange (every 1.3 suite is inherently forward-secret) - must not be judged by name alone. */
+    @Test
+    void tls13CipherNameWithNoKexMarker_notFlaggedNoForwardSecrecy() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_NO_FORWARD_SECRECY");
+    }
+
+    @Test
+    void nullCipherSuite_notFlaggedNoForwardSecrecy() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, null, false, false, true,
+                "max-age=31536000; includeSubDomains", KNOWN_ISSUER, "TLS_RSA_WITH_RC4_128_SHA", null, null, null,
+                null, false, null, false, null);
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).doesNotContain("TLS_NO_FORWARD_SECRECY");
     }
 
     @Test
@@ -165,12 +240,47 @@ class TlsDecisionLogicTest {
         assertThat(ruleIds(TlsDecisionLogic.decide("example.com", weak, NOW))).doesNotContain("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
     }
 
+    /** Orthogonal to eligibility: the header's own values can clear the bar while the real list still says otherwise. */
+    @Test
+    void hstsPreloadTokenButRealListStatusUnknown_flaggedNotOnPreloadList() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains; preload", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.3", true, "unknown");
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_HSTS_NOT_ON_PRELOAD_LIST");
+            assertThat(f.evidence()).containsEntry("preloadListStatus", "unknown");
+        });
+        // Eligible by the header's own values - this is specifically the real-list-status gap, not an eligibility gap.
+        assertThat(ruleIds(findings)).doesNotContain("TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+    }
+
+    @Test
+    void hstsPreloadTokenAndActuallyPreloaded_notFlagged() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains; preload", KNOWN_ISSUER, null, null, null, null, null, false,
+                "TLSv1.3", true, "preloaded");
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).doesNotContain("TLS_HSTS_NOT_ON_PRELOAD_LIST");
+    }
+
+    /** preloadListStatus is null whenever the lookup wasn't attempted/failed - silence, not a false "not on list" finding. */
+    @Test
+    void hstsPreloadTokenButStatusLookupUnavailable_notFlagged() {
+        assertThat(ruleIds(TlsDecisionLogic.decide("example.com", healthy(NOW.plus(200, ChronoUnit.DAYS)), NOW)))
+                .doesNotContain("TLS_HSTS_NOT_ON_PRELOAD_LIST");
+    }
+
     @Test
     void httpsUnreachable_skipsHstsFindingsEntirely() {
         TlsFetchResult r = new TlsFetchResult(
                 NOW.plus(200, ChronoUnit.DAYS), true, "TLS_AES_128_GCM_SHA256", false, false, false, null, KNOWN_ISSUER);
         List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
-        assertThat(ruleIds(findings)).doesNotContain("TLS_NO_HSTS", "TLS_HSTS_SHORT_MAX_AGE", "TLS_HSTS_PRELOAD_NOT_ELIGIBLE");
+        assertThat(ruleIds(findings))
+                .doesNotContain(
+                        "TLS_NO_HSTS", "TLS_HSTS_SHORT_MAX_AGE", "TLS_HSTS_PRELOAD_NOT_ELIGIBLE",
+                        "TLS_HSTS_NOT_ON_PRELOAD_LIST");
     }
 
     @Test
