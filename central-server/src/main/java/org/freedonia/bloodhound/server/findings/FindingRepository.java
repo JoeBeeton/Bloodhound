@@ -660,6 +660,29 @@ public class FindingRepository {
         return result;
     }
 
+    /** One row per open TLS-category finding for a hostname - the input to TlsGradeCalculator. Only the evidence keys the calculator actually needs are pulled out via ->> (same precedent as findWafStatusByTarget's own matcherName extraction) rather than deserializing the whole evidence blob. */
+    public record TlsFindingRow(String ruleId, String title, String protocol, String cipherSuite) {}
+
+    /** Every open TLS finding for this target, grouped by scan_scope (hostname) - see TlsGradeCalculator for how these become a letter grade. */
+    public Map<String, List<TlsFindingRow>> findTlsFindingsByTarget(UUID targetId) {
+        Map<String, List<TlsFindingRow>> result = new HashMap<>();
+        jdbc.query(
+                "SELECT scan_scope, rule_id, title, evidence->>'protocol' AS protocol, "
+                        + "evidence->>'cipherSuite' AS cipher_suite FROM findings "
+                        + "WHERE target_id = ? AND status = 'OPEN' AND category = 'TLS' AND scan_scope IS NOT NULL",
+                rs -> {
+                    String host = rs.getString("scan_scope");
+                    result.computeIfAbsent(host, k -> new ArrayList<>())
+                            .add(new TlsFindingRow(
+                                    rs.getString("rule_id"),
+                                    rs.getString("title"),
+                                    rs.getString("protocol"),
+                                    rs.getString("cipher_suite")));
+                },
+                targetId);
+        return result;
+    }
+
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value == null ? java.util.Map.of() : value);

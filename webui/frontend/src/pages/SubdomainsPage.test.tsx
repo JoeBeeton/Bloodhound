@@ -24,6 +24,8 @@ function subdomain(hostname: string): Subdomain {
     currentIpAddresses: [],
     wafVendor: null,
     wafScanned: false,
+    tlsGrade: null,
+    tlsGradeFactors: [],
   };
 }
 

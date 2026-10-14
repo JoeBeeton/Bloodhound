@@ -45,6 +45,8 @@ function sub(id: string, hostname: string, isActive = true, wafOverrides: Partia
     currentIpAddresses: [],
     wafVendor: null,
     wafScanned: false,
+    tlsGrade: null,
+    tlsGradeFactors: [],
     ...wafOverrides,
   };
 }

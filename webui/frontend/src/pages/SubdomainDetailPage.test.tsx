@@ -61,6 +61,8 @@ describe("SubdomainDetailPage", () => {
           source: "crt.sh",
           isActive: true,
           currentIpAddresses: ["203.0.113.5"],
+          tlsGrade: null,
+          tlsGradeFactors: [],
         });
       }
       if (href.includes("/fingerprints")) return jsonResponse([]);
@@ -70,8 +72,63 @@ describe("SubdomainDetailPage", () => {
     renderAt("/targets/t1/subdomains/app.example.com");
 
     expect(await screen.findByText(/technology & hosting/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /tls grade/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /open findings/i })).toBeInTheDocument();
     expect(screen.getByText(/203\.0\.113\.5/)).toBeInTheDocument();
     expect(screen.queryByText("This subdomain isn't tracked for this target.")).not.toBeInTheDocument();
+  });
+
+  it("shows the TLS grade letter and the factors that drove it", async () => {
+    mockedApiFetch.mockImplementation(async (url) => {
+      const href = url.toString();
+      if (href.includes("/subdomains/")) {
+        return jsonResponse({
+          id: "sub-1",
+          hostname: "legacy.example.com",
+          firstSeenAt: "2026-01-01T00:00:00Z",
+          lastSeenAt: "2026-02-01T00:00:00Z",
+          source: "crt.sh",
+          isActive: true,
+          currentIpAddresses: [],
+          tlsGrade: "B",
+          tlsGradeFactors: [
+            { ruleId: "TLS_NO_FORWARD_SECRECY", title: "No forward secrecy", impact: "Caps grade at B" },
+          ],
+        });
+      }
+      if (href.includes("/fingerprints")) return jsonResponse([]);
+      return jsonResponse([]); // findings
+    });
+
+    renderAt("/targets/t1/subdomains/legacy.example.com");
+
+    expect(await screen.findByText("B")).toBeInTheDocument();
+    expect(screen.getByText("No forward secrecy")).toBeInTheDocument();
+    expect(screen.getByText(/Caps grade at B/)).toBeInTheDocument();
+  });
+
+  it("shows a 'no grade yet' message when the host hasn't been TLS-scanned", async () => {
+    mockedApiFetch.mockImplementation(async (url) => {
+      const href = url.toString();
+      if (href.includes("/subdomains/")) {
+        return jsonResponse({
+          id: "sub-1",
+          hostname: "fresh.example.com",
+          firstSeenAt: "2026-01-01T00:00:00Z",
+          lastSeenAt: "2026-02-01T00:00:00Z",
+          source: "crt.sh",
+          isActive: true,
+          currentIpAddresses: [],
+          tlsGrade: null,
+          tlsGradeFactors: [],
+        });
+      }
+      if (href.includes("/fingerprints")) return jsonResponse([]);
+      return jsonResponse([]); // findings
+    });
+
+    renderAt("/targets/t1/subdomains/fresh.example.com");
+
+    expect(await screen.findByText(/no tls grade yet/i)).toBeInTheDocument();
   });
 });
