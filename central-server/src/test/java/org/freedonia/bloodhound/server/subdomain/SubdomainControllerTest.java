@@ -32,6 +32,7 @@ class SubdomainControllerTest {
 
     {
         when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+        when(findingRepository.findTlsFindingsByTarget(any())).thenReturn(Map.of());
     }
 
     private final UUID orgId = UUID.randomUUID();

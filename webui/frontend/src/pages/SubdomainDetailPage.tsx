@@ -6,6 +6,7 @@ import { FindingCard } from "../components/FindingCard";
 import { FindingDetailModal } from "../components/FindingDetailModal";
 import { FindingsFilterBar, type FindingsFilterState } from "../components/FindingsFilterBar";
 import { FingerprintPanel } from "../components/TechHostingPanel";
+import { TlsGradePanel } from "../components/TlsGradePanel";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import type { Finding, FingerprintEntry, Subdomain } from "../lib/types";
@@ -120,6 +121,11 @@ export function SubdomainDetailPage() {
           </div>
         ) : (
           <>
+            <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">TLS grade</h2>
+            <div className="mb-10">
+              {subdomain && <TlsGradePanel grade={subdomain.tlsGrade} factors={subdomain.tlsGradeFactors} />}
+            </div>
+
             <h2 className="mb-3 font-mono text-sm uppercase tracking-widest text-slate-400">Technology &amp; hosting</h2>
             <div className="mb-10">
               {fingerprintsQuery.isLoading ? (

@@ -9,10 +9,12 @@ import java.util.Map;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.findings.FindingRepository.TlsFindingRow;
 import org.freedonia.bloodhound.server.findings.FindingRepository.WafStatus;
 import org.freedonia.bloodhound.server.subdomain.dto.SubdomainSummary;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
+import org.freedonia.bloodhound.server.tls.TlsGradeCalculator;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -69,8 +71,12 @@ public class SubdomainController {
         int boundedOffset = Math.max(offset, 0);
 
         Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
+        Map<String, List<TlsFindingRow>> tlsFindingsByHost = findingRepository.findTlsFindingsByTarget(id);
         List<SubdomainSummary> page = subdomainRepository.findByTarget(id, hostname, boundedLimit, boundedOffset).stream()
-                .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
+                .map(s -> SubdomainSummary.from(
+                        s,
+                        wafStatusByHost.get(s.hostname()),
+                        TlsGradeCalculator.calculate(tlsFindingsByHost.get(s.hostname()))))
                 .toList();
         int totalCount = subdomainRepository.countByTarget(id, hostname);
 
@@ -136,10 +142,14 @@ public class SubdomainController {
         }
         subdomainRepository.upsert(id, hostname, "MANUAL", List.of(), null);
         Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
+        Map<String, List<TlsFindingRow>> tlsFindingsByHost = findingRepository.findTlsFindingsByTarget(id);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(subdomainRepository
                         .findByTargetAndHostname(id, hostname)
-                        .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
+                        .map(s -> SubdomainSummary.from(
+                                s,
+                                wafStatusByHost.get(s.hostname()),
+                                TlsGradeCalculator.calculate(tlsFindingsByHost.get(s.hostname()))))
                         .orElseThrow());
     }
 
@@ -162,9 +172,13 @@ public class SubdomainController {
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
+        Map<String, List<TlsFindingRow>> tlsFindingsByHost = findingRepository.findTlsFindingsByTarget(id);
         return subdomainRepository
                 .findByTargetAndHostname(id, hostname)
-                .map(s -> SubdomainSummary.from(s, wafStatusByHost.get(s.hostname())))
+                .map(s -> SubdomainSummary.from(
+                        s,
+                        wafStatusByHost.get(s.hostname()),
+                        TlsGradeCalculator.calculate(tlsFindingsByHost.get(s.hostname()))))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 }

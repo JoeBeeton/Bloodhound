@@ -217,6 +217,12 @@ export interface WorkerStatus {
   currentHost: string | null;
 }
 
+export interface TlsGradeFactor {
+  ruleId: string;
+  title: string;
+  impact: string;
+}
+
 export interface Subdomain {
   id: string;
   hostname: string;
@@ -229,6 +235,10 @@ export interface Subdomain {
   wafVendor: string | null;
   /** Same meaning as Target's own wafScanned, for this subdomain. */
   wafScanned: boolean;
+  /** A+ through F, or null when this host has no open TLS findings yet (not yet TLS-scanned) - see server-side TlsGradeCalculator. */
+  tlsGrade: string | null;
+  /** Which open findings drove tlsGrade and why - empty when tlsGrade is null or the host is a clean A. */
+  tlsGradeFactors: TlsGradeFactor[];
 }
 
 export interface Technology {
