@@ -77,9 +77,12 @@ public class DnsRecordFetcher {
                 .anyMatch(t -> t.toLowerCase().startsWith("v=bimi1"));
 
         List<String> dkimSelectorsFound = new ArrayList<>();
+        List<String> dkimRawTxtFound = new ArrayList<>();
         for (String selector : COMMON_DKIM_SELECTORS) {
-            if (!queryTxt(selector + "._domainkey." + hostname).isEmpty()) {
+            List<String> selectorTxt = queryTxt(selector + "._domainkey." + hostname);
+            if (!selectorTxt.isEmpty()) {
                 dkimSelectorsFound.add(selector);
+                dkimRawTxtFound.add(selectorTxt.get(0));
             }
         }
 
@@ -92,7 +95,7 @@ public class DnsRecordFetcher {
 
         return new DnsRecords(
                 txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound,
-                wildcard, danglingMx, danglingSpfIncludes, soaSerial, spfLookupCount);
+                wildcard, danglingMx, danglingSpfIncludes, soaSerial, spfLookupCount, dkimRawTxtFound);
     }
 
     /** Defensive recursion cap for a malicious/circular include chain - RFC 7208's own limit is 10 total lookups, so a legitimate chain never approaches this depth; it exists purely to guarantee termination. */

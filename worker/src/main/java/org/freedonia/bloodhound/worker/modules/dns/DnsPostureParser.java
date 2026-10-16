@@ -126,6 +126,7 @@ public final class DnsPostureParser {
             // check - kept at LOW severity to reflect that low confidence.
             findings.add(finding("DNS_DKIM_NOT_DETECTED", Severity.LOW, hostname, Map.of()));
         }
+        findings.addAll(dkimWeakKeyFindings(hostname, records));
 
         for (String danglingHost : records.danglingMxHosts()) {
             findings.add(finding(
@@ -202,6 +203,30 @@ public final class DnsPostureParser {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Threshold per current DKIM best-practice guidance (M3AAWG, dkim.org) - RSA keys below this are considered crackable with realistic resources, the same line NIST drew for RSA generally back in 2013. */
+    private static final int MIN_DKIM_RSA_KEY_BITS = 2048;
+
+    /**
+     * Only evaluates selectors this module's own best-effort probe already found (see
+     * DNS_DKIM_NOT_DETECTED above) - a selector using an uncommon name is invisible to this check
+     * for the exact same reason. Each selector is judged independently: a domain can have one
+     * strong and one weak key live at once (e.g. mid-rotation).
+     */
+    static List<RawFinding> dkimWeakKeyFindings(String hostname, DnsRecords records) {
+        List<RawFinding> findings = new ArrayList<>();
+        List<String> selectors = records.dkimSelectorsFound();
+        List<String> rawTxt = records.dkimRawTxtFound();
+        for (int i = 0; i < selectors.size() && i < rawTxt.size(); i++) {
+            String selector = selectors.get(i);
+            DkimKeyAnalyzer.rsaKeyBitLength(rawTxt.get(i)).filter(bits -> bits < MIN_DKIM_RSA_KEY_BITS).ifPresent(bits -> {
+                String asset = selector + "._domainkey." + hostname;
+                findings.add(finding(
+                        "DNS_DKIM_WEAK_KEY", Severity.MEDIUM, asset, Map.of("selector", selector, "keyBits", bits)));
+            });
+        }
+        return findings;
     }
 
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
@@ -341,5 +366,14 @@ public final class DnsPostureParser {
                                 + "selector1, selector2, k1, dkim). DKIM selector names are arbitrary, so this is a "
                                 + "best-effort check - a real DKIM setup using an uncommon selector would not be "
                                 + "detected by this probe."
+                    }),
+            Map.entry(
+                    "DNS_DKIM_WEAK_KEY",
+                    new String[] {
+                        "DKIM record uses a weak RSA key",
+                        "A DKIM TXT record was found with an RSA public key below 2048 bits - the current minimum "
+                                + "recommended by DKIM deployment guidance (M3AAWG, dkim.org), matching the same line "
+                                + "NIST drew for RSA generally in 2013. A key this size is within reach of realistic "
+                                + "factoring resources, letting an attacker forge DKIM-valid mail from this domain."
                     }));
 }

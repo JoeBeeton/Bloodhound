@@ -8,6 +8,14 @@ import org.junit.jupiter.api.Test;
 
 class DnsPostureParserTest {
 
+    /** A real, live-captured 2048-bit RSA DKIM key (github.com's "google" selector) - strong enough that compliant() produces no DNS_DKIM_WEAK_KEY finding. */
+    static final String STRONG_DKIM_TXT =
+            "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAj6T5sl/RwdSqGoYWaWaFbS2UAeyPrEmd0gogocmRfS441qwR8/0KB81Hw89P0l4YiFRrXYk7NVIGfyCRHAYYZUzCkGeOysI2EjgzLFhd/NEsbRzOEc/kWkK/RO6JFq/5lOn6M9AZw/ap9tds4JG9ApgNNdSpPxp9DmvpsOSgNMVflRxQFrk3kdS4RNAPKu/OPoA7dlR/A/pECryjRoYgENtDXzdnK70HgCekems6UDzxDj61cjyoKoXtEMF/QsaHEQ1Gjfv014rDJBsubk/kT5VqHkWHa/ia68Z5r228Ety/wFfQNjXTx/J7KGZ9GkZlKED659eiJcLnWcKDSiQlhwIDAQAB";
+
+    /** A real, live-captured 1024-bit RSA DKIM key (Microsoft's "selector2", onmicrosoft.com) - the weak-key test's positive example. */
+    static final String WEAK_DKIM_TXT =
+            "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCPkb8bu8RGWeJGk3hJrouZXIdZ+HTp/azRp8IUOHp5wKvPUAi/54PwuLscUjRk4Rh3hjIkMpKRfJJXPxWbrT7eMLric7f/S0h+qF4aqIiQqHFCDAYfMnN6V3Wbke2U5EGm0H/cAUYkaf2AtuHJ/rdY/EXaldAm00PgT9QQMez66QIDAQAB";
+
     /** Every check compliant: no findings expected unless a test overrides one field via the copy* helpers. */
     private static DnsRecords compliant() {
         return new DnsRecords(
@@ -24,7 +32,8 @@ class DnsPostureParserTest {
                 List.of(),
                 List.of(),
                 null,
-                1);
+                1,
+                List.of(STRONG_DKIM_TXT));
     }
 
     private static List<String> ruleIds(List<RawFinding> findings) {
@@ -42,7 +51,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 List.of(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_SPF_MISSING");
     }
 
@@ -52,7 +61,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 List.of("v=spf1 +all"), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_SPF_TOO_PERMISSIVE");
     }
 
@@ -62,7 +71,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 List.of("v=spf1 ~all"), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SPF_TOO_PERMISSIVE");
     }
 
@@ -72,7 +81,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_DMARC_MISSING");
     }
 
@@ -82,7 +91,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of("v=DMARC1; p=none"), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_DMARC_POLICY_NONE");
     }
 
@@ -97,7 +106,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), false, r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_CAA_MISSING");
     }
 
@@ -107,7 +116,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), false, r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNSSEC_NOT_ENABLED");
     }
 
@@ -117,7 +126,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         RawFinding dmarcMissing =
                 findings.stream().filter(f -> f.ruleId().equals("DNS_DMARC_MISSING")).findFirst().orElseThrow();
@@ -130,7 +139,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), false,
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("EMAIL_MTA_STS_MISSING");
     }
 
@@ -139,7 +148,7 @@ class DnsPostureParserTest {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), true, false,
-                r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("EMAIL_MTA_STS_MISSING");
     }
 
@@ -148,7 +157,7 @@ class DnsPostureParserTest {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
-                r.mtaStsPolicyFilePresent(), false, r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.mtaStsPolicyFilePresent(), false, r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("EMAIL_TLS_RPT_MISSING");
     }
 
@@ -157,7 +166,7 @@ class DnsPostureParserTest {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
-                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), false, r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), false, r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         RawFinding bimi = findings.stream().filter(f -> f.ruleId().equals("EMAIL_BIMI_ABSENT")).findFirst().orElseThrow();
         assertThat(bimi.severity().name()).isEqualTo("INFO");
@@ -168,7 +177,7 @@ class DnsPostureParserTest {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
-                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), List.of(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), List.of(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), List.of());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("DNS_DKIM_NOT_DETECTED");
     }
 
@@ -178,11 +187,46 @@ class DnsPostureParserTest {
     }
 
     @Test
+    void strongDkimKey_notFlaggedAsWeak() {
+        // compliant()'s own DKIM record is the real, live-captured 2048-bit github.com key.
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", compliant()))).doesNotContain("DNS_DKIM_WEAK_KEY");
+    }
+
+    @Test
+    void weakDkimKey_flagged() {
+        DnsRecords r = compliant();
+        DnsRecords records = new DnsRecords(
+                r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), List.of("selector2"),
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(),
+                List.of(WEAK_DKIM_TXT));
+        List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("DNS_DKIM_WEAK_KEY");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.affectedAsset()).isEqualTo("selector2._domainkey.example.com");
+            assertThat(f.evidence()).containsEntry("selector", "selector2").containsEntry("keyBits", 1024);
+        });
+    }
+
+    @Test
+    void multipleDkimSelectors_onlyWeakOnesFlagged() {
+        DnsRecords r = compliant();
+        DnsRecords records = new DnsRecords(
+                r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), List.of("google", "selector2"),
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(),
+                List.of(STRONG_DKIM_TXT, WEAK_DKIM_TXT));
+        List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
+        assertThat(findings.stream().filter(f -> f.ruleId().equals("DNS_DKIM_WEAK_KEY")).toList()).hasSize(1);
+    }
+
+    @Test
     void wildcardDnsDetected_flaggedAsSubdomainHygieneInfo() {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
-                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(), true, r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(), true, r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         RawFinding wildcard =
                 findings.stream().filter(f -> f.ruleId().equals("SUBDOMAIN_WILDCARD_DNS")).findFirst().orElseThrow();
@@ -201,7 +245,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of("v=DMARC1; p=reject"), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).contains("EMAIL_DMARC_RUA_MISSING");
     }
 
@@ -218,7 +262,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("EMAIL_DMARC_RUA_MISSING");
     }
 
@@ -228,7 +272,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), List.of("v=DMARC1; p=none"), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records)))
                 .contains("DNS_DMARC_POLICY_NONE", "EMAIL_DMARC_RUA_MISSING");
     }
@@ -239,7 +283,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), List.of("abandoned-mail.example.net"), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), List.of("abandoned-mail.example.net"), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("DNS_MX_TO_DANGLING_HOST");
@@ -254,7 +298,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), List.of("mx1.example.net", "mx2.example.net"), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), List.of("mx1.example.net", "mx2.example.net"), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings.stream().filter(f -> f.ruleId().equals("DNS_MX_TO_DANGLING_HOST")).count()).isEqualTo(2);
     }
@@ -271,7 +315,7 @@ class DnsPostureParserTest {
                 List.of("v=spf1 include:_spf.example.com -all", "v=spf1 include:other.example.com -all"),
                 r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("DNS_SPF_MULTIPLE_RECORDS");
@@ -290,7 +334,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), 11);
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), 11, r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("DNS_SPF_LOOKUP_LIMIT_EXCEEDED");
@@ -305,7 +349,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), 10);
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), 10, r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SPF_LOOKUP_LIMIT_EXCEEDED");
     }
 
@@ -321,7 +365,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), null);
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(), null, r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SPF_LOOKUP_LIMIT_EXCEEDED");
     }
 
@@ -331,7 +375,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), List.of("_spf.abandoned-esp.example.net"), r.soaSerial(), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), List.of("_spf.abandoned-esp.example.net"), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("DNS_SPF_INCLUDE_DANGLING");
@@ -352,7 +396,7 @@ class DnsPostureParserTest {
                 r.txtRecords(), List.of("v=DMARC1; p=reject; pct=50; rua=mailto:dmarc@example.com"), r.caaPresent(),
                 r.dnskeyPresent(), r.mtaStsTxtPresent(), r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(),
                 r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(),
-                r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("EMAIL_DMARC_PCT_BELOW_100");
@@ -374,7 +418,7 @@ class DnsPostureParserTest {
                 r.txtRecords(), List.of("v=DMARC1; p=reject; pct=100; rua=mailto:dmarc@example.com"), r.caaPresent(),
                 r.dnskeyPresent(), r.mtaStsTxtPresent(), r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(),
                 r.bimiTxtPresent(), r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(),
-                r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount());
+                r.danglingSpfIncludes(), r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("EMAIL_DMARC_PCT_BELOW_100");
     }
 
@@ -384,7 +428,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), 2015010101L, r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), 2015010101L, r.spfLookupCount(), r.dkimRawTxtFound());
         List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("DNS_SOA_SERIAL_STALE");
@@ -401,7 +445,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), Long.parseLong(recentSerial), r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), Long.parseLong(recentSerial), r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SOA_SERIAL_STALE");
     }
 
@@ -413,7 +457,7 @@ class DnsPostureParserTest {
         DnsRecords records = new DnsRecords(
                 r.txtRecords(), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
                 r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
-                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), 42L, r.spfLookupCount());
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), 42L, r.spfLookupCount(), r.dkimRawTxtFound());
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SOA_SERIAL_STALE");
     }
 
