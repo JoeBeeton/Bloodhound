@@ -211,6 +211,37 @@ class HttpHeaderParserTest {
         return new FetchResult(true, allSecureHeaders(), List.of(), null, cors);
     }
 
+    private static FetchResult withTrace(FetchResult.TraceProbe trace) {
+        return new FetchResult(true, allSecureHeaders(), List.of(), null, null, trace);
+    }
+
+    @Test
+    void traceMethodReturns200_flagged() {
+        FetchResult result = withTrace(new FetchResult.TraceProbe(200, true));
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).containsExactly("HTTP_TRACE_METHOD_ENABLED");
+    }
+
+    @Test
+    void traceMethodReturns200_withoutEchoedMarker_stillFlagged() {
+        // Not every TRACE implementation echoes the probe's own marker back verbatim, but a bare
+        // 200 (rather than 405/501) already confirms the server processes TRACE instead of
+        // rejecting it - the real finding, with or without the stronger echo confirmation.
+        FetchResult result = withTrace(new FetchResult.TraceProbe(200, false));
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).containsExactly("HTTP_TRACE_METHOD_ENABLED");
+    }
+
+    @Test
+    void traceMethodRejected_notFlagged() {
+        FetchResult result = withTrace(new FetchResult.TraceProbe(405, false));
+        assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
+    }
+
+    @Test
+    void traceProbeFailed_null_notFlagged() {
+        FetchResult result = withTrace(null);
+        assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
+    }
+
     @Test
     void contentServedOverCleartext_flaggedMedium() {
         List<RawFinding> findings = HttpHeaderParser.parse(

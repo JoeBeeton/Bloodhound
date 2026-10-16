@@ -41,6 +41,9 @@ public class HttpHeaderFetcher {
      */
     static final String CORS_PROBE_ORIGIN = "https://bh-cors-probe.invalid";
 
+    /** A distinctive marker header value - if a server's TRACE response echoes the request back (RFC 7231's own documented behavior for this method), this exact string reappearing in the response body confirms it's a genuine loop-back echo, not just any 200 response. */
+    static final String TRACE_PROBE_MARKER = "bh-trace-probe-9f3a1c";
+
     public FetchResult fetch(String hostname) throws ScanModuleException {
         FetchResult.PlainHttpProbe plainHttp = probePlainHttp(hostname);
         try {
@@ -102,6 +105,33 @@ public class HttpHeaderFetcher {
         }
     }
 
+    /**
+     * One TRACE request against the same scheme+host that just answered - the question is
+     * specifically "does this server process TRACE at all" (RFC 7231 2.1: a server SHOULD NOT
+     * support it on an externally-facing endpoint, since it enables Cross-Site Tracing in
+     * combination with other vulnerabilities), which reading the main GET's own response can
+     * never answer. {@code BodyHandlers.ofString()} (not {@code discarding()}, unlike every other
+     * probe in this class) specifically so {@code echoedMarker} can confirm the response is a
+     * genuine echo-back, not just coincidentally a 200 - capped the same way SafeHttpGet's own
+     * capped reads are, since this body is attacker-influenceable like any other target response.
+     * Best-effort: a failure here just means no TRACE evidence, not a whole-module failure.
+     */
+    private FetchResult.TraceProbe probeTraceMethod(boolean https, String hostname) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create((https ? "https://" : "http://") + hostname + "/"))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", ScanUserAgent.VALUE)
+                    .header("X-Bh-Trace-Probe", TRACE_PROBE_MARKER)
+                    .method("TRACE", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<java.io.InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            String body = SafeHttpGet.readCappedUtf8(response.body(), 10_000);
+            return new FetchResult.TraceProbe(response.statusCode(), body.contains(TRACE_PROBE_MARKER));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private HttpResponse<Void> get(String url) throws IOException, InterruptedException {
         return SafeHttpGet.get(
                 client,
@@ -121,6 +151,7 @@ public class HttpHeaderFetcher {
             }
         });
         FetchResult.CorsProbe cors = probeCors(https, hostname);
-        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp, cors);
+        FetchResult.TraceProbe trace = probeTraceMethod(https, hostname);
+        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp, cors, trace);
     }
 }
