@@ -24,6 +24,7 @@ public final class HttpHeaderParser {
         Map<String, String> headers = result.headers();
 
         requireHeader(findings, headers, hostname, "content-security-policy", "HEADER_CSP_MISSING", Severity.MEDIUM);
+        findings.addAll(cspWeakPolicyFindings(hostname, headers.get("content-security-policy")));
         requireHeader(findings, headers, hostname, "x-frame-options", "HEADER_XFO_MISSING", Severity.LOW);
         requireHeader(findings, headers, hostname, "x-content-type-options", "HEADER_XCTO_MISSING", Severity.LOW);
         requireHeader(findings, headers, hostname, "referrer-policy", "HEADER_REFERRER_POLICY_MISSING", Severity.INFO);
@@ -102,6 +103,58 @@ public final class HttpHeaderParser {
     }
 
     /**
+     * CSP's own presence (HEADER_CSP_MISSING, checked separately above) says nothing about
+     * whether the policy actually does anything - Mozilla Observatory's own CSP grading
+     * specifically downgrades a policy containing 'unsafe-inline'/'unsafe-eval' (both defeat most
+     * of CSP's real XSS-mitigation value: 'unsafe-inline' lets any injected inline &lt;script&gt;
+     * run exactly as if there were no policy at all) or a bare wildcard source (* - any origin,
+     * not just ones the site actually trusts). A gap this module had: only presence was checked,
+     * never policy quality.
+     */
+    static List<RawFinding> cspWeakPolicyFindings(String hostname, String cspHeaderValue) {
+        if (cspHeaderValue == null) {
+            return List.of();
+        }
+        List<String> weaknesses = new ArrayList<>();
+        if (cspHeaderValue.contains("unsafe-inline")) {
+            weaknesses.add("unsafe-inline");
+        }
+        if (cspHeaderValue.contains("unsafe-eval")) {
+            weaknesses.add("unsafe-eval");
+        }
+        // A directive's own value list, not the whole header: "img-src *" is a common, low-risk
+        // allowance (any image host) and must not be confused with "script-src *"/"default-src *"
+        // (any script from anywhere) - splitting on ';' then checking each directive's value list
+        // for a bare "*" token (not "*.example.com", a legitimate wildcard subdomain allowance)
+        // keeps this check from false-positiving on the common, benign case.
+        for (String directive : cspHeaderValue.split(";")) {
+            String trimmed = directive.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String[] parts = trimmed.split("\\s+");
+            String directiveName = parts[0].toLowerCase(Locale.ROOT);
+            if (!directiveName.equals("script-src") && !directiveName.equals("default-src")) {
+                continue;
+            }
+            for (int i = 1; i < parts.length; i++) {
+                if (parts[i].equals("*")) {
+                    weaknesses.add(directiveName + ": *");
+                    break;
+                }
+            }
+        }
+        if (weaknesses.isEmpty()) {
+            return List.of();
+        }
+        return List.of(finding(
+                "HEADER_CSP_WEAK_POLICY",
+                Severity.MEDIUM,
+                hostname,
+                Map.of("header", cspHeaderValue, "weaknesses", weaknesses)));
+    }
+
+    /**
      * Only judged when HTTPS is known to work for this host (result.https()) - if it doesn't,
      * there is nothing to redirect to and the missing-TLS problem is the TLS module's to report.
      * A 2xx on cleartext is the real finding (the site is fully usable without TLS, so an
@@ -168,6 +221,16 @@ public final class HttpHeaderParser {
                     new String[] {
                         "Missing Content-Security-Policy header",
                         "The response has no Content-Security-Policy header, reducing protection against XSS and data-injection attacks."
+                    }),
+            Map.entry(
+                    "HEADER_CSP_WEAK_POLICY",
+                    new String[] {
+                        "Content-Security-Policy allows unsafe or unrestricted script execution",
+                        "A Content-Security-Policy header is present, but its script-src/default-src directive "
+                                + "allows 'unsafe-inline', 'unsafe-eval', or a bare wildcard (*) source - each of "
+                                + "which defeats most of CSP's real protection against injected-script attacks. A "
+                                + "policy with 'unsafe-inline' lets an attacker-injected inline <script> run exactly "
+                                + "as if no policy were set at all."
                     }),
             Map.entry(
                     "HEADER_XFO_MISSING",

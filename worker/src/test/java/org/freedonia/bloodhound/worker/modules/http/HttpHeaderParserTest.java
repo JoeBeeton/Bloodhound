@@ -49,6 +49,78 @@ class HttpHeaderParserTest {
     }
 
     @Test
+    void cspWithUnsafeInline_flaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'");
+        FetchResult result = new FetchResult(true, h, List.of());
+        List<RawFinding> findings = HttpHeaderParser.parse("example.com", result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HEADER_CSP_WEAK_POLICY");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.evidence()).containsEntry("weaknesses", List.of("unsafe-inline"));
+        });
+    }
+
+    @Test
+    void cspWithUnsafeEval_flaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src 'self' 'unsafe-eval'");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).contains("HEADER_CSP_WEAK_POLICY");
+    }
+
+    @Test
+    void cspWithWildcardScriptSrc_flaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src 'self'; script-src *");
+        FetchResult result = new FetchResult(true, h, List.of());
+        List<RawFinding> findings = HttpHeaderParser.parse("example.com", result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HEADER_CSP_WEAK_POLICY");
+            assertThat(f.evidence()).containsEntry("weaknesses", List.of("script-src: *"));
+        });
+    }
+
+    @Test
+    void cspWithWildcardDefaultSrc_flaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src *");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).contains("HEADER_CSP_WEAK_POLICY");
+    }
+
+    /** "img-src *" (any image host) is common and benign - must not be confused with a script-src/default-src wildcard. */
+    @Test
+    void cspWithWildcardImgSrcOnly_notFlaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src 'self'; img-src *");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HEADER_CSP_WEAK_POLICY");
+    }
+
+    /** A wildcard subdomain allowance ("*.example.com") is a specific, scoped source, not the bare "any origin" wildcard. */
+    @Test
+    void cspWithWildcardSubdomainSource_notFlaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "script-src 'self' *.example.com");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HEADER_CSP_WEAK_POLICY");
+    }
+
+    @Test
+    void strictCsp_notFlaggedWeakPolicy() {
+        FetchResult result = new FetchResult(true, allSecureHeaders(), List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HEADER_CSP_WEAK_POLICY");
+    }
+
+    @Test
+    void noCspHeaderAtAll_notFlaggedWeakPolicy_onlyMissing() {
+        FetchResult result = new FetchResult(true, Map.of(), List.of());
+        List<String> ids = ruleIds(HttpHeaderParser.parse("example.com", result));
+        assertThat(ids).contains("HEADER_CSP_MISSING").doesNotContain("HEADER_CSP_WEAK_POLICY");
+    }
+
+    @Test
     void verboseServerBanner_withVersionNumber_isFlagged() {
         Map<String, String> h = allSecureHeaders();
         h.put("server", "Apache/2.4.41 (Ubuntu)");
