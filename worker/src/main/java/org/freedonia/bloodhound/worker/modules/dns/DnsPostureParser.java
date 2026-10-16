@@ -16,6 +16,8 @@ import org.freedonia.bloodhound.common.findings.Severity;
 /** Pure interpretation of already-fetched DNS records into findings - no network calls, fully unit-testable. */
 public final class DnsPostureParser {
 
+    private static final int SPF_MAX_LOOKUPS = 10;
+
     private DnsPostureParser() {}
 
     public static List<RawFinding> parse(String hostname, DnsRecords records) {
@@ -40,6 +42,18 @@ public final class DnsPostureParser {
             if (v.endsWith("+all") || v.endsWith("?all")) {
                 findings.add(finding(
                         "DNS_SPF_TOO_PERMISSIVE", Severity.MEDIUM, hostname, Map.of("record", spfRecords.get(0))));
+            }
+            // RFC 7208 4.6.4: more than 10 total include/a/mx/ptr/exists/redirect "lookup"
+            // mechanisms across the full recursive chain is a hard PermError - the single most
+            // common real-world SPF misconfiguration (chaining several third-party ESP/CRM
+            // includes adds up fast), and one a human reading just the top-level record would
+            // never notice without actually counting through every nested include.
+            if (records.spfLookupCount() != null && records.spfLookupCount() > SPF_MAX_LOOKUPS) {
+                findings.add(finding(
+                        "DNS_SPF_LOOKUP_LIMIT_EXCEEDED",
+                        Severity.HIGH,
+                        hostname,
+                        Map.of("lookupCount", records.spfLookupCount(), "limit", SPF_MAX_LOOKUPS)));
             }
         }
 
@@ -281,6 +295,16 @@ public final class DnsPostureParser {
                                 + "makes SPF evaluation return PermError regardless of what either record says - "
                                 + "mail servers checking SPF for this domain get a hard failure, not the weaker of "
                                 + "the two policies."
+                    }),
+            Map.entry(
+                    "DNS_SPF_LOOKUP_LIMIT_EXCEEDED",
+                    new String[] {
+                        "SPF record exceeds the 10-lookup limit",
+                        "This domain's SPF record requires more than 10 DNS \"lookup\" mechanisms "
+                                + "(include/a/mx/ptr/exists/redirect) once every nested include is followed - RFC "
+                                + "7208 mandates a hard PermError past this limit, meaning most mail servers "
+                                + "checking SPF for this domain treat it as if SPF were entirely broken, "
+                                + "regardless of how carefully the policy itself was written."
                     }),
             Map.entry(
                     "DNS_SPF_INCLUDE_DANGLING",
