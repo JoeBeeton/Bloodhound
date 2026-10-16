@@ -107,6 +107,7 @@ class ScanRunServiceTest {
                 "WHOIS",
                 "TECH_FINGERPRINT",
                 "TYPOSQUAT_MONITOR",
+                "APP_STORE_MONITOR",
                 "BREACH_CORRELATION",
                 "DOCUMENT_METADATA")) {
             verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
