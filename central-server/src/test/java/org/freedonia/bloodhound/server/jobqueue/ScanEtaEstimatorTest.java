@@ -102,4 +102,83 @@ class ScanEtaEstimatorTest {
         assertThat(estimate.completedJobs()).isZero();
         assertThat(estimate.etaSeconds()).isNull();
     }
+
+    /**
+     * The exact real-world case that motivated this fix: two targets' scan_runs each have their
+     * own ZAP_ACTIVE_SCAN jobs queued, but only one ZAP scan runs system-wide at a time. The old
+     * max-based model reported "~1 job's own average" (minutes); the real wait is the whole
+     * shared queue draining (hours). See ScanEtaEstimator's own javadoc.
+     */
+    @Test
+    void cappedModuleType_usesSystemWideQueueDrainTime_notJustThisRunsOwnJobCount() {
+        List<JobProgress> jobs = List.of(
+                new JobProgress("ZAP_ACTIVE_SCAN", "CLAIMED", now.minus(60, ChronoUnit.SECONDS)),
+                new JobProgress("ZAP_ACTIVE_SCAN", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(
+                jobs,
+                Map.of("ZAP_ACTIVE_SCAN", 720.0), // 12-minute average, matching the real observed case
+                Map.of("ZAP_ACTIVE_SCAN", 26), // 26 remaining system-wide (this run's own 2 included)
+                Map.of("ZAP_ACTIVE_SCAN", 1), // one global slot
+                now);
+
+        // 26 jobs * 720s / 1 slot = 18,720s (~5.2 hours) - the whole shared queue draining, not
+        // this run's own 2 jobs' naive max (~660s, the CLAIMED one's remaining time).
+        assertThat(estimate.etaSeconds()).isEqualTo(26 * 720L);
+    }
+
+    @Test
+    void cappedModuleType_thisRunHasNoneRemaining_notFactoredIntoEta() {
+        List<JobProgress> jobs = List.of(new JobProgress("ZAP_ACTIVE_SCAN", "COMPLETE", now.minusSeconds(60)));
+
+        Estimate estimate = ScanEtaEstimator.estimate(
+                jobs, Map.of("ZAP_ACTIVE_SCAN", 720.0), Map.of("ZAP_ACTIVE_SCAN", 50), Map.of("ZAP_ACTIVE_SCAN", 1), now);
+
+        // This run's own ZAP job is already COMPLETE - the other 50 system-wide belong to other
+        // targets' scan_runs and must not inflate THIS run's own ETA.
+        assertThat(estimate.etaSeconds()).isNull();
+    }
+
+    @Test
+    void cappedModuleType_combinesWithUncappedModuleTypes_viaMax() {
+        List<JobProgress> jobs = List.of(
+                new JobProgress("ZAP_ACTIVE_SCAN", "PENDING", null),
+                new JobProgress("NUCLEI_SCAN", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(
+                jobs,
+                Map.of("ZAP_ACTIVE_SCAN", 100.0, "NUCLEI_SCAN", 99999.0),
+                Map.of("ZAP_ACTIVE_SCAN", 1),
+                Map.of("ZAP_ACTIVE_SCAN", 1),
+                now);
+
+        // ZAP's own queue-drain (1 * 100 / 1 = 100) loses to NUCLEI_SCAN's uncapped max (99999) -
+        // different module types still combine via max, only a capped type's own internal model changes.
+        assertThat(estimate.etaSeconds()).isEqualTo(99999L);
+    }
+
+    @Test
+    void cappedModuleTypeWithNoHistoricalAverage_contributesNothing() {
+        List<JobProgress> jobs = List.of(new JobProgress("ZAP_ACTIVE_SCAN", "PENDING", null));
+
+        Estimate estimate =
+                ScanEtaEstimator.estimate(jobs, Map.of(), Map.of("ZAP_ACTIVE_SCAN", 10), Map.of("ZAP_ACTIVE_SCAN", 1), now);
+
+        assertThat(estimate.etaSeconds()).isNull();
+    }
+
+    @Test
+    void threeArgOverload_behavesAsThoughNoModuleTypeIsCapped() {
+        // The pre-existing 3-arg form (still used by one test above) must keep behaving exactly
+        // as before - this is the delegating overload's own contract, not just happenstance.
+        List<JobProgress> jobs = List.of(
+                new JobProgress("ZAP_ACTIVE_SCAN", "CLAIMED", now.minus(10, ChronoUnit.SECONDS)),
+                new JobProgress("ZAP_ACTIVE_SCAN", "PENDING", null));
+
+        Estimate estimate = ScanEtaEstimator.estimate(jobs, Map.of("ZAP_ACTIVE_SCAN", 20.0), now);
+
+        // Plain max-based model: claimed job has 10s remaining, pending job has the full 20s -
+        // max is 20, not a system-wide queue-drain calculation.
+        assertThat(estimate.etaSeconds()).isEqualTo(20L);
+    }
 }

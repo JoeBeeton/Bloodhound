@@ -45,6 +45,14 @@ public class ScansController {
         // One shared historical-average lookup for every run in this response, not one per run -
         // the averages are global (per module_type), not per-run, so there's no reason to repeat it.
         Map<String, Double> avgSeconds = scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE);
+        // Same reasoning for the concurrency-cap queue depth: ZAP_ACTIVE_SCAN's one global slot is
+        // shared across every org/target's scan_run, not just whichever one we're estimating right
+        // now - see ScanEtaEstimator's own javadoc on why this made the old max-based ETA wrong by
+        // an order of magnitude for a target queued behind another target's ZAP jobs.
+        Map<String, Integer> concurrencyCaps = Map.of("ZAP_ACTIVE_SCAN", scanJobRepository.zapMaxConcurrentScans());
+        Map<String, Integer> systemWideRemaining = new java.util.HashMap<>();
+        concurrencyCaps.keySet().forEach(
+                moduleType -> systemWideRemaining.put(moduleType, scanJobRepository.countPendingOrInProgress(moduleType)));
 
         return runs.stream()
                 .map(orgRun -> {
@@ -53,7 +61,8 @@ public class ScansController {
                     List<JobProgress> progress = jobs.stream()
                             .map(j -> new JobProgress(j.moduleType(), j.status(), j.claimedAt()))
                             .toList();
-                    Estimate est = ScanEtaEstimator.estimate(progress, avgSeconds, java.time.Instant.now());
+                    Estimate est = ScanEtaEstimator.estimate(
+                            progress, avgSeconds, systemWideRemaining, concurrencyCaps, java.time.Instant.now());
                     List<ActiveScan.ModuleProgress> modules = jobs.stream()
                             .map(j -> new ActiveScan.ModuleProgress(
                                     j.moduleType(), j.status(), JobPayloadHost.extract(j.payloadJson())))
