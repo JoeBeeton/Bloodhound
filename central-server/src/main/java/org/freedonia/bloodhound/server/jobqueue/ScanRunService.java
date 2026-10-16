@@ -42,6 +42,7 @@ public class ScanRunService {
             "WHOIS",
             "TECH_FINGERPRINT",
             "TYPOSQUAT_MONITOR",
+            "APP_STORE_MONITOR",
             "BREACH_CORRELATION",
             "DOCUMENT_METADATA");
 
@@ -58,9 +59,9 @@ public class ScanRunService {
      * SPF/DMARC/DNSSEC and domain registration are domain-wide concerns, not
      * per-host, so fanning them out would just repeat identical results.
      * SUBDOMAIN_ENUM is excluded because it's the source of the list, not a
-     * consumer of it. TYPOSQUAT_MONITOR is excluded for a different reason:
-     * lookalike domains are of the brand/root domain itself, not of each
-     * individual subdomain, so it always operates on just the target's own
+     * consumer of it. TYPOSQUAT_MONITOR and APP_STORE_MONITOR are excluded for the same
+     * reason: lookalike domains/apps are of the brand/root domain itself, not of each
+     * individual subdomain, so both always operate on just the target's own
      * hostname regardless of this list. BREACH_CORRELATION is excluded for
      * the same reason as DNS_POSTURE/WHOIS: breached credentials are tied to
      * an email address at the domain itself ("user@example.com"), not to
