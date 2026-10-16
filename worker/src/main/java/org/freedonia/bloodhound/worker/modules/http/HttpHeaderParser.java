@@ -37,6 +37,7 @@ public final class HttpHeaderParser {
 
         findings.addAll(httpsRedirectFindings(hostname, result));
         findings.addAll(corsReflectionFindings(hostname, result));
+        findings.addAll(traceMethodFindings(hostname, result));
 
         String banner = (headers.getOrDefault("server", "") + " " + headers.getOrDefault("x-powered-by", "")).trim();
         if (!banner.isEmpty() && VERSION_LIKE.matcher(banner).find()) {
@@ -210,6 +211,29 @@ public final class HttpHeaderParser {
         return List.of();
     }
 
+    /**
+     * RFC 7231 2.1 documents TRACE's own purpose as a diagnostic loop-back: the server echoes the
+     * request back verbatim as the response body. A server that processes it at all (rather than
+     * answering 405/501 like a hardened one should) enables Cross-Site Tracing (XST) - combined
+     * with an otherwise-HttpOnly cookie and a same-site XSS/CSRF primitive elsewhere, XST lets an
+     * attacker's script read the cookie back out of the echoed request anyway, bypassing
+     * HttpOnly's one protection. Every major scanner (Nessus, Qualys, Nikto) still checks this as
+     * a baseline hardening item even though most current browsers block TRACE from
+     * fetch()/XHR - the method being enabled at all is still the gap worth flagging, not the
+     * (now largely closed) exploitation path.
+     */
+    static List<RawFinding> traceMethodFindings(String hostname, FetchResult result) {
+        FetchResult.TraceProbe trace = result.trace();
+        if (trace == null || trace.statusCode() != 200) {
+            return List.of();
+        }
+        return List.of(finding(
+                "HTTP_TRACE_METHOD_ENABLED",
+                Severity.MEDIUM,
+                hostname,
+                Map.of("statusCode", trace.statusCode(), "echoedRequest", trace.echoedMarker())));
+    }
+
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
         String[] copy = COPY.get(ruleId);
         return new RawFinding(ruleId, severity, Category.HEADERS, copy[0], copy[1], asset, evidence);
@@ -321,5 +345,15 @@ public final class HttpHeaderParser {
                                 + "These prefixes get the browser itself to enforce the cookie's security properties "
                                 + "(__Host- additionally blocks it from being overwritten by a subdomain or a "
                                 + "non-root path) rather than relying solely on attributes a misconfiguration could drop."
+                    }),
+            Map.entry(
+                    "HTTP_TRACE_METHOD_ENABLED",
+                    new String[] {
+                        "HTTP TRACE method enabled",
+                        "The server processes HTTP TRACE requests instead of rejecting them (405/501), echoing the "
+                                + "request back as the response body. This enables Cross-Site Tracing (XST): combined "
+                                + "with a cross-site scripting or CSRF primitive elsewhere on the site, TRACE lets an "
+                                + "attacker's script read back a cookie's value even when that cookie is marked "
+                                + "HttpOnly, by echoing the request headers that carried it."
                     }));
 }
