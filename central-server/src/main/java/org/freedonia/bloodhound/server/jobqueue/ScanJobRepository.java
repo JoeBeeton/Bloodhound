@@ -58,6 +58,23 @@ public class ScanJobRepository {
         return zapMaxConcurrentScans;
     }
 
+    /**
+     * How many jobs of this module type are PENDING, CLAIMED, or RUNNING right now - across
+     * EVERY scan_run system-wide, not just one target's own. {@link ScanEtaEstimator} needs this
+     * for a module type with a concurrency cap below the worker pool size (currently just
+     * ZAP_ACTIVE_SCAN - see this class's own javadoc on why): two different targets' scan_runs
+     * each queueing their own ZAP_ACTIVE_SCAN jobs compete for the exact same one global slot, so
+     * a per-run job list alone can't see the real queueing delay - a scan_run with 2 ZAP jobs of
+     * its own might still be stuck behind 20 more from an entirely different target.
+     */
+    public int countPendingOrInProgress(String moduleType) {
+        Integer count = jdbc.queryForObject(
+                "SELECT count(*) FROM scan_jobs WHERE module_type = ? AND status IN ('PENDING', 'CLAIMED', 'RUNNING')",
+                Integer.class,
+                moduleType);
+        return count == null ? 0 : count;
+    }
+
     private static final RowMapper<ScanJob> ROW_MAPPER = (rs, rowNum) -> new ScanJob(
             UUID.fromString(rs.getString("id")),
             UUID.fromString(rs.getString("scan_run_id")),
