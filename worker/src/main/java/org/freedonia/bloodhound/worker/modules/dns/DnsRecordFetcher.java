@@ -87,10 +87,58 @@ public class DnsRecordFetcher {
         List<String> danglingMx = findDanglingMxHosts(hostname);
         List<String> danglingSpfIncludes = findDanglingSpfIncludes(txt);
         Long soaSerial = querySoaSerial(hostname);
+        boolean hasTopLevelSpf = txt.stream().anyMatch(t -> t.toLowerCase(java.util.Locale.ROOT).startsWith("v=spf1"));
+        Integer spfLookupCount = hasTopLevelSpf ? countSpfLookups(hostname, new java.util.HashSet<>(), 0) : null;
 
         return new DnsRecords(
                 txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound,
-                wildcard, danglingMx, danglingSpfIncludes, soaSerial);
+                wildcard, danglingMx, danglingSpfIncludes, soaSerial, spfLookupCount);
+    }
+
+    /** Defensive recursion cap for a malicious/circular include chain - RFC 7208's own limit is 10 total lookups, so a legitimate chain never approaches this depth; it exists purely to guarantee termination. */
+    private static final int MAX_SPF_RECURSION_DEPTH = 10;
+
+    /**
+     * Counts every RFC 7208 4.6.4 "lookup" mechanism (include/a/mx/ptr/exists/redirect - ip4/ip6/
+     * all/exp don't count) across the full recursive SPF evaluation chain, following include:/
+     * redirect= into the referenced domain's own SPF record and continuing the count there - the
+     * single most common real-world SPF misconfiguration this product had no check for at all:
+     * RFC 7208 mandates a hard PermError once the total exceeds 10, silently breaking SPF
+     * validation for every mail server that enforces the limit (most modern ones do), even though
+     * the top-level record "looks" fine to a human reading just it in isolation. A circular or
+     * too-deep chain (visited-set/depth guard) stops counting further rather than looping forever -
+     * already broken in a different way at that point, not this check's job to diagnose.
+     */
+    private int countSpfLookups(String domain, java.util.Set<String> visited, int depth) {
+        if (depth >= MAX_SPF_RECURSION_DEPTH || !visited.add(domain.toLowerCase(java.util.Locale.ROOT))) {
+            return 0;
+        }
+        return queryTxt(domain).stream()
+                .filter(t -> t.toLowerCase(java.util.Locale.ROOT).startsWith("v=spf1"))
+                .findFirst()
+                .map(record -> countMechanisms(record, visited, depth))
+                .orElse(0);
+    }
+
+    private int countMechanisms(String spfRecord, java.util.Set<String> visited, int depth) {
+        int count = 0;
+        for (String term : spfRecord.split("\\s+")) {
+            String lower = term.toLowerCase(java.util.Locale.ROOT);
+            if (lower.startsWith("include:")) {
+                count += 1 + countSpfLookups(term.substring("include:".length()), visited, depth + 1);
+            } else if (lower.startsWith("redirect=")) {
+                count += 1 + countSpfLookups(term.substring("redirect=".length()), visited, depth + 1);
+            } else if (lower.equals("a") || lower.startsWith("a:") || lower.startsWith("a/")) {
+                count += 1;
+            } else if (lower.equals("mx") || lower.startsWith("mx:") || lower.startsWith("mx/")) {
+                count += 1;
+            } else if (lower.equals("ptr") || lower.startsWith("ptr:")) {
+                count += 1;
+            } else if (lower.startsWith("exists:")) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     private static final Pattern SPF_INCLUDE_PATTERN = Pattern.compile("include:([^\\s]+)", Pattern.CASE_INSENSITIVE);

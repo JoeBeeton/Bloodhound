@@ -16,4 +16,8 @@ public record DnsRecords(
         boolean wildcardDnsDetected,
         List<String> danglingMxHosts,
         List<String> danglingSpfIncludes,
-        Long soaSerial) {}
+        Long soaSerial,
+        /** Total RFC 7208 4.6.4 "lookup" mechanisms (include/a/mx/ptr/exists/redirect) across the
+         * full recursive SPF evaluation chain - null when there's no SPF record to evaluate at all
+         * (DNS_SPF_MISSING already covers that case separately). See DnsRecordFetcher#countSpfLookups. */
+        Integer spfLookupCount) {}
