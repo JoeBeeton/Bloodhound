@@ -183,6 +183,12 @@ public final class ExposedPathDecisionLogic {
         // handler actually expects) - unambiguous and requires no POST body to trigger.
         addIfMatches(findings, hostname, r, "EXPOSURE_WORDPRESS_XMLRPC", baselineBody,
                 b -> b.contains("XML-RPC server accepts POST requests only."));
+        // A real user listing is a JSON ARRAY of objects each carrying "slug" (often the real
+        // login username) and "name" - a hardened install instead returns a JSON OBJECT error
+        // like {"code":"rest_user_cannot_view",...}, which this trim().startsWith("[") check
+        // naturally excludes without needing a full JSON parse.
+        addIfMatches(findings, hostname, r, "EXPOSURE_WORDPRESS_USER_ENUMERATION", baselineBody,
+                b -> b.trim().startsWith("[") && b.contains("\"slug\"") && b.contains("\"name\""));
 
         // Not a catalog probe at all: reuses the baseline's own already-fetched response (a GET
         // to a deliberately-nonexistent path) rather than adding a new one, since the signal
@@ -681,6 +687,12 @@ public final class ExposedPathDecisionLogic {
                             + "simple per-request rate limiting, and its pingback.ping method can be abused as a "
                             + "server-side request forgery vector to make the site itself probe arbitrary "
                             + "internal or external URLs.")),
+            Map.entry("EXPOSURE_WORDPRESS_USER_ENUMERATION", new RuleMeta(Severity.MEDIUM,
+                    "WordPress user enumeration via REST API",
+                    "WordPress's REST API users endpoint (/wp-json/wp/v2/users) publicly lists every registered "
+                            + "account's slug - often the real login username - and display name. This directly "
+                            + "feeds credential-stuffing and brute-force attacks by telling an attacker exactly "
+                            + "which usernames to target.")),
             Map.entry("EXPOSURE_GRAFANA_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Grafana exposed without authentication",
                     "A Grafana instance's API is reachable without authentication, disclosing dashboard "
