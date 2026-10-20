@@ -142,6 +142,12 @@ public class ExposedPathFetcher {
             // special.
             ExposureProbeSpec.get("EXPOSURE_DOTNET_CONFIG_FILE", List.of("/web.config", "/appsettings.json")),
             ExposureProbeSpec.get("EXPOSURE_ADMINER", List.of("/adminer.php", "/adminer/index.php", "/adminer/")),
+            // WordPress's xmlrpc.php, enabled by default, is a classic hardening item every WP
+            // security scanner flags: its system.multicall method lets an attacker attempt
+            // thousands of login guesses in a single HTTP request (bypassing simple per-request
+            // rate limiting), and pingback.ping can be abused as a server-side request forgery
+            // vector to make the site itself probe arbitrary internal/external URLs.
+            ExposureProbeSpec.get("EXPOSURE_WORDPRESS_XMLRPC", List.of("/xmlrpc.php")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             // 2376 is Docker's TLS-secured daemon port - a real, documented misconfiguration
             // (--tls set without --tlsverify, or a server cert issued with no client-CA check)
