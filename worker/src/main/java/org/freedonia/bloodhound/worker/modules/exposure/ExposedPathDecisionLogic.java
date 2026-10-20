@@ -122,6 +122,11 @@ public final class ExposedPathDecisionLogic {
                 b -> b.contains("[core]") && b.contains("repositoryformatversion"))) {
             addSecretScanFinding(findings, hostname, r.get("EXPOSURE_GIT_CONFIG"), ".git/config");
         }
+        // Pre-1.7 SVN's entries file: the format-version line is a bare integer, followed by a
+        // "dir" marker on its own line - distinctive enough to avoid matching an arbitrary
+        // numbers-containing text file.
+        addIfMatches(findings, hostname, r, "EXPOSURE_SVN_ENTRIES", baselineBody,
+                b -> b.trim().matches("(?s)^[0-9]+\\n.*") && b.contains("\ndir\n"));
         if (addIfMatches(findings, hostname, r, "EXPOSURE_ENV_FILE", baselineBody, ExposedPathDecisionLogic::looksLikeEnvFile)) {
             addSecretScanFinding(findings, hostname, r.get("EXPOSURE_ENV_FILE"), ".env");
         }
@@ -566,6 +571,11 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_GIT_CONFIG", new RuleMeta(Severity.CRITICAL,
                     "Exposed .git/config",
                     "The .git/config file is publicly readable, often enabling full source repository reconstruction.")),
+            Map.entry("EXPOSURE_SVN_ENTRIES", new RuleMeta(Severity.CRITICAL,
+                    "Exposed .svn/entries",
+                    "A Subversion working copy's .svn/entries file is publicly readable, disclosing the full "
+                            + "repository URL and revision metadata and often enabling source reconstruction, the "
+                            + "same risk EXPOSURE_GIT_CONFIG covers for Git.")),
             Map.entry("EXPOSURE_ENV_FILE", new RuleMeta(Severity.CRITICAL,
                     "Exposed .env file",
                     "A publicly readable .env file was found, commonly containing credentials or application secrets.")),

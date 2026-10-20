@@ -223,6 +223,26 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void svnEntries_oldFormatShape_flaggedCritical() {
+        String body = "12\n\ndir\n123\nhttps://svn.example.com/repo/trunk\nhttps://svn.example.com/repo\n\n\n";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_SVN_ENTRIES", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SVN_ENTRIES");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void svnEntries_arbitraryTextStartingWithNumber_notFlagged() {
+        String body = "404\nsome unrelated numbered text that happens to start with digits\nno marker here";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_SVN_ENTRIES", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SVN_ENTRIES");
+    }
+
+    @Test
     void jenkinsScriptConsole_positiveShape_flaggedCriticalWithPortInAssetName() {
         String body = "<html><body><h1>Script Console</h1>"
                 + "<p>Type in an arbitrary Groovy script and execute it on the server.</p>"
