@@ -30,7 +30,11 @@ public final class PortScanDecisionLogic {
                     // 9092: a raw Kafka broker - historically shipped with no built-in
                     // authentication at all, and real-world ransomware/data-wipe incidents have
                     // specifically targeted internet-exposed, unauthenticated Kafka clusters.
-                    9092);
+                    9092,
+                    // 11211: Memcached, folded into ADMIN_DB_PORTS for the shared
+                    // promiscuous-port false-positive protection below but flagged under its own,
+                    // more severe rule - see MEMCACHED_PORTS' own doc.
+                    11211);
     static final Set<Integer> UNENCRYPTED_MGMT_PORTS = Set.of(21, 23);
 
     /**
@@ -55,6 +59,17 @@ public final class PortScanDecisionLogic {
      * internet-facing SMB).
      */
     static final Set<Integer> SMB_NETBIOS_RPC_PORTS = Set.of(135, 139, 445);
+
+    /**
+     * Memcached (11211), folded into {@link #ADMIN_DB_PORTS} but flagged under its own, more
+     * severe rule: memcached ships with no authentication at all in its default configuration, so
+     * a reachable instance discloses whatever an application cached in it (often including
+     * session tokens and query results) to anyone who connects. Internet-exposed memcached
+     * servers were also the vector behind the largest DDoS amplification attacks on record (the
+     * 2018 1.3 Tbps attack on GitHub), since the UDP variant of its protocol has no source-address
+     * validation and an amplification factor that can exceed 50,000x.
+     */
+    static final Set<Integer> MEMCACHED_PORTS = Set.of(11211);
 
     /**
      * Found live: two real hosts (example.co.uk's joinbeta/pioneers subdomains) both showed every
@@ -163,6 +178,22 @@ public final class PortScanDecisionLogic {
                                     + "pre-authentication remote code execution vulnerabilities (e.g. "
                                     + "MS17-010/EternalBlue, exploited by WannaCry and NotPetya) - internet-facing "
                                     + "SMB is one of the most consistently dangerous network exposures a host can have.",
+                            hostname + ":" + port,
+                            evidence));
+                } else if (!promiscuous && MEMCACHED_PORTS.contains(port)) {
+                    findings.add(new RawFinding(
+                            "NETWORK_MEMCACHED_EXPOSED",
+                            Severity.CRITICAL,
+                            Category.NETWORK,
+                            "Memcached reachable from the internet",
+                            "Memcached's default port (11211) was found open and reachable from the internet. "
+                                    + "Memcached ships with no authentication at all by default, so a reachable "
+                                    + "instance discloses whatever an application cached in it - often including "
+                                    + "session tokens and query results - to anyone who connects. Internet-exposed "
+                                    + "memcached servers were also the vector behind the largest DDoS "
+                                    + "amplification attacks on record, since its UDP protocol variant has no "
+                                    + "source-address validation and an amplification factor that can exceed "
+                                    + "50,000x.",
                             hostname + ":" + port,
                             evidence));
                 } else if (!promiscuous) {

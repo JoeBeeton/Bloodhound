@@ -69,6 +69,20 @@ class DeepPortScanDecisionLogicTest {
     }
 
     @Test
+    void memcachedPort11211_flaggedAsMemcachedExposed_notGenericAdminService() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide(
+                "example.com", List.of(port(11211, "memcache", "Memcached", "1.6.21")));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_MEMCACHED_EXPOSED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.severity().name()).isEqualTo("CRITICAL");
+        assertThat(finding.affectedAsset()).isEqualTo("example.com:11211");
+        assertThat(finding.description()).contains("Memcached 1.6.21");
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
+
+    @Test
     void pop3Port_flaggedAsCleartextMailProtocolExposed() {
         List<RawFinding> findings =
                 DeepPortScanDecisionLogic.decide("example.com", List.of(port(110, "pop3", "Dovecot", "2.3.19")));
