@@ -174,6 +174,28 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void wordpressXmlrpc_enabled_flaggedMedium() {
+        String body = "<?xml version=\"1.0\"?><methodResponse><fault><value><struct>"
+                + "<member><name>faultString</name><value>XML-RPC server accepts POST requests only.</value></member>"
+                + "</struct></value></fault></methodResponse>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_WORDPRESS_XMLRPC", new ProbeResponse(200, "text/xml", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_WORDPRESS_XMLRPC");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void wordpressXmlrpc_path404_notFlagged() {
+        String body = "<html><body>404 Not Found</body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_WORDPRESS_XMLRPC", new ProbeResponse(404, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_WORDPRESS_XMLRPC");
+    }
+
+    @Test
     void dockerApi_positiveJsonShape_flaggedWithPortInAssetName() {
         String body = "{\"ApiVersion\":\"1.45\",\"Version\":\"24.0.0\"}";
         ExposedPathFetchResult result =
