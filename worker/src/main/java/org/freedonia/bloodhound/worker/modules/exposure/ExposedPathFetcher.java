@@ -101,7 +101,14 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INFO", List.of("/actuator/info")),
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INDEX", List.of("/actuator")),
             ExposureProbeSpec.get("EXPOSURE_GIT_CONFIG", List.of("/.git/config")),
-            ExposureProbeSpec.get("EXPOSURE_ENV_FILE", List.of("/.env")),
+            // Beyond the bare ".env" this already covered, modern framework tooling (Next.js,
+            // Create React App, Vite, Django) commonly layers environment-specific files on top -
+            // each one just as likely to be accidentally included in a deployed build artifact.
+            ExposureProbeSpec.get(
+                    "EXPOSURE_ENV_FILE",
+                    List.of(
+                            "/.env", "/.env.local", "/.env.production", "/.env.development",
+                            "/.env.production.local")),
             ExposureProbeSpec.get("EXPOSURE_AWS_CREDENTIALS", List.of("/.aws/credentials")),
             ExposureProbeSpec.get("EXPOSURE_SWAGGER_UI", List.of("/v2/api-docs", "/v3/api-docs")),
             ExposureProbeSpec.post("EXPOSURE_GRAPHQL_INTROSPECTION", "/graphql", "{\"query\":\"{__schema{types{name}}}\"}"),
