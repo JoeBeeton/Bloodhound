@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.typosquat;
 
+import java.net.IDN;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -11,9 +12,7 @@ import java.util.Map;
  * Generates typosquat/lookalike-domain candidates for a root domain, covering
  * the standard technique categories (the same taxonomy the open-source
  * dnstwist tool uses as its reference - this is an independent
- * implementation, not a dependency on that tool). Deliberately ASCII-only:
- * full Unicode homoglyph/IDN-homograph generation (real punycode lookalikes)
- * is a materially larger, messier problem, explicitly out of scope here.
+ * implementation, not a dependency on that tool).
  *
  * <p>Domain splitting is a simple last-dot split (label + tld) - the same
  * simplification {@code WhoisFetcher.tldOf()} already uses elsewhere in this
@@ -49,6 +48,25 @@ public final class PermutationGenerator {
             new String[] {"a", "4"},
             new String[] {"m", "rn"});
 
+    /**
+     * A small, high-confidence set of Cyrillic letters that render as visually identical (or
+     * near-identical in most fonts) to their Latin counterpart - the exact substitutions
+     * documented in real IDN-homograph phishing campaigns, not an exhaustive confusables-database
+     * sweep (Unicode's own confusables.txt runs to thousands of entries, most useless for a
+     * domain-squatting check since they're not plausible single-character swaps a victim would
+     * overlook). Each entry is one Latin character mapped to one visually-matching Cyrillic
+     * codepoint; {@link #addIdnHomographs} substitutes one occurrence at a time, same one-swap-
+     * per-candidate discipline {@link #addHomoglyphs} already uses for ASCII confusables.
+     */
+    private static final Map<Character, Character> CYRILLIC_CONFUSABLES = Map.of(
+            'a', 'а', // а CYRILLIC SMALL LETTER A
+            'e', 'е', // е CYRILLIC SMALL LETTER IE
+            'o', 'о', // о CYRILLIC SMALL LETTER O
+            'p', 'р', // р CYRILLIC SMALL LETTER ER
+            'c', 'с', // с CYRILLIC SMALL LETTER ES
+            'x', 'х', // х CYRILLIC SMALL LETTER HA
+            'y', 'у'); // у CYRILLIC SMALL LETTER U
+
     private static final Map<Character, String> QWERTY_ADJACENT = buildQwertyAdjacency();
 
     private PermutationGenerator() {}
@@ -67,6 +85,7 @@ public final class PermutationGenerator {
 
         addTldSwaps(label, tld, byDomain);
         addHomoglyphs(label, tld, byDomain);
+        addIdnHomographs(label, tld, byDomain);
         addOmissions(label, tld, byDomain);
         addDuplications(label, tld, byDomain);
         addTranspositions(label, tld, byDomain);
@@ -133,6 +152,33 @@ public final class PermutationGenerator {
                 String variant = label.substring(0, idx) + to + label.substring(idx + from.length());
                 put(out, variant + "." + tld, "HOMOGLYPH");
                 idx = label.indexOf(from, idx + 1);
+            }
+        }
+    }
+
+    /**
+     * One Cyrillic-confusable substitution per candidate (same one-swap-per-candidate discipline
+     * as {@link #addHomoglyphs}), then punycode-encoded via {@link IDN#toASCII} - the actual
+     * registrable/resolvable wire form (e.g. "xn--pple-43d.com" for a domain that *renders* as
+     * "аpple.com"), not the raw Unicode string, which is never what gets registered in a DNS zone.
+     * {@code IDN.toASCII} can reject a small number of inputs (invalid bidi ordering, a label that
+     * happens to collide with the ACE prefix) - skipped silently rather than guessed at, same
+     * "silence over a fabricated candidate" discipline this whole module already follows.
+     */
+    private static void addIdnHomographs(String label, String tld, Map<String, String> out) {
+        for (int i = 0; i < label.length(); i++) {
+            Character confusable = CYRILLIC_CONFUSABLES.get(label.charAt(i));
+            if (confusable == null) {
+                continue;
+            }
+            String unicodeVariant = label.substring(0, i) + confusable + label.substring(i + 1);
+            try {
+                String punycode = IDN.toASCII(unicodeVariant + "." + tld);
+                put(out, punycode, "IDN_HOMOGRAPH");
+            } catch (IllegalArgumentException notEncodable) {
+                // Not every substitution produces a validly-encodable label (e.g. bidi rule
+                // violations from mixing scripts) - skip rather than report a candidate that
+                // could never actually be registered.
             }
         }
     }
