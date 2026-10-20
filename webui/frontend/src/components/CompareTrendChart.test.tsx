@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { colorsForSeries, summarizeComparison } from "./CompareTrendChart";
+import { colorsForSeries, compareTooltipRows, summarizeComparison } from "./CompareTrendChart";
 import type { CompareSeries, ScoreSnapshot, TargetType } from "../lib/types";
 
-function snapshot(overallScore: number, tier1OverallScore: number | null): ScoreSnapshot {
+function snapshot(
+  overallScore: number,
+  tier1OverallScore: number | null,
+  computedAt = "2026-01-01T00:00:00Z",
+): ScoreSnapshot {
   return {
     id: "s1",
     scanRunId: "run-1",
-    computedAt: "2026-01-01T00:00:00Z",
+    computedAt,
     overallScore,
     grade: "C",
     categoryScores: {} as ScoreSnapshot["categoryScores"],
@@ -110,5 +114,66 @@ describe("colorsForSeries", () => {
   it("returns a valid hsl() color", () => {
     const color = colorsForSeries(["some-id"]).get("some-id");
     expect(color).toMatch(/^hsl\(\d+(\.\d+)?, \d+%, \d+%\)$/);
+  });
+});
+
+describe("compareTooltipRows", () => {
+  // The exact live bug report: hovering the chart showed every single series at the same
+  // score (118118money.com's own real value, 74.15), even though the underlying per-series
+  // history was genuinely different - traced to Recharts' default Tooltip not computing each
+  // Line's own value when every Line supplies its own independent `data` array. This is the
+  // regression test for the fix: each series must resolve its OWN nearest point, independent of
+  // what any other series' data looks like.
+  it("resolves each series' own value independently - not the same value for every series", () => {
+    const targets = [
+      series("a.example.com", "COMPETITOR", [snapshot(81, 81, "2026-10-20T11:40:00Z")]),
+      series("b.example.com", "COMPETITOR", [snapshot(74.15, 74.15, "2026-10-20T11:39:00Z")]),
+      series("c.example.com", "COMPETITOR", [snapshot(50, 50, "2026-10-20T11:39:00Z")]),
+    ];
+    const label = new Date("2026-10-20T11:39:00Z").getTime();
+    const rows = compareTooltipRows(targets, "full", label);
+    const byTarget = Object.fromEntries(rows.map((r) => [r.targetId, r.score]));
+    expect(byTarget["a.example.com"]).toBe(81);
+    expect(byTarget["b.example.com"]).toBe(74.15);
+    expect(byTarget["c.example.com"]).toBe(50);
+    // The actual symptom: not every row collapsing to one shared value.
+    expect(new Set(rows.map((r) => r.score)).size).toBeGreaterThan(1);
+  });
+
+  it("picks each series' own nearest point in time, not a shared index position", () => {
+    // Series A has 3 points (indices 0,1,2); series B has only 1. A naive "same index into every
+    // series' own array" approach (the other classic Recharts multi-independent-data gotcha)
+    // would read series B's data[2], which doesn't exist / is wrong - nearest-by-time is correct
+    // regardless of how many points each series happens to have.
+    const a = series("many-points.example.com", "COMPETITOR", [
+      snapshot(10, 10, "2026-01-01T00:00:00Z"),
+      snapshot(20, 20, "2026-01-02T00:00:00Z"),
+      snapshot(30, 30, "2026-01-03T00:00:00Z"),
+    ]);
+    const b = series("one-point.example.com", "COMPETITOR", [snapshot(99, 99, "2026-01-01T06:00:00Z")]);
+    const label = new Date("2026-01-03T00:00:00Z").getTime();
+    const rows = compareTooltipRows([a, b], "full", label);
+    const byTarget = Object.fromEntries(rows.map((r) => [r.targetId, r.score]));
+    expect(byTarget["many-points.example.com"]).toBe(30);
+    expect(byTarget["one-point.example.com"]).toBe(99);
+  });
+
+  it("tier1 mode uses each series' own tier1OverallScore, falling back independently per series", () => {
+    const a = series("has-tier1.example.com", "OWN", [snapshot(85, 60, "2026-01-01T00:00:00Z")]);
+    const b = series("no-tier1.example.com", "COMPETITOR", [snapshot(70, null, "2026-01-01T00:00:00Z")]);
+    const label = new Date("2026-01-01T00:00:00Z").getTime();
+    const rows = compareTooltipRows([a, b], "tier1", label);
+    const byTarget = Object.fromEntries(rows.map((r) => [r.targetId, r.score]));
+    expect(byTarget["has-tier1.example.com"]).toBe(60);
+    expect(byTarget["no-tier1.example.com"]).toBe(70);
+  });
+
+  it("series with no history at all contribute no row, not a crash", () => {
+    const rows = compareTooltipRows([series("empty.example.com", "WATCHLIST", [])], "full", Date.now());
+    expect(rows).toEqual([]);
+  });
+
+  it("empty series list produces no rows", () => {
+    expect(compareTooltipRows([], "full", Date.now())).toEqual([]);
   });
 });

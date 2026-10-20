@@ -93,6 +93,101 @@ export function colorsForSeries(ids: string[]): Map<string, string> {
 
 export type CompareScoreMode = "tier1" | "full";
 
+interface SeriesPoint {
+  computedAtMs: number;
+  score: number;
+}
+
+/** Each target scans on its own schedule, so one series rarely has a real point at exactly the
+ * moment another series does - shared by both the Line data and the tooltip below so they always
+ * agree on what a series' own history actually contains. */
+export function seriesPoints(s: CompareSeries, mode: CompareScoreMode): SeriesPoint[] {
+  return s.history.map((h) => ({
+    computedAtMs: new Date(h.computedAt).getTime(),
+    score: mode === "tier1" ? h.tier1OverallScore ?? h.overallScore : h.overallScore,
+  }));
+}
+
+export interface TooltipRow {
+  targetId: string;
+  name: string;
+  score: number;
+}
+
+/**
+ * Recharts bug found via a live report: when every Line in a chart supplies its own independent
+ * `data` array (this chart's whole reason for being, since each target scans on its own schedule
+ * - see the component's own doc comment below) rather than one shared dataset keyed by a common
+ * field, Recharts' built-in Tooltip does not compute each line's own value at the hovered
+ * position - it was observed showing every single series in the tooltip as the SAME number
+ * (whichever series' point the cursor happened to be nearest to), even though the underlying
+ * per-series data was correct the whole time (confirmed directly against the API response).
+ *
+ * <p>This ignores Recharts' own (buggy) `payload` array entirely and instead, for each series,
+ * finds that series' own nearest real point to `label` (the hovered position's x value, which
+ * Recharts computes correctly since it comes from the shared numeric XAxis scale, not from any
+ * one series' data). A nearest-point lookup - not an interpolated value - matches what the Line
+ * itself represents between two real scans: a security score is a step function, only ever
+ * actually changing at a real scan's completion, so "value as of this moment" for a series with
+ * no scan exactly here is honestly "whatever its last known value was," not a fabricated blend
+ * between two unrelated targets' scan times.
+ */
+export function compareTooltipRows(series: CompareSeries[], mode: CompareScoreMode, label: number): TooltipRow[] {
+  return series
+    .map((s) => {
+      const points = seriesPoints(s, mode);
+      if (points.length === 0) {
+        return null;
+      }
+      const nearest = points.reduce((closest, p) =>
+        Math.abs(p.computedAtMs - label) < Math.abs(closest.computedAtMs - label) ? p : closest,
+      );
+      return { targetId: s.targetId, name: `${s.hostname} (${s.targetType})`, score: nearest.score };
+    })
+    .filter((row): row is TooltipRow => row !== null);
+}
+
+function CompareTooltipContent({
+  active,
+  label,
+  series,
+  mode,
+  colors,
+}: {
+  active?: boolean;
+  label?: number;
+  series: CompareSeries[];
+  mode: CompareScoreMode;
+  colors: Map<string, string>;
+}) {
+  if (!active || label === undefined) {
+    return null;
+  }
+  const rows = compareTooltipRows(series, mode, label);
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      style={{
+        background: "#12071f",
+        border: "1px solid rgba(0,240,255,0.3)",
+        borderRadius: 6,
+        fontFamily: "JetBrains Mono, monospace",
+        fontSize: 12,
+        padding: "8px 12px",
+      }}
+    >
+      <div style={{ color: "#7a8aa0", marginBottom: 4 }}>{new Date(label).toLocaleString()}</div>
+      {rows.map((row) => (
+        <div key={row.targetId} style={{ color: colors.get(row.targetId) }}>
+          {row.name} : {row.score.toFixed(2)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Same reasoning as ScoreTrendChart's own summarizeTrend - a screen-reader user needs the "our
  * score vs. competitors" comparison this chart exists for spelled out as text, not left to guess
  * from an unlabeled multi-line SVG. One clause per target with any history; targets with none yet
@@ -186,26 +281,13 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
             fontFamily="JetBrains Mono, monospace"
           />
           <YAxis domain={[0, 100]} stroke="#7a8aa0" fontSize={11} fontFamily="JetBrains Mono, monospace" width={40} />
-          <Tooltip
-            labelFormatter={(ms) => new Date(ms as number).toLocaleString()}
-            contentStyle={{
-              background: "#12071f",
-              border: "1px solid rgba(0,240,255,0.3)",
-              borderRadius: 6,
-              fontFamily: "JetBrains Mono, monospace",
-              fontSize: 12,
-            }}
-            labelStyle={{ color: "#7a8aa0" }}
-          />
+          <Tooltip content={<CompareTooltipContent series={series} mode={mode} colors={colors} />} />
           <Legend formatter={(value) => <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>{value}</span>} />
           {series.map((s) => {
             const color = colors.get(s.targetId)!;
             // Pre-fix snapshots have no tier1OverallScore - fall back to the full score rather
             // than dropping the point, so old history doesn't just vanish from the "tier1" view.
-            const data = s.history.map((h) => ({
-              computedAtMs: new Date(h.computedAt).getTime(),
-              score: mode === "tier1" ? h.tier1OverallScore ?? h.overallScore : h.overallScore,
-            }));
+            const data = seriesPoints(s, mode);
             return (
               <Line
                 key={s.targetId}
