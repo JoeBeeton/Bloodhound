@@ -101,6 +101,13 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INFO", List.of("/actuator/info")),
             ExposureProbeSpec.get("EXPOSURE_ACTUATOR_INDEX", List.of("/actuator")),
             ExposureProbeSpec.get("EXPOSURE_GIT_CONFIG", List.of("/.git/config")),
+            // Subversion's own equivalent of the Git check above - a standard pairing in most
+            // scanners (Nikto checks both). Pre-1.7 SVN working copies keep a plain-text entries
+            // file per directory disclosing the full repository URL and revision metadata;
+            // 1.7+ instead uses a SQLite database (.svn/wc.db) this check doesn't attempt to
+            // fingerprint, so this only catches older working copies - still a real, if shrinking,
+            // population given how long unmaintained legacy deployments stay online.
+            ExposureProbeSpec.get("EXPOSURE_SVN_ENTRIES", List.of("/.svn/entries")),
             // Beyond the bare ".env" this already covered, modern framework tooling (Next.js,
             // Create React App, Vite, Django) commonly layers environment-specific files on top -
             // each one just as likely to be accidentally included in a deployed build artifact.
