@@ -369,6 +369,40 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void nginxStubStatus_flaggedMedium() {
+        String body = "Active connections: 1 \n"
+                + "server accepts handled requests\n"
+                + " 16 16 16 \n"
+                + "Reading: 0 Writing: 1 Waiting: 0 \n";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_NGINX_STUB_STATUS", new ProbeResponse(200, "text/plain", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_NGINX_STUB_STATUS");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void nginxStubStatusPath404_notFlagged() {
+        String body = "<html><body>404 Not Found</body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_NGINX_STUB_STATUS", new ProbeResponse(404, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_NGINX_STUB_STATUS");
+    }
+
+    @Test
+    void nginxStubStatusPath200ButUnrelatedContent_notFlagged() {
+        // A custom app route happening to live at /status (a very common path for app health
+        // checks) must not false-positive just because it answers 200 - the module's own
+        // distinctive output is the real signal, not the path alone.
+        String body = "{\"status\":\"ok\"}";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_NGINX_STUB_STATUS", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_NGINX_STUB_STATUS");
+    }
+
+    @Test
     void serverStatusPath200ButNotRealModStatus_notFlagged() {
         // A custom app route or redirect target happening to live at /server-status with no
         // relation to Apache's own mod_status page must not false-positive just because it

@@ -204,6 +204,14 @@ public final class ExposedPathDecisionLogic {
         // routinely left enabled and world-reachable by default on a stock Apache install.
         addIfMatches(findings, hostname, r, "EXPOSURE_APACHE_SERVER_STATUS", baselineBody,
                 b -> b.contains("Apache Server Status for"));
+        // nginx's own stub_status module - a direct parallel to Apache mod_status, same classic
+        // scanner checklist item, same "routinely left enabled by default" exposure. Discloses
+        // less per-request detail than mod_status (no client IPs/URLs, just aggregate connection
+        // and request counts), but still confirms internal infrastructure load/capacity, useful
+        // DoS-targeting recon. "server accepts handled requests" is the module's own fixed,
+        // unchanging label line - distinctive and stable across nginx versions.
+        addIfMatches(findings, hostname, r, "EXPOSURE_NGINX_STUB_STATUS", baselineBody,
+                b -> b.contains("Active connections:") && b.contains("server accepts handled requests"));
 
         if (isRedisPositive(result.redisResponse())) {
             findings.add(finding("EXPOSURE_REDIS_UNAUTH", hostname + ":6379", Map.of()));
@@ -643,6 +651,11 @@ public final class ExposedPathDecisionLogic {
                     "The Apache mod_status page (/server-status) is publicly reachable, disclosing currently "
                             + "in-flight requests - including client IP addresses and the URLs/query strings being "
                             + "processed, which can themselves carry session tokens or other sensitive parameters.")),
+            Map.entry("EXPOSURE_NGINX_STUB_STATUS", new RuleMeta(Severity.MEDIUM,
+                    "nginx stub_status page exposed",
+                    "The nginx stub_status module is publicly reachable, disclosing aggregate connection and "
+                            + "request counts for this server - internal infrastructure load/capacity information "
+                            + "useful for targeting denial-of-service attacks.")),
             Map.entry("EXPOSURE_SECURITY_TXT_EXPIRED", new RuleMeta(Severity.INFO,
                     "security.txt has expired",
                     "The published /.well-known/security.txt file's Expires field is in the past, indicating "
