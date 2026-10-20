@@ -153,6 +153,27 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void dockerApiTls_positiveJsonShape_flaggedCriticalWithTlsPortInAssetName() {
+        String body = "{\"ApiVersion\":\"1.45\",\"Version\":\"24.0.0\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DOCKER_API_TLS", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_DOCKER_API_TLS");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:2376");
+        });
+    }
+
+    @Test
+    void dockerApiTls_unmatchedBody_notFlagged() {
+        String body = "{}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DOCKER_API_TLS", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DOCKER_API_TLS");
+    }
+
+    @Test
     void redis_bulkStringInfoReply_flaggedCritical() {
         ExposedPathFetchResult result = new ExposedPathFetchResult(
                 BASELINE_404, Map.of(), "$2500\r\n# Server\r\nredis_version:7.2.4\r\n...");
