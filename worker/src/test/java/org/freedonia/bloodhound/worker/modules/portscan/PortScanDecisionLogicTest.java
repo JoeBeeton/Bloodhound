@@ -130,6 +130,26 @@ class PortScanDecisionLogicTest {
     }
 
     @Test
+    void mongoShardPort27018_flaggedSameAsStandalone27017() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(27018)));
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("example.com:27018");
+    }
+
+    @Test
+    void elasticsearchTransportPort9300_flagged() {
+        assertThat(ruleIds(PortScanDecisionLogic.decide("example.com", ipv4(List.of(9300)))))
+                .containsExactly("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
+
+    @Test
+    void kafkaBrokerPort9092_flagged() {
+        assertThat(ruleIds(PortScanDecisionLogic.decide("example.com", ipv4(List.of(9092)))))
+                .containsExactly("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
+
+    @Test
     void pop3Port_flaggedAsCleartextMailProtocolExposed() {
         List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(110)));
         assertThat(findings).hasSize(1);
