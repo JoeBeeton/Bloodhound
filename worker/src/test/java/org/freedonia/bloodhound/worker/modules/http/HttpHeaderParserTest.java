@@ -203,6 +203,58 @@ class HttpHeaderParserTest {
         assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).containsExactly("COOKIE_MISSING_SECURE_FLAG");
     }
 
+    private static FetchResult withCookie(String setCookie) {
+        return new FetchResult(true, allSecureHeaders(), List.of(setCookie));
+    }
+
+    @Test
+    void cookieDomainScopedToParent_flagged() {
+        FetchResult result = withCookie(
+                "session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=.example.com");
+        List<RawFinding> findings = HttpHeaderParser.parse("app.example.com", result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("COOKIE_DOMAIN_TOO_BROAD");
+            assertThat(f.severity().name()).isEqualTo("LOW");
+            assertThat(f.affectedAsset()).isEqualTo("app.example.com: session_id");
+            assertThat(f.evidence()).containsEntry("domain", ".example.com");
+        });
+    }
+
+    @Test
+    void cookieDomainScopedToParentWithoutLeadingDot_stillFlagged() {
+        // The leading dot is optional per modern Cookie spec parsing - Domain=example.com means
+        // the exact same thing as Domain=.example.com.
+        FetchResult result = withCookie(
+                "session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=example.com");
+        assertThat(ruleIds(HttpHeaderParser.parse("app.example.com", result))).contains("COOKIE_DOMAIN_TOO_BROAD");
+    }
+
+    @Test
+    void cookieDomainMatchingExactHost_notFlagged() {
+        // Domain=<the exact same host> is just a verbose way of writing the same host-only scope
+        // a missing Domain attribute already gives - not actually broader, not a finding.
+        FetchResult result = withCookie(
+                "session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=app.example.com");
+        assertThat(ruleIds(HttpHeaderParser.parse("app.example.com", result))).doesNotContain("COOKIE_DOMAIN_TOO_BROAD");
+    }
+
+    @Test
+    void cookieWithNoDomainAttribute_notFlagged() {
+        FetchResult result = withCookie("session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax");
+        assertThat(ruleIds(HttpHeaderParser.parse("app.example.com", result))).doesNotContain("COOKIE_DOMAIN_TOO_BROAD");
+    }
+
+    @Test
+    void cookieDomainUnrelatedToHost_notFlaggedAsTooBroad() {
+        // A Domain attribute naming some other, unrelated domain entirely isn't "broader than
+        // this host" in the parent-domain sense this rule checks - browsers themselves reject a
+        // cookie whose Domain doesn't match the setting host at all, so this isn't this rule's
+        // signal to raise (a different, structural misconfiguration, not scope-too-broad).
+        FetchResult result = withCookie(
+                "session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=other.net");
+        assertThat(ruleIds(HttpHeaderParser.parse("app.example.com", result))).doesNotContain("COOKIE_DOMAIN_TOO_BROAD");
+    }
+
     private static FetchResult withPlainHttp(boolean https, FetchResult.PlainHttpProbe plain) {
         return new FetchResult(https, allSecureHeaders(), List.of(), plain, null);
     }
