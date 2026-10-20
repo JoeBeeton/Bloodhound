@@ -159,6 +159,11 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
             ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
             ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080),
+            // Jenkins's Groovy script console (/script), unauthenticated, is full remote code
+            // execution - run arbitrary Groovy, which can shell out, on the Jenkins host. A
+            // classic, heavily-flagged misconfiguration (Shodan/Censys dorks and Nuclei templates
+            // both target it directly) that every major commercial/OSS scanner checks for.
+            ExposureProbeSpec.altPort("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", "/script", 8080),
             ExposureProbeSpec.altPortHttps("EXPOSURE_KUBERNETES_API_UNAUTH", "/api/v1/namespaces", 6443),
             ExposureProbeSpec.get("EXPOSURE_APACHE_SERVER_STATUS", List.of("/server-status", "/server-status/")),
             ExposureProbeSpec.get("EXPOSURE_NGINX_STUB_STATUS", List.of("/nginx_status", "/status", "/basic_status")));
