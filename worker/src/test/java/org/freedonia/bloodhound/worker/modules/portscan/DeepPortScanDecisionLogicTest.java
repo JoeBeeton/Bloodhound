@@ -55,6 +55,20 @@ class DeepPortScanDecisionLogicTest {
     }
 
     @Test
+    void smbPort445_flaggedAsSmbNetbiosExposed_notGenericAdminService() {
+        List<RawFinding> findings =
+                DeepPortScanDecisionLogic.decide("example.com", List.of(port(445, "microsoft-ds", "Samba", "4.15.0")));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_SMB_NETBIOS_EXPOSED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.severity().name()).isEqualTo("CRITICAL");
+        assertThat(finding.affectedAsset()).isEqualTo("example.com:445");
+        assertThat(finding.description()).contains("Samba 4.15.0");
+        assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
+
+    @Test
     void unencryptedMgmtPort_flaggedWithServiceEvidence() {
         List<RawFinding> findings =
                 DeepPortScanDecisionLogic.decide("example.com", List.of(port(21, "ftp", "vsftpd", "3.0.3")));
