@@ -130,6 +130,27 @@ class PortScanDecisionLogicTest {
     }
 
     @Test
+    void pop3Port_flaggedAsCleartextMailProtocolExposed() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(110)));
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+        assertThat(findings.get(0).severity().name()).isEqualTo("MEDIUM");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("example.com:110");
+    }
+
+    @Test
+    void imapPort_flaggedAsCleartextMailProtocolExposed() {
+        assertThat(ruleIds(PortScanDecisionLogic.decide("example.com", ipv4(List.of(143)))))
+                .containsExactly("NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+    }
+
+    @Test
+    void secureMailPorts_notFlagged() {
+        // 995 (POP3S) and 993 (IMAPS) are the already-TLS-wrapped variants - not this rule's gap.
+        assertThat(PortScanDecisionLogic.decide("example.com", ipv4(List.of(995, 993)))).isEmpty();
+    }
+
+    @Test
     void smbPortsIncludedInPromiscuousPortPattern_notDoubleFlagged() {
         // SMB/NetBIOS/RPC ports share ADMIN_DB_PORTS' own promiscuous-port false-positive
         // protection - if they're part of a 5+-port "answers on everything" pattern, they must

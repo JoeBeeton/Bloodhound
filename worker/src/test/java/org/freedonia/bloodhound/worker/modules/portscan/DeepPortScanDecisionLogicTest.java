@@ -69,6 +69,19 @@ class DeepPortScanDecisionLogicTest {
     }
 
     @Test
+    void pop3Port_flaggedAsCleartextMailProtocolExposed() {
+        List<RawFinding> findings =
+                DeepPortScanDecisionLogic.decide("example.com", List.of(port(110, "pop3", "Dovecot", "2.3.19")));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.severity().name()).isEqualTo("MEDIUM");
+        assertThat(finding.affectedAsset()).isEqualTo("example.com:110");
+        assertThat(finding.description()).contains("Dovecot 2.3.19");
+    }
+
+    @Test
     void unencryptedMgmtPort_flaggedWithServiceEvidence() {
         List<RawFinding> findings =
                 DeepPortScanDecisionLogic.decide("example.com", List.of(port(21, "ftp", "vsftpd", "3.0.3")));
