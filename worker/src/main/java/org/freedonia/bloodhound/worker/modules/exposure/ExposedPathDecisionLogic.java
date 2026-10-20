@@ -184,6 +184,11 @@ public final class ExposedPathDecisionLogic {
         // Alt-port probes: different port/protocol than the baseline probe, so no soft-404-dupe guard applies -
         // the content signature (a specific JSON shape) is the sole, sufficient guard here.
         addAltPortIfMatches(findings, hostname + ":2375", r, "EXPOSURE_DOCKER_API", b -> b.contains("\"ApiVersion\""));
+        // Same real Docker API response shape as EXPOSURE_DOCKER_API above, just reached over the
+        // TLS-secured port instead - a real, documented misconfiguration (--tls without
+        // --tlsverify, or a server cert issued with no client-CA check) leaves this just as open.
+        addAltPortIfMatches(
+                findings, hostname + ":2376", r, "EXPOSURE_DOCKER_API_TLS", b -> b.contains("\"ApiVersion\""));
         addAltPortIfMatches(findings, hostname + ":9200", r, "EXPOSURE_ELASTICSEARCH_UNAUTH",
                 b -> b.contains("\"cluster_name\"") || b.contains("you_know_for_search"));
         addAltPortIfMatches(findings, hostname + ":8500", r, "EXPOSURE_CONSUL_UNAUTH",
@@ -576,6 +581,13 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_DOCKER_API", new RuleMeta(Severity.CRITICAL,
                     "Docker Engine API exposed without authentication",
                     "The Docker Engine remote API is reachable without TLS/authentication - equivalent to root access.")),
+            Map.entry("EXPOSURE_DOCKER_API_TLS", new RuleMeta(Severity.CRITICAL,
+                    "Docker Engine API exposed on its TLS port without client verification",
+                    "The Docker Engine remote API is reachable on its TLS-secured port (2376), but without "
+                            + "requiring a trusted client certificate - a documented misconfiguration (--tls set "
+                            + "without --tlsverify, or a server cert issued with no client-CA check) that leaves "
+                            + "the full API open to anyone who can complete a TLS handshake. Equivalent to root "
+                            + "access on the host.")),
             Map.entry("EXPOSURE_ELASTICSEARCH_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Elasticsearch exposed without authentication",
                     "An Elasticsearch HTTP API is reachable without authentication, allowing full access to indexed data.")),

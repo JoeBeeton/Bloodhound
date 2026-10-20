@@ -128,6 +128,11 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_ASPNET_ELMAH", List.of("/elmah.axd")),
             ExposureProbeSpec.get("EXPOSURE_ADMINER", List.of("/adminer.php", "/adminer/index.php", "/adminer/")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
+            // 2376 is Docker's TLS-secured daemon port - a real, documented misconfiguration
+            // (--tls set without --tlsverify, or a server cert issued with no client-CA check)
+            // leaves the full API reachable to anyone who can complete a TLS handshake at all,
+            // invisible to the 2375 (plain HTTP) check above.
+            ExposureProbeSpec.altPortHttps("EXPOSURE_DOCKER_API_TLS", "/version", 2376),
             ExposureProbeSpec.altPort("EXPOSURE_ELASTICSEARCH_UNAUTH", "/", 9200),
             ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500),
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
