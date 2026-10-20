@@ -9,6 +9,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -24,6 +26,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509ExtendedTrustManager;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.worker.ratelimit.HostnameRateLimiter;
@@ -44,6 +50,43 @@ public class ExposedPathFetcher {
     private static final int DEFAULT_PORT_CONNECT_TIMEOUT_S = 5;
     private static final int ALT_PORT_CONNECT_TIMEOUT_S = 3;
     private static final int REQUEST_TIMEOUT_S = 6;
+
+    /**
+     * Accept-all, scoped to this file's one altPortHttps=true probe (Kubernetes), where "can we
+     * read the body at all" is the only question, not chain trust. Deliberately an
+     * X509ExtendedTrustManager, not the plain 3-method X509TrustManager TlsFetcher's own
+     * PERMISSIVE_TRUST_MANAGER uses: TlsFetcher talks to a raw SSLSocket directly, but
+     * java.net.http.HttpClient wraps a plain X509TrustManager in its own
+     * AbstractTrustManagerWrapper, which performs a MANDATORY hostname/identity check
+     * unconditionally - confirmed live before writing this (a self-signed, IP-only cert was
+     * rejected with "No subject alternative names present" even with a fully-permissive plain
+     * X509TrustManager AND SSLParameters.setEndpointIdentificationAlgorithm(null) on the client).
+     * Only the extended interface's socket/engine overloads bypass that wrapper entirely.
+     */
+    private static final X509ExtendedTrustManager PERMISSIVE_TRUST_MANAGER = new X509ExtendedTrustManager() {
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
+        }
+    };
 
     /** Every check except Redis (handled separately - it isn't HTTP). Bounded, deliberately not expanded beyond this list for Phase 1. */
     static final List<ExposureProbeSpec> CATALOG = List.of(
@@ -90,6 +133,7 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
             ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
             ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080),
+            ExposureProbeSpec.altPortHttps("EXPOSURE_KUBERNETES_API_UNAUTH", "/api/v1/namespaces", 6443),
             ExposureProbeSpec.get("EXPOSURE_APACHE_SERVER_STATUS", List.of("/server-status", "/server-status/")),
             ExposureProbeSpec.get("EXPOSURE_NGINX_STUB_STATUS", List.of("/nginx_status", "/status", "/basic_status")));
 
@@ -200,7 +244,8 @@ public class ExposedPathFetcher {
     private ProbeResponse fetchFirstMatch(String hostname, ExposureProbeSpec spec) {
         ProbeResponse last = ProbeResponse.unreachable();
         for (String path : spec.paths()) {
-            ProbeResponse r = probe(hostname, path, spec.method(), spec.postBody(), spec.altPort(), spec.skipBody());
+            ProbeResponse r = probe(
+                    hostname, path, spec.method(), spec.postBody(), spec.altPort(), spec.altPortHttps(), spec.skipBody());
             if (r.status() == 200) {
                 return r;
             }
@@ -211,9 +256,21 @@ public class ExposedPathFetcher {
 
     private ProbeResponse probe(
             String hostname, String path, String method, String postBody, Integer altPort, boolean skipBody) {
+        return probe(hostname, path, method, postBody, altPort, false, skipBody);
+    }
+
+    private ProbeResponse probe(
+            String hostname,
+            String path,
+            String method,
+            String postBody,
+            Integer altPort,
+            boolean altPortHttps,
+            boolean skipBody) {
         HostnameRateLimiter.shared().acquire(hostname);
         boolean isAltPort = altPort != null;
-        URI uri = isAltPort ? URI.create("http://" + hostname + ":" + altPort + path) : URI.create("https://" + hostname + path);
+        String scheme = isAltPort && altPortHttps ? "https" : isAltPort ? "http" : "https";
+        URI uri = isAltPort ? URI.create(scheme + "://" + hostname + ":" + altPort + path) : URI.create("https://" + hostname + path);
         try {
             return doProbe(uri, method, postBody, skipBody, isAltPort);
         } catch (Exception httpsFailure) {
@@ -241,9 +298,24 @@ public class ExposedPathFetcher {
         // pattern the rest of the codebase already accepts as its baseline (see SafeHttpGet's javadoc for
         // the residual TOCTOU gap that pattern doesn't fully close).
         SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(isAltPort ? ALT_PORT_CONNECT_TIMEOUT_S : DEFAULT_PORT_CONNECT_TIMEOUT_S))
-                .build();
+        HttpClient.Builder clientBuilder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(isAltPort ? ALT_PORT_CONNECT_TIMEOUT_S : DEFAULT_PORT_CONNECT_TIMEOUT_S));
+        // The Kubernetes API server (the one altPortHttps=true entry in this catalog) almost never
+        // has its cluster CA in any public trust store - a real cluster's own operator-generated CA
+        // is self-signed by design. Unlike the default-port path above (where a non-trusting
+        // handshake failure is one of two real signals this module cares about - see
+        // HttpHeaderFetcher's own equivalent reasoning), this is purely "can we read the response
+        // body at all," so a permissive trust manager here doesn't throw away any signal.
+        if (isAltPort && "https".equals(uri.getScheme())) {
+            try {
+                SSLContext ctx = SSLContext.getInstance("TLS");
+                ctx.init(null, new TrustManager[] {PERMISSIVE_TRUST_MANAGER}, new SecureRandom());
+                clientBuilder.sslContext(ctx);
+            } catch (java.security.GeneralSecurityException e) {
+                throw new IllegalStateException("TLS unavailable in this JVM", e);
+            }
+        }
+        HttpClient client = clientBuilder.build();
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_S))
                 .header("User-Agent", ScanUserAgent.VALUE);

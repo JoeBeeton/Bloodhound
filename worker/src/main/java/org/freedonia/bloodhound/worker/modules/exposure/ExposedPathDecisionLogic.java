@@ -198,6 +198,13 @@ public final class ExposedPathDecisionLogic {
         addAltPortIfMatches(findings, hostname + ":8081", r, "EXPOSURE_MONGO_EXPRESS_UNAUTH", b -> b.contains("Mongo Express"));
         addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH",
                 b -> b.contains("\"backends\"") && b.contains("\"frontends\""));
+        // A real Kubernetes API response to GET /api/v1/namespaces, when permitted, is
+        // "kind":"NamespaceList" - a response denied for lack of auth is instead
+        // "kind":"Status"/"reason":"Forbidden". Matching specifically on NamespaceList means this
+        // only fires on confirmed anonymous read access to real cluster data, not merely "port
+        // 6443 answers something" (which a properly-secured, mTLS-only API server would also do).
+        addAltPortIfMatches(findings, hostname + ":6443", r, "EXPOSURE_KUBERNETES_API_UNAUTH",
+                b -> b.contains("\"NamespaceList\""));
         // Apache mod_status's own distinctive page heading - a classic, well-known information
         // disclosure endpoint (Nikto's default checklist includes it) that discloses current
         // requests in flight, including client IPs and the URLs/query strings being processed -
@@ -646,6 +653,13 @@ public final class ExposedPathDecisionLogic {
                     "Traefik dashboard exposed without authentication",
                     "The Traefik reverse-proxy dashboard/API is reachable without authentication, disclosing "
                             + "internal backend routing and service topology.")),
+            Map.entry("EXPOSURE_KUBERNETES_API_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Kubernetes API server allows anonymous access",
+                    "The Kubernetes API server is reachable on its standard port (6443) and answers an "
+                            + "authenticated endpoint (/api/v1/namespaces) without credentials, disclosing the "
+                            + "cluster's real namespace list. Anonymous read access to cluster-management data is "
+                            + "often a foothold for broader cluster compromise - this is the control plane itself, "
+                            + "not just an application.")),
             Map.entry("EXPOSURE_APACHE_SERVER_STATUS", new RuleMeta(Severity.MEDIUM,
                     "Apache mod_status page exposed",
                     "The Apache mod_status page (/server-status) is publicly reachable, disclosing currently "
