@@ -28,6 +28,7 @@ public final class HttpHeaderParser {
         requireHeader(findings, headers, hostname, "x-frame-options", "HEADER_XFO_MISSING", Severity.LOW);
         requireHeader(findings, headers, hostname, "x-content-type-options", "HEADER_XCTO_MISSING", Severity.LOW);
         requireHeader(findings, headers, hostname, "referrer-policy", "HEADER_REFERRER_POLICY_MISSING", Severity.INFO);
+        findings.addAll(referrerPolicyUnsafeFindings(hostname, headers.get("referrer-policy")));
         requireHeader(
                 findings, headers, hostname, "permissions-policy", "HEADER_PERMISSIONS_POLICY_MISSING", Severity.INFO);
         requireHeader(
@@ -156,6 +157,33 @@ public final class HttpHeaderParser {
     }
 
     /**
+     * HEADER_REFERRER_POLICY_MISSING (checked separately above) only judges presence - it says
+     * nothing about whether the policy that IS set actually protects anything. {@code unsafe-url}
+     * is the worst possible value: it sends the complete referrer URL - full path and query
+     * string, which routinely carries session tokens, API keys, search terms, or other PII - on
+     * every single navigation, including cross-origin requests and HTTPS-to-HTTP downgrades where
+     * every other policy value withholds at least the path. Referrer-Policy supports a
+     * comma-separated fallback list (older browsers honor an earlier, more-supported entry), so
+     * this checks for the token anywhere in the value, not just an exact match on the whole header.
+     */
+    static List<RawFinding> referrerPolicyUnsafeFindings(String hostname, String referrerPolicyHeaderValue) {
+        if (referrerPolicyHeaderValue == null) {
+            return List.of();
+        }
+        boolean unsafe = java.util.Arrays.stream(referrerPolicyHeaderValue.split(","))
+                .map(String::trim)
+                .anyMatch(token -> token.equalsIgnoreCase("unsafe-url"));
+        if (!unsafe) {
+            return List.of();
+        }
+        return List.of(finding(
+                "HEADER_REFERRER_POLICY_UNSAFE",
+                Severity.MEDIUM,
+                hostname,
+                Map.of("header", referrerPolicyHeaderValue)));
+    }
+
+    /**
      * Only judged when HTTPS is known to work for this host (result.https()) - if it doesn't,
      * there is nothing to redirect to and the missing-TLS problem is the TLS module's to report.
      * A 2xx on cleartext is the real finding (the site is fully usable without TLS, so an
@@ -273,6 +301,17 @@ public final class HttpHeaderParser {
                     new String[] {
                         "Missing Referrer-Policy header",
                         "The response has no Referrer-Policy header, so the browser default (often full referrer leakage) applies."
+                    }),
+            Map.entry(
+                    "HEADER_REFERRER_POLICY_UNSAFE",
+                    new String[] {
+                        "Referrer-Policy set to unsafe-url",
+                        "A Referrer-Policy header is present, but its value is (or falls back to) unsafe-url - the "
+                                + "worst possible setting. It sends the complete referrer URL, including the full "
+                                + "path and query string (which routinely carries session tokens, API keys, or "
+                                + "other sensitive data), on every navigation: cross-origin requests and even "
+                                + "HTTPS-to-HTTP downgrades, where every other policy value withholds at least the "
+                                + "path."
                     }),
             Map.entry(
                     "HEADER_PERMISSIONS_POLICY_MISSING",

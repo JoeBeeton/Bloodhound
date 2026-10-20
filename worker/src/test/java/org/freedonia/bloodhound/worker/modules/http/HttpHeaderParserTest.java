@@ -242,6 +242,60 @@ class HttpHeaderParserTest {
         assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
     }
 
+    private static FetchResult withReferrerPolicy(String value) {
+        Map<String, String> h = allSecureHeaders();
+        h.put("referrer-policy", value);
+        return new FetchResult(true, h, List.of());
+    }
+
+    @Test
+    void referrerPolicyUnsafeUrl_flagged() {
+        List<RawFinding> findings = HttpHeaderParser.parse("example.com", withReferrerPolicy("unsafe-url"));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HEADER_REFERRER_POLICY_UNSAFE");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.evidence()).containsEntry("header", "unsafe-url");
+        });
+    }
+
+    @Test
+    void referrerPolicyUnsafeUrlCaseInsensitive_flagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withReferrerPolicy("Unsafe-URL"))))
+                .contains("HEADER_REFERRER_POLICY_UNSAFE");
+    }
+
+    @Test
+    void referrerPolicyUnsafeUrlAsFallbackEntry_stillFlagged() {
+        // Referrer-Policy supports a comma-separated fallback list - unsafe-url anywhere in it
+        // means some (older) browser will honor it, not just an exact single-token match.
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withReferrerPolicy("no-referrer, unsafe-url"))))
+                .contains("HEADER_REFERRER_POLICY_UNSAFE");
+    }
+
+    @Test
+    void referrerPolicySafeValue_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withReferrerPolicy("strict-origin-when-cross-origin"))))
+                .doesNotContain("HEADER_REFERRER_POLICY_UNSAFE");
+    }
+
+    @Test
+    void referrerPolicyMissing_notFlaggedAsUnsafe_onlyAsMissing() {
+        Map<String, String> h = allSecureHeaders();
+        h.remove("referrer-policy");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result)))
+                .contains("HEADER_REFERRER_POLICY_MISSING")
+                .doesNotContain("HEADER_REFERRER_POLICY_UNSAFE");
+    }
+
+    @Test
+    void referrerPolicySimilarButNotUnsafeUrlToken_notFlagged() {
+        // "unsafe-url" as a value must be matched as a whole token, not a substring - a real (if
+        // unlikely) custom/future policy name merely containing it should not false-positive.
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withReferrerPolicy("not-unsafe-url-ish"))))
+                .doesNotContain("HEADER_REFERRER_POLICY_UNSAFE");
+    }
+
     @Test
     void contentServedOverCleartext_flaggedMedium() {
         List<RawFinding> findings = HttpHeaderParser.parse(
