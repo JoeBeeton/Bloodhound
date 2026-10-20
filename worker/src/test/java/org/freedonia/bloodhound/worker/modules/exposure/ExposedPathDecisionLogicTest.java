@@ -188,6 +188,33 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void wordpressUserEnumeration_realUserArray_flaggedMedium() {
+        String body = "[{\"id\":1,\"name\":\"admin\",\"url\":\"\",\"description\":\"\","
+                + "\"link\":\"https://example.com/author/admin/\",\"slug\":\"admin\"}]";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_WORDPRESS_USER_ENUMERATION", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_WORDPRESS_USER_ENUMERATION");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void wordpressUserEnumeration_hardenedErrorObject_notFlagged() {
+        // WordPress actually answers this case with HTTP 401 in practice (which addIfMatches'
+        // own status==200 gate would exclude regardless of body shape) - status 200 here isolates
+        // and exercises the predicate's own array-vs-object distinction specifically, matching
+        // this file's established "not flagged" test convention for other rules.
+        String body = "{\"code\":\"rest_user_cannot_view\",\"message\":\"Sorry, you are not allowed to list users.\","
+                + "\"data\":{\"status\":401}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_WORDPRESS_USER_ENUMERATION", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result)))
+                .doesNotContain("EXPOSURE_WORDPRESS_USER_ENUMERATION");
+    }
+
+    @Test
     void wordpressXmlrpc_path404_notFlagged() {
         String body = "<html><body>404 Not Found</body></html>";
         ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(

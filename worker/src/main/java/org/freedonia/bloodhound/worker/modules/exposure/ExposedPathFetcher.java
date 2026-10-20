@@ -148,6 +148,13 @@ public class ExposedPathFetcher {
             // rate limiting), and pingback.ping can be abused as a server-side request forgery
             // vector to make the site itself probe arbitrary internal/external URLs.
             ExposureProbeSpec.get("EXPOSURE_WORDPRESS_XMLRPC", List.of("/xmlrpc.php")),
+            // Distinct from xmlrpc.php above: that's about the RATE a brute-force attacker can
+            // guess at, this is about WHICH usernames to guess. WordPress's REST API users
+            // endpoint is enabled by default and, unless a hardening plugin/config restricts it,
+            // lists every registered account's slug (often the real login username) and display
+            // name to anyone, unauthenticated - a classic WPScan/Wordfence-flagged info
+            // disclosure that directly feeds credential-stuffing and brute-force attacks.
+            ExposureProbeSpec.get("EXPOSURE_WORDPRESS_USER_ENUMERATION", List.of("/wp-json/wp/v2/users")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             // 2376 is Docker's TLS-secured daemon port - a real, documented misconfiguration
             // (--tls set without --tlsverify, or a server cert issued with no client-CA check)
