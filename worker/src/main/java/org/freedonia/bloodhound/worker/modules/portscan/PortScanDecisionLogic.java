@@ -19,6 +19,17 @@ public final class PortScanDecisionLogic {
     static final Set<Integer> UNENCRYPTED_MGMT_PORTS = Set.of(21, 23);
 
     /**
+     * POP3 (110) and IMAP (143) - both cleartext-by-default mail retrieval protocols (unlike FTP,
+     * neither has a port-level opt-in to TLS; a client must explicitly negotiate STARTTLS after
+     * connecting, which a bare open-port scan can't confirm either way, same shallow-but-useful
+     * heuristic UNENCRYPTED_MGMT_PORTS already applies to FTP/Telnet - the cleartext variant being
+     * reachable at all is the finding, regardless of whether the server also offers a TLS-wrapped
+     * alternative on 995/993). A real, commonly-flagged item (SecurityScorecard and similar
+     * attack-surface reports group "insecure network services" - Telnet/FTP/POP3/IMAP - together).
+     */
+    static final Set<Integer> CLEARTEXT_MAIL_PORTS = Set.of(110, 143);
+
+    /**
      * SMB (445), NetBIOS Session Service (139), and the MSRPC endpoint mapper (135) - folded into
      * {@link #ADMIN_DB_PORTS} (so they share its promiscuous-port false-positive protection
      * below) but flagged under their own, more severe rule: these protocols were never designed
@@ -156,6 +167,18 @@ public final class PortScanDecisionLogic {
                         Category.NETWORK,
                         "Unencrypted management protocol reachable",
                         "A port used by a plaintext management protocol (FTP or Telnet) was found open.",
+                        hostname + ":" + port,
+                        evidence));
+            } else if (CLEARTEXT_MAIL_PORTS.contains(port)) {
+                findings.add(new RawFinding(
+                        "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED",
+                        Severity.MEDIUM,
+                        Category.NETWORK,
+                        "Cleartext mail retrieval protocol reachable",
+                        "A port used by POP3 or IMAP's cleartext variant (110/143) was found open and reachable. "
+                                + "Unlike their TLS-wrapped counterparts (995/993), these protocols send "
+                                + "credentials and mail content unencrypted unless a client separately negotiates "
+                                + "STARTTLS after connecting.",
                         hostname + ":" + port,
                         evidence));
             }

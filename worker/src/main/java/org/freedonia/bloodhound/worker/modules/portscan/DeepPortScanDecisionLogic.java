@@ -130,6 +130,21 @@ public final class DeepPortScanDecisionLogic {
                                 + " (deep scan identified it as " + representative.serviceSummary() + ").",
                         hostname + ":" + portId,
                         evidence));
+            } else if (PortScanDecisionLogic.CLEARTEXT_MAIL_PORTS.contains(portId)) {
+                // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for this
+                // exact port - see NETWORK_SMB_NETBIOS_EXPOSED's own comment above for why.
+                findings.add(new RawFinding(
+                        "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED",
+                        Severity.MEDIUM,
+                        Category.NETWORK,
+                        "Cleartext mail retrieval protocol reachable",
+                        "A port used by POP3 or IMAP's cleartext variant (110/143) was found open and reachable"
+                                + " (deep scan identified it as " + representative.serviceSummary() + "). Unlike "
+                                + "their TLS-wrapped counterparts (995/993), these protocols send credentials and "
+                                + "mail content unencrypted unless a client separately negotiates STARTTLS after "
+                                + "connecting.",
+                        hostname + ":" + portId,
+                        evidence));
             }
 
             List<PortDetail> ftpAnonDetails =
