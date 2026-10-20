@@ -196,6 +196,31 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void jenkinsScriptConsole_positiveShape_flaggedCriticalWithPortInAssetName() {
+        String body = "<html><body><h1>Script Console</h1>"
+                + "<p>Type in an arbitrary Groovy script and execute it on the server.</p>"
+                + "<form><textarea name=\"script\"></textarea></form></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8080");
+        });
+    }
+
+    @Test
+    void jenkinsScriptConsole_loginRedirectPage_notFlagged() {
+        String body = "<html><body><h1>Jenkins</h1><p>Authentication required</p>"
+                + "<form action=\"/login\"><input name=\"j_username\"/></form></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result)))
+                .doesNotContain("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH");
+    }
+
+    @Test
     void dockerApi_positiveJsonShape_flaggedWithPortInAssetName() {
         String body = "{\"ApiVersion\":\"1.45\",\"Version\":\"24.0.0\"}";
         ExposedPathFetchResult result =

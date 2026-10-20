@@ -214,6 +214,11 @@ public final class ExposedPathDecisionLogic {
         addAltPortIfMatches(findings, hostname + ":8081", r, "EXPOSURE_MONGO_EXPRESS_UNAUTH", b -> b.contains("Mongo Express"));
         addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH",
                 b -> b.contains("\"backends\"") && b.contains("\"frontends\""));
+        // Jenkins's own distinctive script-console page copy, present only when the page actually
+        // rendered rather than redirecting to a login form - this is unauthenticated Groovy
+        // scripting, i.e. direct remote code execution on the Jenkins host.
+        addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH",
+                b -> b.contains("Type in an arbitrary Groovy script") && b.contains("name=\"script\""));
         // A real Kubernetes API response to GET /api/v1/namespaces, when permitted, is
         // "kind":"NamespaceList" - a response denied for lack of auth is instead
         // "kind":"Status"/"reason":"Forbidden". Matching specifically on NamespaceList means this
@@ -688,6 +693,11 @@ public final class ExposedPathDecisionLogic {
                     "Traefik dashboard exposed without authentication",
                     "The Traefik reverse-proxy dashboard/API is reachable without authentication, disclosing "
                             + "internal backend routing and service topology.")),
+            Map.entry("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Jenkins script console exposed without authentication",
+                    "Jenkins's Groovy script console is publicly reachable without authentication, allowing "
+                            + "arbitrary Groovy code execution - equivalent to full remote code execution on the "
+                            + "Jenkins host.")),
             Map.entry("EXPOSURE_KUBERNETES_API_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Kubernetes API server allows anonymous access",
                     "The Kubernetes API server is reachable on its standard port (6443) and answers an "
