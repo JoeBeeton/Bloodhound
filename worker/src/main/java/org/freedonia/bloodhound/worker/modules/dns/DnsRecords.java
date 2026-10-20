@@ -30,4 +30,11 @@ public record DnsRecords(
         /** Whether any mechanism anywhere in the full recursive SPF chain was ptr/ptr: - see
          * DnsRecordFetcher#walkSpf. False (not null) when there's no SPF record at all, same as
          * every other SPF-chain boolean here - DNS_SPF_MISSING already covers that case. */
-        boolean spfUsesPtrMechanism) {}
+        boolean spfUsesPtrMechanism,
+        /** SOA refresh/retry, in seconds - both null together with soaSerial when there's no SOA
+         * record. RFC 1912 2.2's own input: retry should be smaller than refresh, since retry is
+         * how often a secondary nameserver re-attempts a FAILED refresh - a retry value equal to
+         * or larger than refresh means a secondary that misses one refresh gets no extra chances
+         * before the next scheduled one anyway, defeating retry's whole purpose. */
+        Long soaRefreshSeconds,
+        Long soaRetrySeconds) {}

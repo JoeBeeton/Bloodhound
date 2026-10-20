@@ -89,7 +89,8 @@ public class DnsRecordFetcher {
         boolean wildcard = probeWildcard(hostname);
         List<String> danglingMx = findDanglingMxHosts(hostname);
         List<String> danglingSpfIncludes = findDanglingSpfIncludes(txt);
-        Long soaSerial = querySoaSerial(hostname);
+        SoaTiming soaTiming = querySoaRecord(hostname);
+        Long soaSerial = soaTiming == null ? null : soaTiming.serial();
         boolean hasTopLevelSpf = txt.stream().anyMatch(t -> t.toLowerCase(java.util.Locale.ROOT).startsWith("v=spf1"));
         SpfWalkResult spfWalk =
                 hasTopLevelSpf ? walkSpf(hostname, new java.util.HashSet<>(), 0) : new SpfWalkResult(0, false);
@@ -98,7 +99,8 @@ public class DnsRecordFetcher {
         return new DnsRecords(
                 txt, dmarcTxt, caaPresent, dnskeyPresent, mtaStsTxt, mtaStsPolicy, tlsRpt, bimi, dkimSelectorsFound,
                 wildcard, danglingMx, danglingSpfIncludes, soaSerial, spfLookupCount, dkimRawTxtFound,
-                spfWalk.usesPtrMechanism());
+                spfWalk.usesPtrMechanism(), soaTiming == null ? null : soaTiming.refreshSeconds(),
+                soaTiming == null ? null : soaTiming.retrySeconds());
     }
 
     /** Defensive recursion cap for a malicious/circular include chain - RFC 7208's own limit is 10 total lookups, so a legitimate chain never approaches this depth; it exists purely to guarantee termination. */
@@ -189,11 +191,13 @@ public class DnsRecordFetcher {
         return dangling;
     }
 
-    /** Null if the apex has no SOA (shouldn't normally happen for a zone that answered the earlier NS canary, but DNS is DNS) - see DnsPostureParser for how the serial is interpreted. */
-    private Long querySoaSerial(String hostname) {
+    /** One SOA record's serial/refresh/retry, in seconds for the latter two - null if the apex has no SOA (shouldn't normally happen for a zone that answered the earlier NS canary, but DNS is DNS). See DnsPostureParser for how each is interpreted. */
+    private record SoaTiming(long serial, long refreshSeconds, long retrySeconds) {}
+
+    private SoaTiming querySoaRecord(String hostname) {
         for (Record record : queryRecords(hostname, Type.SOA)) {
             if (record instanceof SOARecord soa) {
-                return soa.getSerial();
+                return new SoaTiming(soa.getSerial(), soa.getRefresh(), soa.getRetry());
             }
         }
         return null;
