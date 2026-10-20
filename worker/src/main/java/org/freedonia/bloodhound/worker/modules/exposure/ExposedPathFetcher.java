@@ -133,6 +133,14 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.get("EXPOSURE_LARAVEL_TELESCOPE", List.of("/telescope", "/telescope/requests")),
             ExposureProbeSpec.get("EXPOSURE_ASPNET_TRACE_AXD", List.of("/trace.axd")),
             ExposureProbeSpec.get("EXPOSURE_ASPNET_ELMAH", List.of("/elmah.axd")),
+            // web.config (classic .NET, XML) and appsettings.json (.NET Core, JSON) are the
+            // ecosystem's own equivalent of EXPOSURE_ENV_FILE - both routinely hold connection
+            // strings and API keys. Properly-configured IIS blocks web.config from being served
+            // as static content via a built-in handler mapping, but a misconfigured reverse
+            // proxy/container setup serving a .NET app's whole publish directory as static files
+            // has neither that protection nor PHP/Node's convention of treating a leading dot as
+            // special.
+            ExposureProbeSpec.get("EXPOSURE_DOTNET_CONFIG_FILE", List.of("/web.config", "/appsettings.json")),
             ExposureProbeSpec.get("EXPOSURE_ADMINER", List.of("/adminer.php", "/adminer/index.php", "/adminer/")),
             ExposureProbeSpec.altPort("EXPOSURE_DOCKER_API", "/version", 2375),
             // 2376 is Docker's TLS-secured daemon port - a real, documented misconfiguration
