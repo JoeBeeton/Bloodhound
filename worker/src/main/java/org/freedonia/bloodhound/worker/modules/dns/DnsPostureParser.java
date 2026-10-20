@@ -42,6 +42,20 @@ public final class DnsPostureParser {
             if (v.endsWith("+all") || v.endsWith("?all")) {
                 findings.add(finding(
                         "DNS_SPF_TOO_PERMISSIVE", Severity.MEDIUM, hostname, Map.of("record", spfRecords.get(0))));
+            } else if (!hasAllOrRedirectMechanism(v)) {
+                // RFC 7208 2.6.7: a sender IP matching none of the earlier mechanisms, with no
+                // "all" mechanism present at all, evaluates to Neutral - the exact same real-world
+                // effect as the explicit ?all case just flagged above, just reached by omission
+                // rather than intent. The record's own author plainly meant to restrict senders
+                // (otherwise why write any mechanisms at all) but forgot to actually terminate it,
+                // so anyone can still spoof mail from this domain with no SPF signal against them.
+                // redirect= takes over the all-mechanism's role entirely per RFC 7208 6.1, so a
+                // record ending in redirect= is not this gap.
+                findings.add(finding(
+                        "DNS_SPF_MISSING_ALL_MECHANISM",
+                        Severity.MEDIUM,
+                        hostname,
+                        Map.of("record", spfRecords.get(0))));
             }
             // RFC 7208 4.6.4: more than 10 total include/a/mx/ptr/exists/redirect "lookup"
             // mechanisms across the full recursive chain is a hard PermError - the single most
@@ -191,6 +205,17 @@ public final class DnsPostureParser {
         return findings;
     }
 
+    private static boolean hasAllOrRedirectMechanism(String spfRecordLowercase) {
+        for (String token : spfRecordLowercase.split("\\s+")) {
+            String mechanism = token.startsWith("+") || token.startsWith("-") || token.startsWith("~")
+                    || token.startsWith("?") ? token.substring(1) : token;
+            if (mechanism.equals("all") || token.startsWith("redirect=")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static final Pattern PCT_PATTERN = Pattern.compile("pct=(\\d{1,3})");
 
     private static Integer parsePct(String dmarcRecordLowercase) {
@@ -267,6 +292,15 @@ public final class DnsPostureParser {
                     new String[] {
                         "Overly permissive SPF record",
                         "The SPF record ends in +all or ?all, which allows any server (or fails open) to send mail as this domain."
+                    }),
+            Map.entry(
+                    "DNS_SPF_MISSING_ALL_MECHANISM",
+                    new String[] {
+                        "SPF record has no terminating all mechanism",
+                        "This SPF record has no all mechanism (and no redirect= taking its place), so RFC 7208 "
+                                + "evaluates any sender IP matching none of the earlier mechanisms as Neutral - the "
+                                + "same practical effect as an explicit ?all, just reached by omission rather than "
+                                + "intent. Mail from an unauthorized server gets no SPF signal against it at all."
                     }),
             Map.entry(
                     "DNS_DMARC_MISSING",
