@@ -141,6 +141,39 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void dotnetConfigFile_webConfigXmlShapeWithConnectionStrings_flaggedCritical() {
+        String body = "<?xml version=\"1.0\"?>\n<configuration>\n  <connectionStrings>\n"
+                + "    <add name=\"Default\" connectionString=\"Server=db;User Id=sa;Password=hunter2;\"/>\n"
+                + "  </connectionStrings>\n</configuration>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DOTNET_CONFIG_FILE", new ProbeResponse(200, "text/xml", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_DOTNET_CONFIG_FILE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void dotnetConfigFile_appsettingsJsonShapeWithConnectionStrings_flagged() {
+        String body = "{\"ConnectionStrings\":{\"Default\":\"Server=db;User Id=sa;Password=hunter2;\"},"
+                + "\"Logging\":{\"LogLevel\":{\"Default\":\"Information\"}}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DOTNET_CONFIG_FILE", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).contains("EXPOSURE_DOTNET_CONFIG_FILE");
+    }
+
+    @Test
+    void dotnetConfigFile_noConnectionStringsPresent_notFlagged() {
+        // A generic appsettings.json with no ConnectionStrings key at all - the mere presence of
+        // the file isn't the finding, a real connection string is.
+        String body = "{\"Logging\":{\"LogLevel\":{\"Default\":\"Information\"}}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_DOTNET_CONFIG_FILE", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_DOTNET_CONFIG_FILE");
+    }
+
+    @Test
     void dockerApi_positiveJsonShape_flaggedWithPortInAssetName() {
         String body = "{\"ApiVersion\":\"1.45\",\"Version\":\"24.0.0\"}";
         ExposedPathFetchResult result =

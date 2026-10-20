@@ -171,6 +171,13 @@ public final class ExposedPathDecisionLogic {
         addIfMatches(findings, hostname, r, "EXPOSURE_ASPNET_TRACE_AXD", baselineBody,
                 b -> b.contains("Application Trace") && b.contains("Requests to the Application"));
         addIfMatches(findings, hostname, r, "EXPOSURE_ASPNET_ELMAH", baselineBody, b -> b.contains("Error Log for"));
+        // Covers both web.config's XML <connectionStrings> element and appsettings.json's JSON
+        // "ConnectionStrings" key - whichever of the two candidate paths actually answered - since
+        // a connection string is the real secret-disclosure signal either format would carry.
+        if (addIfMatches(findings, hostname, r, "EXPOSURE_DOTNET_CONFIG_FILE", baselineBody,
+                b -> b.contains("connectionStrings") || b.contains("ConnectionStrings"))) {
+            addSecretScanFinding(findings, hostname, r.get("EXPOSURE_DOTNET_CONFIG_FILE"), "web.config/appsettings.json");
+        }
         addIfMatches(findings, hostname, r, "EXPOSURE_ADMINER", baselineBody, b -> b.contains("name=\"auth[driver]\""));
 
         // Not a catalog probe at all: reuses the baseline's own already-fetched response (a GET
@@ -650,6 +657,11 @@ public final class ExposedPathDecisionLogic {
                     "ASP.NET ELMAH error log exposed",
                     "The ELMAH error-logging endpoint is publicly reachable, disclosing application exception "
                             + "history - often including stack traces and request details.")),
+            Map.entry("EXPOSURE_DOTNET_CONFIG_FILE", new RuleMeta(Severity.CRITICAL,
+                    ".NET configuration file exposed",
+                    "A .NET configuration file (web.config or appsettings.json) is publicly reachable and contains "
+                            + "a connection string, routinely paired with database credentials, API keys, or other "
+                            + "application secrets.")),
             Map.entry("EXPOSURE_ADMINER", new RuleMeta(Severity.HIGH,
                     "Adminer database console exposed",
                     "An Adminer database-administration login console is publicly reachable.")),
