@@ -157,6 +157,20 @@ public final class DnsPostureParser {
             }
         }
 
+        if (records.soaRefreshSeconds() != null && records.soaRetrySeconds() != null
+                && records.soaRetrySeconds() >= records.soaRefreshSeconds()) {
+            // RFC 1912 2.2: retry (how often a secondary re-attempts a FAILED refresh) should be
+            // smaller than refresh (the normal successful re-check interval) - otherwise a
+            // secondary that misses one refresh gets no extra chances before the next regularly
+            // scheduled one anyway, defeating retry's purpose and letting a secondary silently
+            // drift stale for longer than intended after a transient master outage.
+            findings.add(finding(
+                    "DNS_SOA_RETRY_EXCEEDS_REFRESH",
+                    Severity.LOW,
+                    hostname,
+                    Map.of("refreshSeconds", records.soaRefreshSeconds(), "retrySeconds", records.soaRetrySeconds())));
+        }
+
         if (records.wildcardDnsDetected()) {
             // Emitted from here (not SubdomainEnumModule) since it's a
             // single apex-level DNS probe with no per-subdomain fan-out
@@ -364,6 +378,17 @@ public final class DnsPostureParser {
                                 + "date more than 2 years in the past - a signal (not proof, since not every zone "
                                 + "uses this convention) that the zone's DNS records haven't been updated in a long "
                                 + "time and may reflect abandoned or unmaintained infrastructure."
+                    }),
+            Map.entry(
+                    "DNS_SOA_RETRY_EXCEEDS_REFRESH",
+                    new String[] {
+                        "SOA retry interval is not shorter than the refresh interval",
+                        "RFC 1912 2.2 says the SOA retry value (how often a secondary nameserver re-attempts a "
+                                + "failed zone refresh) should be smaller than the refresh value (the normal "
+                                + "successful re-check interval). Here retry is equal to or larger than refresh, so "
+                                + "a secondary that misses one refresh gets no extra chances before the next "
+                                + "regularly scheduled one anyway - a secondary can drift stale for longer than "
+                                + "intended after a transient outage on the primary nameserver."
                     }),
             Map.entry(
                     "DNS_DKIM_NOT_DETECTED",
