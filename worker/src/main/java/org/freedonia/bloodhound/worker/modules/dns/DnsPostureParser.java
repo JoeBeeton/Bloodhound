@@ -55,6 +55,13 @@ public final class DnsPostureParser {
                         hostname,
                         Map.of("lookupCount", records.spfLookupCount(), "limit", SPF_MAX_LOOKUPS)));
             }
+            if (records.spfUsesPtrMechanism()) {
+                // RFC 7208 5.5: "SHOULD NOT be used" - slow (a full reverse-then-forward DNS
+                // round trip per sender IP), unreliable, and some validators skip evaluating it
+                // entirely or treat its mere presence as an automatic fail, independent of the
+                // lookup-count limit DNS_SPF_LOOKUP_LIMIT_EXCEEDED already covers.
+                findings.add(finding("DNS_SPF_PTR_MECHANISM_DEPRECATED", Severity.LOW, hostname, Map.of()));
+            }
         }
 
         for (String danglingInclude : records.danglingSpfIncludes()) {
@@ -366,6 +373,15 @@ public final class DnsPostureParser {
                                 + "selector1, selector2, k1, dkim). DKIM selector names are arbitrary, so this is a "
                                 + "best-effort check - a real DKIM setup using an uncommon selector would not be "
                                 + "detected by this probe."
+                    }),
+            Map.entry(
+                    "DNS_SPF_PTR_MECHANISM_DEPRECATED",
+                    new String[] {
+                        "SPF record uses the deprecated ptr mechanism",
+                        "This domain's SPF record uses the ptr (or ptr:domain) mechanism, which RFC 7208 5.5 "
+                                + "explicitly says SHOULD NOT be used: it requires a slow reverse-then-forward DNS "
+                                + "lookup per sender IP, is unreliable, and some mail validators skip evaluating it "
+                                + "entirely or treat its mere presence as an automatic SPF failure."
                     }),
             Map.entry(
                     "DNS_DKIM_WEAK_KEY",
