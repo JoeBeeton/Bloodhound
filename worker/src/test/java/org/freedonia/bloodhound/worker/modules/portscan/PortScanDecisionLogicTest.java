@@ -130,6 +130,15 @@ class PortScanDecisionLogicTest {
     }
 
     @Test
+    void memcachedPort11211_flaggedCriticalAsMemcachedExposed_notGenericAdminService() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(11211)));
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("NETWORK_MEMCACHED_EXPOSED");
+        assertThat(findings.get(0).severity().name()).isEqualTo("CRITICAL");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("example.com:11211");
+    }
+
+    @Test
     void mongoShardPort27018_flaggedSameAsStandalone27017() {
         List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(27018)));
         assertThat(findings).hasSize(1);

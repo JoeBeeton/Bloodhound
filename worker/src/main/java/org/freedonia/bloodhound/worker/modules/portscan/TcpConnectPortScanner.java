@@ -36,7 +36,7 @@ public class TcpConnectPortScanner {
     /** Exact curated list from the plan - deliberately not expanded. */
     static final List<Integer> CURATED_PORTS = List.of(
             21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 465, 587, 993, 995, 1433, 1521, 27017, 2375,
-            2376, 3306, 3389, 5432, 5900, 5984, 6379, 8080, 8443, 8500, 9200, 9300, 9092, 27018);
+            2376, 3306, 3389, 5432, 5900, 5984, 6379, 8080, 8443, 8500, 9200, 9300, 9092, 27018, 11211);
 
     private static final int CONNECT_TIMEOUT_MS = 2000;
     private static final int POOL_SIZE = 20;

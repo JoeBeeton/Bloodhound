@@ -109,6 +109,23 @@ public final class DeepPortScanDecisionLogic {
                                     + "by WannaCry and NotPetya).",
                             hostname + ":" + portId,
                             evidence));
+                } else if (!promiscuous && PortScanDecisionLogic.MEMCACHED_PORTS.contains(portId)) {
+                    // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for
+                    // this exact port - see NETWORK_SMB_NETBIOS_EXPOSED's own comment above for
+                    // why.
+                    findings.add(new RawFinding(
+                            "NETWORK_MEMCACHED_EXPOSED",
+                            Severity.CRITICAL,
+                            Category.NETWORK,
+                            "Memcached reachable from the internet",
+                            "Memcached's default port (11211) was found open and reachable from the internet "
+                                    + "(deep scan identified it as " + representative.serviceSummary() + "). "
+                                    + "Memcached ships with no authentication at all by default, so a reachable "
+                                    + "instance discloses whatever an application cached in it to anyone who "
+                                    + "connects, and internet-exposed memcached servers were the vector behind the "
+                                    + "largest DDoS amplification attacks on record.",
+                            hostname + ":" + portId,
+                            evidence));
                 } else if (!promiscuous) {
                     findings.add(new RawFinding(
                             "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
