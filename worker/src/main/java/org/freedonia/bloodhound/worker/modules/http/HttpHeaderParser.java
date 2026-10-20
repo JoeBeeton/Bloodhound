@@ -80,6 +80,7 @@ public final class HttpHeaderParser {
                             "COOKIE_MISSING_HOST_PREFIX", Severity.INFO, asset, Map.of("cookie", setCookie)));
                 }
             }
+            findings.addAll(cookieDomainTooBroadFindings(hostname, asset, setCookie));
         }
 
         return findings;
@@ -102,6 +103,45 @@ public final class HttpHeaderParser {
         int semi = setCookieHeader.indexOf(';');
         int end = semi > 0 ? semi : setCookieHeader.length();
         return eq > 0 && eq < end ? setCookieHeader.substring(0, eq).trim() : setCookieHeader.substring(0, end).trim();
+    }
+
+    private static String cookieDomainAttribute(String setCookieHeader) {
+        for (String part : setCookieHeader.split(";")) {
+            String trimmed = part.trim();
+            if (trimmed.toLowerCase(Locale.ROOT).startsWith("domain=")) {
+                return trimmed.substring("domain=".length()).trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * No Domain attribute at all is the safest default (RFC 6265 host-only cookie - sent back
+     * only to the exact host that set it). Explicitly setting Domain to a PARENT of the scanned
+     * host broadens that scope to every subdomain, not just this one - the same subdomains this
+     * product's own SUBDOMAIN_DANGLING_CNAME/SUBDOMAIN_NS_DELEGATION_TAKEOVER checks already flag
+     * as a real attacker foothold risk: a cookie scoped this broadly is sent to (and, without
+     * HttpOnly, readable by script running on) any one of them, including one that's since been
+     * abandoned and retaken over. Domain=exact-same-host is NOT flagged - that's just a verbose
+     * way of writing the same host-only scope a missing Domain attribute already gives.
+     */
+    static List<RawFinding> cookieDomainTooBroadFindings(String hostname, String asset, String setCookieHeader) {
+        String domainAttr = cookieDomainAttribute(setCookieHeader);
+        if (domainAttr == null) {
+            return List.of();
+        }
+        String normalized = domainAttr.startsWith(".") ? domainAttr.substring(1) : domainAttr;
+        if (normalized.isEmpty() || normalized.equalsIgnoreCase(hostname)) {
+            return List.of();
+        }
+        if (!hostname.toLowerCase(Locale.ROOT).endsWith("." + normalized.toLowerCase(Locale.ROOT))) {
+            return List.of();
+        }
+        return List.of(finding(
+                "COOKIE_DOMAIN_TOO_BROAD",
+                Severity.LOW,
+                asset,
+                Map.of("cookie", setCookieHeader, "domain", domainAttr)));
     }
 
     /**
@@ -384,6 +424,16 @@ public final class HttpHeaderParser {
                                 + "These prefixes get the browser itself to enforce the cookie's security properties "
                                 + "(__Host- additionally blocks it from being overwritten by a subdomain or a "
                                 + "non-root path) rather than relying solely on attributes a misconfiguration could drop."
+                    }),
+            Map.entry(
+                    "COOKIE_DOMAIN_TOO_BROAD",
+                    new String[] {
+                        "Cookie scoped to a parent domain, not just this host",
+                        "A cookie sets its Domain attribute to a parent of the host that set it, broadening the "
+                                + "cookie's scope to every subdomain rather than just this one (the default, safer "
+                                + "behavior when Domain is left out entirely). The cookie is sent to - and, without "
+                                + "HttpOnly, readable by script running on - any one of those subdomains, including "
+                                + "one that has since been abandoned or taken over."
                     }),
             Map.entry(
                     "HTTP_TRACE_METHOD_ENABLED",
