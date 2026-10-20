@@ -496,6 +496,55 @@ class DnsPostureParserTest {
         assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("EMAIL_DMARC_PCT_BELOW_100");
     }
 
+    private static DnsRecords withDmarc(String dmarcRecord) {
+        DnsRecords r = compliant();
+        return new DnsRecords(
+                r.txtRecords(), List.of(dmarcRecord), r.caaPresent(), r.dnskeyPresent(), r.mtaStsTxtPresent(),
+                r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(), r.dkimSelectorsFound(),
+                r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(), r.soaSerial(),
+                r.spfLookupCount(), r.dkimRawTxtFound(), r.spfUsesPtrMechanism(), r.soaRefreshSeconds(),
+                r.soaRetrySeconds());
+    }
+
+    @Test
+    void dmarcSubdomainPolicyWeaker_flagged() {
+        DnsRecords records = withDmarc("v=DMARC1; p=reject; sp=none; rua=mailto:dmarc@example.com");
+        List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void dmarcSubdomainPolicySameStrength_notFlagged() {
+        DnsRecords records = withDmarc("v=DMARC1; p=reject; sp=reject; rua=mailto:dmarc@example.com");
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", records)))
+                .doesNotContain("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
+    }
+
+    @Test
+    void dmarcSubdomainPolicyStronger_notFlagged() {
+        // sp= stricter than p= is a perfectly reasonable, intentional hardening choice - not a gap.
+        DnsRecords records = withDmarc("v=DMARC1; p=quarantine; sp=reject; rua=mailto:dmarc@example.com");
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", records)))
+                .doesNotContain("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
+    }
+
+    @Test
+    void dmarcNoSubdomainPolicyTag_notFlagged() {
+        // sp= absent means p= applies to subdomains too, per RFC 7489 default - not a gap.
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", compliant())))
+                .doesNotContain("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
+    }
+
+    @Test
+    void dmarcSubdomainPolicyQuarantineWeakerThanReject_flagged() {
+        DnsRecords records = withDmarc("v=DMARC1; p=reject; sp=quarantine; rua=mailto:dmarc@example.com");
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", records)))
+                .contains("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
+    }
+
     @Test
     void soaSerialEncodingAVeryOldDate_flaggedLow() {
         DnsRecords r = compliant();

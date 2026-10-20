@@ -111,6 +111,22 @@ public final class DnsPostureParser {
                         "EMAIL_DMARC_PCT_BELOW_100", Severity.LOW, dmarcHost,
                         Map.of("record", dmarc.get(), "pct", pct)));
             }
+            // sp= (RFC 7489 6.3) overrides p= specifically for subdomains - absent, it's not a
+            // gap at all (p= already applies to subdomains too, per spec default). Only an
+            // EXPLICIT sp= weaker than the domain's own p= is the real finding: someone
+            // deliberately carved out a lower bar for every subdomain, which may be intentional
+            // (subdomains known not to send mail) or a forgotten leftover from testing - either
+            // way, worth a human look, the same framing DNS_DMARC_POLICY_NONE already uses for
+            // p=none itself.
+            Integer pStrength = dmarcPolicyStrength(tagValue(v, "p"));
+            Integer spStrength = dmarcPolicyStrength(tagValue(v, "sp"));
+            if (pStrength != null && spStrength != null && spStrength < pStrength) {
+                findings.add(finding(
+                        "DNS_DMARC_SUBDOMAIN_POLICY_WEAKER",
+                        Severity.MEDIUM,
+                        dmarcHost,
+                        Map.of("record", dmarc.get())));
+            }
         }
 
         if (!records.caaPresent()) {
@@ -224,6 +240,36 @@ public final class DnsPostureParser {
     }
 
     /**
+     * Exact tag-name match on a ";"-split record, not a regex on the raw string - "p=" as a
+     * substring also matches inside "sp=", which would make a naive {@code contains("p=")} or a
+     * loosely-anchored regex misread sp='s own value as p='s (or vice versa). Mirrors
+     * HttpHeaderParser#cookieDomainAttribute's own same-shaped tag-value extraction.
+     */
+    private static String tagValue(String recordLowercase, String tagName) {
+        for (String part : recordLowercase.split(";")) {
+            String trimmed = part.trim();
+            int eq = trimmed.indexOf('=');
+            if (eq > 0 && trimmed.substring(0, eq).trim().equals(tagName)) {
+                return trimmed.substring(eq + 1).trim();
+            }
+        }
+        return null;
+    }
+
+    /** RFC 7489 11.2's own three policy values, ranked by strength - null for a missing tag or an unrecognized value (never guessed at). */
+    private static Integer dmarcPolicyStrength(String policy) {
+        if (policy == null) {
+            return null;
+        }
+        return switch (policy) {
+            case "reject" -> 2;
+            case "quarantine" -> 1;
+            case "none" -> 0;
+            default -> null;
+        };
+    }
+
+    /**
      * Interprets a SOA serial under the near-universal YYYYMMDDnn convention (the two trailing
      * digits are a same-day revision counter) - not every zone actually follows it (a plain
      * incrementing integer is equally valid per RFC 1035), so this only returns a date when the
@@ -313,6 +359,15 @@ public final class DnsPostureParser {
                     new String[] {
                         "DMARC policy set to none",
                         "A DMARC record exists but its policy is p=none, meaning failing messages are only monitored, not rejected or quarantined."
+                    }),
+            Map.entry(
+                    "DNS_DMARC_SUBDOMAIN_POLICY_WEAKER",
+                    new String[] {
+                        "DMARC subdomain policy weaker than the domain's own policy",
+                        "This DMARC record's sp= (subdomain policy) tag is explicitly set weaker than its own p= "
+                                + "policy (e.g. p=reject but sp=none), carving out a lower enforcement bar for every "
+                                + "subdomain. Spoofed mail appearing to come from any subdomain gets less protection "
+                                + "than mail from the apex domain itself."
                     }),
             Map.entry(
                     "DNS_CAA_MISSING",
