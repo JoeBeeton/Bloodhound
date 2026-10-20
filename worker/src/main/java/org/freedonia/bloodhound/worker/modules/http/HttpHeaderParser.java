@@ -27,6 +27,7 @@ public final class HttpHeaderParser {
         findings.addAll(cspWeakPolicyFindings(hostname, headers.get("content-security-policy")));
         requireHeader(findings, headers, hostname, "x-frame-options", "HEADER_XFO_MISSING", Severity.LOW);
         requireHeader(findings, headers, hostname, "x-content-type-options", "HEADER_XCTO_MISSING", Severity.LOW);
+        findings.addAll(xctoInvalidValueFindings(hostname, headers.get("x-content-type-options")));
         requireHeader(findings, headers, hostname, "referrer-policy", "HEADER_REFERRER_POLICY_MISSING", Severity.INFO);
         findings.addAll(referrerPolicyUnsafeFindings(hostname, headers.get("referrer-policy")));
         requireHeader(
@@ -224,6 +225,21 @@ public final class HttpHeaderParser {
     }
 
     /**
+     * X-Content-Type-Options recognizes exactly one value: {@code nosniff}. Anything else - a
+     * typo, a stray duplicate, a copy-pasted garbage value - is silently ignored by every
+     * browser, which makes it functionally identical to HEADER_XCTO_MISSING (checked separately
+     * above as presence only) while looking, to a human skimming raw headers, like it's set
+     * correctly. Both Mozilla Observatory and securityheaders.com check the value, not just
+     * presence, for exactly this reason.
+     */
+    static List<RawFinding> xctoInvalidValueFindings(String hostname, String xctoHeaderValue) {
+        if (xctoHeaderValue == null || xctoHeaderValue.trim().equalsIgnoreCase("nosniff")) {
+            return List.of();
+        }
+        return List.of(finding("HEADER_XCTO_INVALID_VALUE", Severity.LOW, hostname, Map.of("header", xctoHeaderValue)));
+    }
+
+    /**
      * Only judged when HTTPS is known to work for this host (result.https()) - if it doesn't,
      * there is nothing to redirect to and the missing-TLS problem is the TLS module's to report.
      * A 2xx on cleartext is the real finding (the site is fully usable without TLS, so an
@@ -335,6 +351,14 @@ public final class HttpHeaderParser {
                     new String[] {
                         "Missing X-Content-Type-Options header",
                         "The response has no X-Content-Type-Options: nosniff header, allowing browsers to MIME-sniff responses."
+                    }),
+            Map.entry(
+                    "HEADER_XCTO_INVALID_VALUE",
+                    new String[] {
+                        "X-Content-Type-Options set to an invalid value",
+                        "The X-Content-Type-Options header is present, but its value isn't nosniff - the only value "
+                                + "browsers recognize. Any other value is silently ignored, leaving the response just "
+                                + "as open to MIME-sniffing as if the header were missing entirely."
                     }),
             Map.entry(
                     "HEADER_REFERRER_POLICY_MISSING",

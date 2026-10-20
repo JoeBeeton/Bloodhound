@@ -348,6 +348,45 @@ class HttpHeaderParserTest {
                 .doesNotContain("HEADER_REFERRER_POLICY_UNSAFE");
     }
 
+    private static FetchResult withXcto(String value) {
+        Map<String, String> h = allSecureHeaders();
+        h.put("x-content-type-options", value);
+        return new FetchResult(true, h, List.of());
+    }
+
+    @Test
+    void xctoInvalidValue_flagged() {
+        List<RawFinding> findings = HttpHeaderParser.parse("example.com", withXcto("sniff"));
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HEADER_XCTO_INVALID_VALUE");
+            assertThat(f.severity().name()).isEqualTo("LOW");
+            assertThat(f.evidence()).containsEntry("header", "sniff");
+        });
+        assertThat(ruleIds(findings)).doesNotContain("HEADER_XCTO_MISSING");
+    }
+
+    @Test
+    void xctoNosniff_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withXcto("nosniff"))))
+                .doesNotContain("HEADER_XCTO_INVALID_VALUE");
+    }
+
+    @Test
+    void xctoNosniffCaseInsensitive_notFlagged() {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", withXcto("NoSniff"))))
+                .doesNotContain("HEADER_XCTO_INVALID_VALUE");
+    }
+
+    @Test
+    void xctoMissing_flaggedAsMissingNotInvalidValue() {
+        Map<String, String> h = allSecureHeaders();
+        h.remove("x-content-type-options");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result)))
+                .contains("HEADER_XCTO_MISSING")
+                .doesNotContain("HEADER_XCTO_INVALID_VALUE");
+    }
+
     @Test
     void contentServedOverCleartext_flaggedMedium() {
         List<RawFinding> findings = HttpHeaderParser.parse(
