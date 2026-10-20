@@ -15,7 +15,22 @@ import org.freedonia.bloodhound.common.findings.Severity;
 public final class PortScanDecisionLogic {
 
     static final Set<Integer> ADMIN_DB_PORTS =
-            Set.of(3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984, 135, 139, 445);
+            Set.of(
+                    3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984, 135, 139, 445,
+                    // 27018: MongoDB's shard-server default port (mongod --shardsvr) - the exact
+                    // same unauthenticated-database risk as 27017, just the port sharded clusters
+                    // commonly use for shard members instead of a single standalone instance.
+                    27018,
+                    // 9300: Elasticsearch's own internal binary transport protocol for inter-node
+                    // cluster communication - a different, separately-exploitable attack surface
+                    // from the REST API on 9200 (already covered via EXPOSURE_ELASTICSEARCH_UNAUTH),
+                    // with its own real-world RCE history (e.g. the Groovy scripting engine RCEs)
+                    // when reachable externally.
+                    9300,
+                    // 9092: a raw Kafka broker - historically shipped with no built-in
+                    // authentication at all, and real-world ransomware/data-wipe incidents have
+                    // specifically targeted internet-exposed, unauthenticated Kafka clusters.
+                    9092);
     static final Set<Integer> UNENCRYPTED_MGMT_PORTS = Set.of(21, 23);
 
     /**
