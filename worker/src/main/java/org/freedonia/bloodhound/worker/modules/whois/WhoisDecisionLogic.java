@@ -58,6 +58,31 @@ public final class WhoisDecisionLogic {
                     Map.of("statusCodes", fields.statusCodes())));
         }
 
+        // pendingDelete/redemptionPeriod are the two EPP statuses ICANN's own deletion lifecycle
+        // (expired -> auto-renew grace -> redemptionPeriod -> pendingDelete -> released) assigns
+        // once a registration has ALREADY lapsed - a much more urgent, already-happening signal
+        // than WHOIS_EXPIRY_APPROACHING's "will expire within 30 days" forecast. Once released,
+        // anyone can register the domain and inherit whatever trust, inbound mail, or traffic is
+        // still pointed at it - the exact same hijack shape SUBDOMAIN_DANGLING_CNAME covers for a
+        // deleted cloud resource, but for the apex registration itself.
+        if (fields.statusCodes().stream()
+                .anyMatch(s -> {
+                    String n = normalizeStatus(s);
+                    return n.contains("pendingdelete") || n.contains("redemptionperiod");
+                })) {
+            findings.add(new RawFinding(
+                    "WHOIS_DOMAIN_PENDING_DELETE",
+                    Severity.CRITICAL,
+                    Category.WHOIS,
+                    "Domain registration has lapsed and is pending deletion",
+                    "This domain's WHOIS/RDAP status shows pendingDelete or redemptionPeriod, meaning the "
+                            + "registration has already expired and the domain is in ICANN's deletion pipeline. "
+                            + "Once released it can be registered by anyone, who could then hijack residual trust, "
+                            + "inbound email, or traffic still pointed at this domain.",
+                    hostname,
+                    Map.of("statusCodes", fields.statusCodes())));
+        }
+
         return findings;
     }
 

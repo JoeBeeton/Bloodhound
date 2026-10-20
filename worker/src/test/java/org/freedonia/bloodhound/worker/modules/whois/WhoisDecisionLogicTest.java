@@ -94,6 +94,36 @@ class WhoisDecisionLogicTest {
     }
 
     @Test
+    void pendingDeleteStatus_flaggedCritical() {
+        List<RawFinding> findings =
+                WhoisDecisionLogic.decide("example.com", fieldsWithStatus(List.of("pendingDelete")), NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("WHOIS_DOMAIN_PENDING_DELETE");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+        });
+    }
+
+    @Test
+    void redemptionPeriodStatus_flaggedCritical() {
+        List<RawFinding> findings =
+                WhoisDecisionLogic.decide("example.com", fieldsWithStatus(List.of("redemptionPeriod")), NOW);
+        assertThat(findings).anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("WHOIS_DOMAIN_PENDING_DELETE"));
+    }
+
+    @Test
+    void pendingDeleteCaseAndSpacingInsensitive_stillFlagged() {
+        assertThat(WhoisDecisionLogic.decide("example.com", fieldsWithStatus(List.of("pending delete")), NOW))
+                .anySatisfy(f -> assertThat(f.ruleId()).isEqualTo("WHOIS_DOMAIN_PENDING_DELETE"));
+    }
+
+    @Test
+    void activeStatus_notFlaggedAsPendingDelete() {
+        assertThat(WhoisDecisionLogic.decide("example.com", fieldsWithStatus(List.of("active")), NOW))
+                .extracting(RawFinding::ruleId)
+                .doesNotContain("WHOIS_DOMAIN_PENDING_DELETE");
+    }
+
+    @Test
     void bothExpiryApproachingAndNoTransferLock_bothFindingsFire() {
         WhoisFields fields = new WhoisFields(
                 "Some Registrar", NOW.minus(1000, ChronoUnit.DAYS), NOW.plus(10, ChronoUnit.DAYS), null, List.of(),
