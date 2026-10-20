@@ -62,6 +62,33 @@ class PermutationGeneratorTest {
     }
 
     @Test
+    void generatesPunycodeEncodedIdnHomographs() {
+        // "apple.com" with the Cyrillic "а" (U+0430) swapped for the first "a" - live-verified
+        // via java.net.IDN.toASCII directly before writing this test: the real, registrable wire
+        // form is "xn--pple-43d.com", never the raw Unicode string (which is never what a DNS
+        // zone actually stores).
+        Map<String, String> byDomain = toMap(PermutationGenerator.generate("apple.com"));
+        assertThat(byDomain).containsEntry("xn--pple-43d.com", "IDN_HOMOGRAPH");
+    }
+
+    @Test
+    void idnHomographCandidatesAreAsciiPunycodeNeverRawUnicode() {
+        List<PermutationGenerator.Candidate> candidates = PermutationGenerator.generate("cat.com");
+        List<PermutationGenerator.Candidate> homographs =
+                candidates.stream().filter(c -> c.permutationType().equals("IDN_HOMOGRAPH")).toList();
+        assertThat(homographs).isNotEmpty();
+        assertThat(homographs).allSatisfy(c -> assertThat(c.domain()).matches("[\\x00-\\x7F]+"));
+        assertThat(homographs).allSatisfy(c -> assertThat(c.domain()).startsWith("xn--"));
+    }
+
+    @Test
+    void labelWithNoConfusableCharacters_noIdnHomographCandidates() {
+        // "zzz.com" has no character in CYRILLIC_CONFUSABLES at all.
+        Map<String, String> byDomain = toMap(PermutationGenerator.generate("zzz.com"));
+        assertThat(byDomain.values()).doesNotContain("IDN_HOMOGRAPH");
+    }
+
+    @Test
     void generatesAdjacentKeySubstitutions() {
         // "a" is QWERTY-adjacent to q, w, s, z.
         Map<String, String> byDomain = toMap(PermutationGenerator.generate("a.com"));
