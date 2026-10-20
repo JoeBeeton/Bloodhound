@@ -49,9 +49,16 @@ public class DnsZoneFetcher {
             boolean axfrAllowed,
             int axfrRecordCount,
             boolean answeredAuthoritatively,
-            boolean reachable) {
+            boolean reachable,
+            boolean openResolver) {
         public NsCheckResult(String nameserver, boolean axfrAllowed, int axfrRecordCount, boolean answeredAuthoritatively) {
-            this(nameserver, axfrAllowed, axfrRecordCount, answeredAuthoritatively, true);
+            this(nameserver, axfrAllowed, axfrRecordCount, answeredAuthoritatively, true, false);
+        }
+
+        public NsCheckResult(
+                String nameserver, boolean axfrAllowed, int axfrRecordCount, boolean answeredAuthoritatively,
+                boolean reachable) {
+            this(nameserver, axfrAllowed, axfrRecordCount, answeredAuthoritatively, reachable, false);
         }
     }
 
@@ -87,7 +94,9 @@ public class DnsZoneFetcher {
             }
             boolean answersAuthoritatively = respondsAuthoritatively(hostname, nsIp);
             AxfrAttempt axfr = attemptAxfr(hostname, nsIp);
-            results.add(new NsCheckResult(ns, axfr.allowed(), axfr.recordCount(), answersAuthoritatively, true));
+            boolean openResolver = isOpenResolver(nsIp);
+            results.add(new NsCheckResult(
+                    ns, axfr.allowed(), axfr.recordCount(), answersAuthoritatively, true, openResolver));
         }
         return results;
     }
@@ -132,6 +141,31 @@ public class DnsZoneFetcher {
             return response.getRcode() != Rcode.REFUSED;
         } catch (Exception e) {
             return true;
+        }
+    }
+
+    /**
+     * A canary name this nameserver has no authority over at all ({@code a.root-servers.net} - one
+     * of the most stable A records in all of DNS, chosen so this never breaks from the canary
+     * itself changing). A server that is ONLY authoritative for the target's own zone must answer
+     * REFUSED/NOTIMP for this; a server that happily recurses and returns a real answer is an open
+     * resolver - reachable by anyone on the internet, not just this target's own infrastructure,
+     * and a classic DNS-amplification DDoS reflector (RFC 5358). The same direct-to-nameserver
+     * connection respondsAuthoritatively already uses, asking a different question.
+     */
+    private static final Name OPEN_RESOLVER_CANARY_NAME = Name.fromConstantString("a.root-servers.net.");
+
+    private boolean isOpenResolver(String nsIp) {
+        try {
+            SimpleResolver directResolver = new SimpleResolver(nsIp);
+            directResolver.setTimeout(TIMEOUT);
+            Record question = Record.newRecord(OPEN_RESOLVER_CANARY_NAME, Type.A, DClass.IN);
+            Message query = Message.newQuery(question);
+            query.getHeader().setFlag(org.xbill.DNS.Flags.RD);
+            Message response = directResolver.send(query);
+            return response.getRcode() == Rcode.NOERROR && !response.getSection(org.xbill.DNS.Section.ANSWER).isEmpty();
+        } catch (Exception e) {
+            return false; // can't confirm open recursion here - not evidence of anything, same as any other probe failure in this class
         }
     }
 
