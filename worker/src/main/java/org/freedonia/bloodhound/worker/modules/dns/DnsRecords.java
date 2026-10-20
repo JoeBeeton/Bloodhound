@@ -26,4 +26,8 @@ public record DnsRecords(
          * than widening dkimSelectorsFound's element type, so every existing call site that only
          * cares about selector names (DNS_DKIM_NOT_DETECTED's own "found anything at all" check)
          * is unaffected. */
-        List<String> dkimRawTxtFound) {}
+        List<String> dkimRawTxtFound,
+        /** Whether any mechanism anywhere in the full recursive SPF chain was ptr/ptr: - see
+         * DnsRecordFetcher#walkSpf. False (not null) when there's no SPF record at all, same as
+         * every other SPF-chain boolean here - DNS_SPF_MISSING already covers that case. */
+        boolean spfUsesPtrMechanism) {}
