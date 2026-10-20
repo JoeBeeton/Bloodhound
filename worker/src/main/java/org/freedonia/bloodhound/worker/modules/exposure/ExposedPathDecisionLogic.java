@@ -198,6 +198,12 @@ public final class ExposedPathDecisionLogic {
         addAltPortIfMatches(findings, hostname + ":8081", r, "EXPOSURE_MONGO_EXPRESS_UNAUTH", b -> b.contains("Mongo Express"));
         addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH",
                 b -> b.contains("\"backends\"") && b.contains("\"frontends\""));
+        // Apache mod_status's own distinctive page heading - a classic, well-known information
+        // disclosure endpoint (Nikto's default checklist includes it) that discloses current
+        // requests in flight, including client IPs and the URLs/query strings being processed -
+        // routinely left enabled and world-reachable by default on a stock Apache install.
+        addIfMatches(findings, hostname, r, "EXPOSURE_APACHE_SERVER_STATUS", baselineBody,
+                b -> b.contains("Apache Server Status for"));
 
         if (isRedisPositive(result.redisResponse())) {
             findings.add(finding("EXPOSURE_REDIS_UNAUTH", hostname + ":6379", Map.of()));
@@ -632,6 +638,11 @@ public final class ExposedPathDecisionLogic {
                     "Traefik dashboard exposed without authentication",
                     "The Traefik reverse-proxy dashboard/API is reachable without authentication, disclosing "
                             + "internal backend routing and service topology.")),
+            Map.entry("EXPOSURE_APACHE_SERVER_STATUS", new RuleMeta(Severity.MEDIUM,
+                    "Apache mod_status page exposed",
+                    "The Apache mod_status page (/server-status) is publicly reachable, disclosing currently "
+                            + "in-flight requests - including client IP addresses and the URLs/query strings being "
+                            + "processed, which can themselves carry session tokens or other sensitive parameters.")),
             Map.entry("EXPOSURE_SECURITY_TXT_EXPIRED", new RuleMeta(Severity.INFO,
                     "security.txt has expired",
                     "The published /.well-known/security.txt file's Expires field is in the past, indicating "

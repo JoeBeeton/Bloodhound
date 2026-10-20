@@ -348,6 +348,38 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void apacheServerStatus_flaggedMedium() {
+        String body = "<html><head><title>Apache Status</title></head><body><h1>Apache Server Status for "
+                + "example.com</h1><dl><dt>Server Version: Apache/2.4.41</dt></dl></body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_APACHE_SERVER_STATUS", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_APACHE_SERVER_STATUS");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+    }
+
+    @Test
+    void serverStatusPath404_notFlagged() {
+        String body = "<html><body>Not Found</body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_APACHE_SERVER_STATUS", new ProbeResponse(404, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_APACHE_SERVER_STATUS");
+    }
+
+    @Test
+    void serverStatusPath200ButNotRealModStatus_notFlagged() {
+        // A custom app route or redirect target happening to live at /server-status with no
+        // relation to Apache's own mod_status page must not false-positive just because it
+        // answered 200 - the distinctive page heading is the real signal, not the path alone.
+        String body = "<html><body>Welcome to our site</body></html>";
+        ExposedPathFetchResult result = resultWith(
+                BASELINE_404, Map.of("EXPOSURE_APACHE_SERVER_STATUS", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_APACHE_SERVER_STATUS");
+    }
+
+    @Test
     void securityTxtPresent_flaggedInfoAsPositiveSignal() {
         String body = "Contact: mailto:security@example.com\nExpires: 2027-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(
