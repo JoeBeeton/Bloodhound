@@ -749,6 +749,33 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void kubernetesApiAltPort_positiveNamespaceListShape_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"kind\":\"NamespaceList\",\"apiVersion\":\"v1\",\"items\":[{\"metadata\":{\"name\":\"default\"}}]}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_KUBERNETES_API_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_KUBERNETES_API_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:6443");
+        });
+    }
+
+    @Test
+    void kubernetesApiAltPort_forbiddenResponseBody_notFlaggedEvenIfStatusWere200() {
+        // The real response shape Kubernetes returns when anonymous access is correctly denied -
+        // "kind":"Status" with reason Forbidden, not NamespaceList. Status 200 here isolates the
+        // body-content predicate itself (addAltPortIfMatches already gates on status==200 before
+        // testing it, so a real 403 response would never reach the predicate at all - this test
+        // confirms the predicate's own logic is also correct, not just relying on the status gate).
+        String body = "{\"kind\":\"Status\",\"apiVersion\":\"v1\",\"status\":\"Failure\",\"reason\":\"Forbidden\","
+                + "\"message\":\"namespaces is forbidden: User \\\"system:anonymous\\\" cannot list resource\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_KUBERNETES_API_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_KUBERNETES_API_UNAUTH");
+    }
+
+    @Test
     void securityTxtExpired_pastExpiresDate_flaggedInfo() {
         String body = "Contact: mailto:security@example.com\nExpires: 2020-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(
