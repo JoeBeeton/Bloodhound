@@ -90,7 +90,26 @@ public final class DeepPortScanDecisionLogic {
             // ports answer at once, skip the misleading per-port claim in favor of the single
             // promiscuousPortFinding already added above.
             if (PortScanDecisionLogic.ADMIN_DB_PORTS.contains(portId)) {
-                if (!promiscuous) {
+                if (!promiscuous && PortScanDecisionLogic.SMB_NETBIOS_RPC_PORTS.contains(portId)) {
+                    // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for
+                    // this exact port - required so central-server's (target_id, rule_id,
+                    // affected_asset) dedup recognizes a port already flagged by a light scan and
+                    // a deep scan as the same finding, same reasoning as this file's own class
+                    // javadoc already applies to the other two rule_ids.
+                    findings.add(new RawFinding(
+                            "NETWORK_SMB_NETBIOS_EXPOSED",
+                            Severity.CRITICAL,
+                            Category.NETWORK,
+                            "Windows file-sharing/RPC service reachable from the internet",
+                            "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
+                                    + "found open and reachable from the internet (deep scan identified it as "
+                                    + representative.serviceSummary() + "). These protocols were never designed for "
+                                    + "internet exposure and have a long history of wormable, pre-authentication "
+                                    + "remote code execution vulnerabilities (e.g. MS17-010/EternalBlue, exploited "
+                                    + "by WannaCry and NotPetya).",
+                            hostname + ":" + portId,
+                            evidence));
+                } else if (!promiscuous) {
                     findings.add(new RawFinding(
                             "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
                             Severity.HIGH,

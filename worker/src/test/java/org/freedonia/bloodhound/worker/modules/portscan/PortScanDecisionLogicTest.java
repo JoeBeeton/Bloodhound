@@ -107,4 +107,36 @@ class PortScanDecisionLogicTest {
         assertThat(ruleIds(findings))
                 .containsExactlyInAnyOrder("NETWORK_PROMISCUOUS_PORT_RESPONSE", "PORT_OPEN_UNENCRYPTED_MGMT");
     }
+
+    @Test
+    void smbPort445_flaggedCriticalAsSmbNetbiosExposed_notGenericAdminService() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(445)));
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("NETWORK_SMB_NETBIOS_EXPOSED");
+        assertThat(findings.get(0).severity().name()).isEqualTo("CRITICAL");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("example.com:445");
+    }
+
+    @Test
+    void netbiosPort139_flaggedAsSmbNetbiosExposed() {
+        assertThat(ruleIds(PortScanDecisionLogic.decide("example.com", ipv4(List.of(139)))))
+                .containsExactly("NETWORK_SMB_NETBIOS_EXPOSED");
+    }
+
+    @Test
+    void msrpcPort135_flaggedAsSmbNetbiosExposed() {
+        assertThat(ruleIds(PortScanDecisionLogic.decide("example.com", ipv4(List.of(135)))))
+                .containsExactly("NETWORK_SMB_NETBIOS_EXPOSED");
+    }
+
+    @Test
+    void smbPortsIncludedInPromiscuousPortPattern_notDoubleFlagged() {
+        // SMB/NetBIOS/RPC ports share ADMIN_DB_PORTS' own promiscuous-port false-positive
+        // protection - if they're part of a 5+-port "answers on everything" pattern, they must
+        // not ALSO get their own specific (and now even more alarming, CRITICAL) finding.
+        List<RawFinding> findings = PortScanDecisionLogic.decide(
+                "example.com", ipv4(List.of(3389, 3306, 5432, 27017, 445)));
+        assertThat(ruleIds(findings)).containsExactly("NETWORK_PROMISCUOUS_PORT_RESPONSE");
+        assertThat(findings.get(0).evidence().get("openAdminPorts")).isEqualTo(List.of(445, 3306, 3389, 5432, 27017));
+    }
 }

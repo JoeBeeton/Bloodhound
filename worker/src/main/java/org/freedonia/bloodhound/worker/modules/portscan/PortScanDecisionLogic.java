@@ -14,8 +14,21 @@ import org.freedonia.bloodhound.common.findings.Severity;
 /** Pure interpretation of an open-port list into findings - no process/XML work here, fully unit-testable. */
 public final class PortScanDecisionLogic {
 
-    static final Set<Integer> ADMIN_DB_PORTS = Set.of(3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984);
+    static final Set<Integer> ADMIN_DB_PORTS =
+            Set.of(3389, 3306, 5432, 27017, 6379, 1433, 1521, 5900, 5984, 135, 139, 445);
     static final Set<Integer> UNENCRYPTED_MGMT_PORTS = Set.of(21, 23);
+
+    /**
+     * SMB (445), NetBIOS Session Service (139), and the MSRPC endpoint mapper (135) - folded into
+     * {@link #ADMIN_DB_PORTS} (so they share its promiscuous-port false-positive protection
+     * below) but flagged under their own, more severe rule: these protocols were never designed
+     * for internet exposure at all, unlike the database/remote-desktop services the rest of
+     * ADMIN_DB_PORTS covers, and have a long history of wormable, pre-authentication remote code
+     * execution vulnerabilities (MS17-010/EternalBlue, exploited by WannaCry and NotPetya -
+     * arguably the most damaging self-propagating malware outbreaks on record, both enabled by
+     * internet-facing SMB).
+     */
+    static final Set<Integer> SMB_NETBIOS_RPC_PORTS = Set.of(135, 139, 445);
 
     /**
      * Found live: two real hosts (example.co.uk's joinbeta/pioneers subdomains) both showed every
@@ -112,7 +125,21 @@ public final class PortScanDecisionLogic {
             // above already surfaces the ambiguity as a single finding, so skip the misleading
             // per-port ones rather than reporting both.
             if (ADMIN_DB_PORTS.contains(port)) {
-                if (!promiscuous) {
+                if (!promiscuous && SMB_NETBIOS_RPC_PORTS.contains(port)) {
+                    findings.add(new RawFinding(
+                            "NETWORK_SMB_NETBIOS_EXPOSED",
+                            Severity.CRITICAL,
+                            Category.NETWORK,
+                            "Windows file-sharing/RPC service reachable from the internet",
+                            "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
+                                    + "found open and reachable from the internet. These protocols were never "
+                                    + "designed for internet exposure and have a long history of wormable, "
+                                    + "pre-authentication remote code execution vulnerabilities (e.g. "
+                                    + "MS17-010/EternalBlue, exploited by WannaCry and NotPetya) - internet-facing "
+                                    + "SMB is one of the most consistently dangerous network exposures a host can have.",
+                            hostname + ":" + port,
+                            evidence));
+                } else if (!promiscuous) {
                     findings.add(new RawFinding(
                             "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE",
                             Severity.HIGH,
