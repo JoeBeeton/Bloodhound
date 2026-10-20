@@ -79,6 +79,60 @@ class DnsPostureParserTest {
     }
 
     @Test
+    void spfWithNoAllMechanismAtAll_flagged() {
+        DnsRecords r = compliant();
+        DnsRecords records = new DnsRecords(
+                List.of("v=spf1 include:_spf.example.com"), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(),
+                r.mtaStsTxtPresent(), r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(),
+                r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(),
+                r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound(), r.spfUsesPtrMechanism(),
+                r.soaRefreshSeconds(), r.soaRetrySeconds());
+        List<RawFinding> findings = DnsPostureParser.parse("example.com", records);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("DNS_SPF_MISSING_ALL_MECHANISM");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+        });
+        // Not also flagged as too-permissive - that's specifically the +all/?all case, a
+        // different (if related) gap.
+        assertThat(ruleIds(findings)).doesNotContain("DNS_SPF_TOO_PERMISSIVE");
+    }
+
+    @Test
+    void spfWithRedirect_notFlaggedAsMissingAll() {
+        // redirect= takes over the all-mechanism's own role entirely per RFC 7208 6.1 - a record
+        // ending in redirect= with no all mechanism of its own is correct, not a gap.
+        DnsRecords r = compliant();
+        DnsRecords records = new DnsRecords(
+                List.of("v=spf1 redirect=_spf.example.com"), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(),
+                r.mtaStsTxtPresent(), r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(),
+                r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(),
+                r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound(), r.spfUsesPtrMechanism(),
+                r.soaRefreshSeconds(), r.soaRetrySeconds());
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SPF_MISSING_ALL_MECHANISM");
+    }
+
+    @Test
+    void spfWithHardFailAll_notFlaggedAsMissingAll() {
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", compliant())))
+                .doesNotContain("DNS_SPF_MISSING_ALL_MECHANISM");
+    }
+
+    @Test
+    void spfWithBareAllMechanism_notFlaggedAsMissingAll() {
+        // A bare "all" (no +/-/~/? qualifier) defaults to "+all" per RFC 7208 - still a real all
+        // mechanism, not a missing one; DNS_SPF_TOO_PERMISSIVE's own endsWith check wouldn't catch
+        // this exact bare form, but it's still not this rule's gap to report.
+        DnsRecords r = compliant();
+        DnsRecords records = new DnsRecords(
+                List.of("v=spf1 include:_spf.example.com all"), r.dmarcTxtRecords(), r.caaPresent(), r.dnskeyPresent(),
+                r.mtaStsTxtPresent(), r.mtaStsPolicyFilePresent(), r.tlsRptTxtPresent(), r.bimiTxtPresent(),
+                r.dkimSelectorsFound(), r.wildcardDnsDetected(), r.danglingMxHosts(), r.danglingSpfIncludes(),
+                r.soaSerial(), r.spfLookupCount(), r.dkimRawTxtFound(), r.spfUsesPtrMechanism(),
+                r.soaRefreshSeconds(), r.soaRetrySeconds());
+        assertThat(ruleIds(DnsPostureParser.parse("example.com", records))).doesNotContain("DNS_SPF_MISSING_ALL_MECHANISM");
+    }
+
+    @Test
     void missingDmarc_flagged() {
         DnsRecords r = compliant();
         DnsRecords records = new DnsRecords(
