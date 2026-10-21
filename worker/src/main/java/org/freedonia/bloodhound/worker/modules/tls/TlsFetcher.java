@@ -15,7 +15,6 @@ import java.security.interfaces.DSAPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -224,27 +223,31 @@ public class TlsFetcher {
      * probe, under a class-wide lock, and that never worked: the JDK had already frozen protocol
      * availability during the permissive handshake that precedes this, so every probe failed with
      * "No appropriate protocol" and the finding was dead. If startup config is ever missing again,
-     * {@code getEnabledProtocols()} comes back empty and the guard below logs it loudly instead of
-     * silently reporting "no legacy TLS" for every host. TLSv1.3 needs no such relaxation - it was
-     * never in the disabled list - so this same method works for it unmodified.
+     * {@code setEnabledProtocols} throws and the guard below logs it loudly instead of silently
+     * reporting "no legacy TLS" for every host. TLSv1.3 needs no such relaxation - it was never in
+     * the disabled list - so this same method works for it unmodified.
      *
      * <p>setEnabledProtocols pins the probe to the one version asked for: the JDK's "TLSv1.1"
      * context enables TLSv1.1 <em>and</em> TLSv1, so without it a TLSv1-only server would be
-     * reported as supporting TLSv1.1 as well. The negotiated version is checked for the same reason.
+     * reported as supporting TLSv1.1 as well. JDK 21's "SSLv3" context does not enable SSLv3 at
+     * all (its default enabled list is TLSv1), so the pin has to be attempted even when the
+     * protocol is absent from {@code getEnabledProtocols()}. It throws if the security property
+     * still disables that version. The negotiated version is checked for the same reason.
      */
     private boolean probeProtocol(String hostname, String protocol) {
         try {
             SSLContext ctx = SSLContext.getInstance(protocol);
             ctx.init(null, new TrustManager[] {PERMISSIVE_TRUST_MANAGER}, new SecureRandom());
             try (SSLSocket socket = openSocket(ctx, hostname)) {
-                if (!Arrays.asList(socket.getEnabledProtocols()).contains(protocol)) {
+                try {
+                    socket.setEnabledProtocols(new String[] {protocol});
+                } catch (IllegalArgumentException unavailable) {
                     log.warn(
                             "{} is not available in this JVM - LegacyTlsProbeSupport was not applied before TLS "
                                     + "initialised; TLS_WEAK_PROTOCOL_SUPPORTED cannot fire",
                             protocol);
                     return false;
                 }
-                socket.setEnabledProtocols(new String[] {protocol});
                 socket.startHandshake();
                 return protocol.equals(socket.getSession().getProtocol());
             }

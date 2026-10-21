@@ -1,0 +1,14 @@
+# Hostnames the rule-integration fixture resolves to 127.0.0.1.
+# One exact hostname per line. SafeAddressValidator reads these as BLOODHOUND_SSRF_ALLOWLIST.
+headers-missing.bh.test
+headers-csp.bh.test
+exposure.bh.test
+exposure-index.bh.test
+docs.bh.test
+tls-bad.bh.test
+tls-soon.bh.test
+tls-hsts-none.bh.test
+tls-hsts-short.bh.test
+tls-hsts-preload.bh.test
+ports-one.bh.test
+ports-many.bh.test
