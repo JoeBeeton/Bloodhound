@@ -9,6 +9,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
+import org.freedonia.bloodhound.worker.modules.SensitiveEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,12 +57,29 @@ public abstract class ExternalCliSubdomainSource implements SubdomainSource {
      */
     protected abstract List<String> parseOutput(String stdout, String rootDomain);
 
+    /**
+     * Hook for a source that dials {@code rootDomain} itself (katana) to refuse before the
+     * process ever starts, when the apex resolves somewhere unsafe right now - a target's
+     * creation-time hostname check is not enough on its own, since DNS is attacker-influenced and
+     * can point elsewhere by scan time (rebinding). Default no-op: a purely passive/API-backed
+     * source (subfinder) never connects to {@code rootDomain} itself, so it has nothing to check.
+     */
+    protected boolean isUnsafeToScan(String rootDomain) {
+        return false;
+    }
+
     @Override
     public List<String> discover(String rootDomain) {
+        if (isUnsafeToScan(rootDomain)) {
+            log.warn("{} skipped for {} - resolves to a private/loopback/reserved address", sourceName(), rootDomain);
+            return List.of();
+        }
         List<String> command = command(rootDomain);
         Process process = null;
         try {
-            process = new ProcessBuilder(command).start();
+            ProcessBuilder pb = new ProcessBuilder(command);
+            SensitiveEnvironment.scrub(pb.environment());
+            process = pb.start();
             // ProcessBuilder leaves the child's stdin as an open pipe by default - nothing
             // written, never closed. Found live: katana (added as a source after this class was
             // written) checks stdin for additional piped target URLs and blocks reading it

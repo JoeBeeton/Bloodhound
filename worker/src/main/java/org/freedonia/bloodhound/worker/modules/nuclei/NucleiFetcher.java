@@ -17,6 +17,7 @@ import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.net.ScanUserAgent;
 import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
 import org.freedonia.bloodhound.common.scanmodule.ScanModuleException;
+import org.freedonia.bloodhound.worker.modules.SensitiveEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,15 +45,31 @@ import org.slf4j.LoggerFactory;
  * SafeAddressValidator} gate every other direct-subprocess/HTTP-fetching
  * module in this codebase already has.
  *
- * <p>{@code -etags dos,fuzz} is a deliberate, explicit safety floor beyond
+ * <p>{@code -etags dos,fuzz,javascript,code,headless} is a deliberate, explicit safety floor beyond
  * whatever nuclei's own default template selection already excludes -
  * denial-of-service and fuzzing-style templates are a different class of
  * intrusiveness than the vulnerability-confirmation probes this module
  * exists for, so they're excluded regardless of the authorization gate
- * Tier 2 already requires. {@code -t} points at the template corpus baked
+ * Tier 2 already requires. A security review added javascript/code/headless: those template
+ * classes execute arbitrary JS (via an embedded JS engine or a real headless-Chromium instance
+ * this module does not otherwise invoke) as part of their own matching logic, a materially larger
+ * code-execution surface than an HTTP request-response template. {@code -t} points at the template corpus baked
  * into the worker image at build time (see the Dockerfile) rather than
  * letting nuclei fetch/update templates mid-scan - reproducible builds, and
  * no runtime dependency on GitHub being reachable during a scan.
+ *
+ * <p>A security review also found this subprocess, started via plain {@code ProcessBuilder},
+ * inherited the full worker environment - including {@code WORKER_API_KEY}, {@code ZAP_API_KEY},
+ * and {@code SCREENSHOTTER_API_KEY} - despite nuclei needing none of them and running a
+ * 10,000+ template corpus against attacker-influenced content. {@link
+ * org.freedonia.bloodhound.worker.modules.SensitiveEnvironment#scrub} removes those before start.
+ * The separate dial-pinning gap the same review raised (nuclei resolves {@code hostname} itself,
+ * after the {@link SafeAddressValidator} check below runs, so a rebind between the two is
+ * possible) is not fixed here: nuclei needs the hostname, not a pre-resolved address, for correct
+ * SNI/Host-header behavior against name-based virtual hosting (see this class's own top-level
+ * doc), and no nuclei flag was found that pins the dial address while preserving that. Taking
+ * this subprocess off {@code app_net} remains the robust fix for the SSRF class of risk; that is
+ * a larger infrastructure change, not done here.
  */
 public class NucleiFetcher {
 
@@ -162,7 +179,7 @@ public class NucleiFetcher {
                 "-no-color",
                 "-disable-update-check",
                 "-t", TEMPLATES_DIR,
-                "-etags", "dos,fuzz",
+                "-etags", "dos,fuzz,javascript,code,headless",
                 // A security review found nuclei's full template corpus includes OAST/blind-
                 // injection templates that, absent this flag, auto-provision a random subdomain on
                 // ProjectDiscovery's own public Interactsh servers (oast.pro/oast.fun/etc.) and poll
@@ -180,6 +197,7 @@ public class NucleiFetcher {
                 // request nuclei's template engine fires the same way every other outbound
                 // request this platform makes does - see ScanUserAgent.
                 "-H", "User-Agent: " + ScanUserAgent.VALUE);
+        SensitiveEnvironment.scrub(pb.environment());
         Process process = null;
         try {
             final Process started = pb.start();

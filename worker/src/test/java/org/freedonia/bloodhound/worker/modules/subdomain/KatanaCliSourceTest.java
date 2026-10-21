@@ -69,6 +69,42 @@ class KatanaCliSourceTest {
         assertThat(new KatanaCliSource().sourceName()).isEqualTo("KATANA");
     }
 
+    @Test
+    void refusesToScanALoopbackAddress() {
+        // A literal IP needs no DNS lookup - exercises the SafeAddressValidator gate without
+        // depending on real network resolution in this test.
+        assertThat(new KatanaCliSource().isUnsafeToScan("127.0.0.1")).isTrue();
+    }
+
+    @Test
+    void anUnresolvableHostnameIsNotTreatedAsUnsafe() {
+        // ".invalid" is reserved by RFC 2606 to never resolve - requireSafeIfResolvable's own
+        // contract is that "doesn't resolve" is not an error, only "resolves somewhere unsafe" is.
+        assertThat(new KatanaCliSource().isUnsafeToScan("definitely-not-a-real-host.invalid")).isFalse();
+    }
+
+    @Test
+    void commandIncludesACrawlScopeRegex() {
+        assertThat(new KatanaCliSource().command(ROOT)).contains("-cs", KatanaCliSource.crawlScopeRegex(ROOT));
+    }
+
+    @Test
+    void crawlScopeRegexMatchesTheApexAndItsSubdomains() {
+        String regex = KatanaCliSource.crawlScopeRegex("example.com");
+        assertThat("https://example.com/".matches(regex)).isTrue();
+        assertThat("https://api.example.com/v2/login".matches(regex)).isTrue();
+        assertThat("https://example.com:8443/path".matches(regex)).isTrue();
+        assertThat("HTTPS://EXAMPLE.COM/".matches(regex)).isTrue();
+    }
+
+    @Test
+    void crawlScopeRegexRejectsOtherHosts() {
+        String regex = KatanaCliSource.crawlScopeRegex("example.com");
+        assertThat("https://fonts.googleapis.com/css2".matches(regex)).isFalse();
+        assertThat("https://evil-example.com/".matches(regex)).isFalse();
+        assertThat("https://notexample.com/".matches(regex)).isFalse();
+    }
+
     private static String jsRecord(String source, String endpoint) {
         return "{\"request\":{\"tag\":\"js\",\"source\":\"" + source + "\",\"endpoint\":\"" + endpoint + "\"}}\n";
     }

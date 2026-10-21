@@ -2,11 +2,14 @@ package org.freedonia.bloodhound.worker.modules.subdomain;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -50,6 +53,33 @@ public class KatanaCliSource extends ExternalCliSubdomainSource {
     private static final Logger log = LoggerFactory.getLogger(KatanaCliSource.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * A security review found two real gaps here. First: nothing validated {@code rootDomain}
+     * itself before exec'ing katana at it - a target's hostname is checked for a private/internal
+     * address only at creation time (central-server), and DNS can point somewhere else by the
+     * time a scan actually runs (rebinding). {@link #isUnsafeToScan} now closes that one directly,
+     * the same {@link SafeAddressValidator} gate every other direct-subprocess/HTTP-fetching
+     * module in this codebase already has. Second, and not fully closed by anything below: -fs
+     * rdn (see the class doc above) only bounds which hosts katana *recurses into* - it still
+     * performs the fetch for an out-of-scope URL it discovers mid-crawl (the class doc's own
+     * fonts.googleapis.com/facebook.com example), and the worker container shares app_net with
+     * central-server, so that fetch can in principle reach the control plane. {@code -cs} below is
+     * katana's own documented "in scope url regex to be followed" mechanism, added as defense in
+     * depth - but ProjectDiscovery's docs don't state whether it gates the fetch itself or only
+     * what's followed afterward, and this review had no katana binary available to verify that
+     * empirically. The actually robust fix is taking this subprocess off app_net entirely; that is
+     * a larger infrastructure change, not done here.
+     */
+    @Override
+    protected boolean isUnsafeToScan(String rootDomain) {
+        try {
+            SafeAddressValidator.requireSafeIfResolvable(rootDomain);
+            return false;
+        } catch (IOException unsafe) {
+            return true;
+        }
+    }
+
     @Override
     protected List<String> command(String rootDomain) {
         return List.of(
@@ -57,6 +87,7 @@ public class KatanaCliSource extends ExternalCliSubdomainSource {
                 "-u", "https://" + rootDomain + "/",
                 "-jc",
                 "-fs", "rdn",
+                "-cs", crawlScopeRegex(rootDomain),
                 "-silent",
                 "-j",
                 "-or",
@@ -65,6 +96,17 @@ public class KatanaCliSource extends ExternalCliSubdomainSource {
                 "-c", "10",
                 "-ct", "45s",
                 "-mdp", "500");
+    }
+
+    /**
+     * Pure and unit-testable on its own, independent of whether katana's {@code -cs} actually
+     * gates the fetch (see {@link #isUnsafeToScan}'s doc) - this is katana's own regex dialect
+     * (Go RE2), not {@code java.util.regex}, so the domain is hand-escaped rather than via {@code
+     * Pattern.quote} (whose {@code \Q...\E} wrapper RE2 does not understand).
+     */
+    static String crawlScopeRegex(String rootDomain) {
+        String escapedDomain = rootDomain.toLowerCase(Locale.ROOT).replace(".", "\\.");
+        return "(?i)^https?://([a-z0-9-]+\\.)*" + escapedDomain + "(:[0-9]+)?(/.*)?$";
     }
 
     @Override
