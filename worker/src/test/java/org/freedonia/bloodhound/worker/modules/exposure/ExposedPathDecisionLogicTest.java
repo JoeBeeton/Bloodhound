@@ -946,6 +946,28 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void prometheusServerAltPort_realScrapeConfigShape_flaggedHighWithPortInAssetName() {
+        String body = "{\"status\":\"success\",\"data\":{\"yaml\":\"global:\\n  scrape_interval: 15s\\n"
+                + "scrape_configs:\\n- job_name: node\\n  static_configs:\\n  - targets: ['10.0.0.5:9100']\\n\"}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_PROMETHEUS_SERVER_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_PROMETHEUS_SERVER_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:9090");
+        });
+    }
+
+    @Test
+    void prometheusServerAltPort_authChallengePage_notFlagged() {
+        String body = "<html><body><h1>401 Authorization Required</h1></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_PROMETHEUS_SERVER_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_PROMETHEUS_SERVER_UNAUTH");
+    }
+
+    @Test
     void securityTxtExpired_pastExpiresDate_flaggedInfo() {
         String body = "Contact: mailto:security@example.com\nExpires: 2020-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(
