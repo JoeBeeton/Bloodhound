@@ -2,6 +2,8 @@ package org.freedonia.bloodhound.worker.modules.exposure;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -190,6 +192,32 @@ public class ExposedPathFetcher {
             // authentication whatsoever. /_all_dbs lists every database on the server - itself a
             // meaningful disclosure even short of confirming write access.
             ExposureProbeSpec.altPort("EXPOSURE_COUCHDB_ADMIN_PARTY", "/_all_dbs", 5984),
+            // Jupyter's REST API requires its token/password for every endpoint by default -
+            // except on an install explicitly started with --NotebookApp.token='' and
+            // --NotebookApp.password='' ("just let me use it locally" convenience that's
+            // sometimes left in place on a publicly reachable host). A real unauthenticated
+            // instance answers /api/status with plain JSON; a protected one answers 403.
+            ExposureProbeSpec.altPort("EXPOSURE_JUPYTER_UNAUTH", "/api/status", 8888),
+            // pgAdmin's own conventional Docker-Compose port mapping (not a single true fixed
+            // default the way Redis's 6379 is - pgAdmin's upstream container listens on 80
+            // internally, and 5050 is simply the overwhelmingly common external mapping used by
+            // pgAdmin's own official Docker quick-start and virtually every tutorial copying it).
+            // Same "exposed admin login surface" finding shape as EXPOSURE_PHPMYADMIN/
+            // EXPOSURE_ADMINER - flagged on the login console's own presence, not a confirmed
+            // auth bypass.
+            ExposureProbeSpec.altPort("EXPOSURE_PGADMIN", "/", 5050),
+            // Airflow's REST API lists every DAG - including each one's own Python source - when
+            // either the webserver's authentication is disabled (a real, documented Airflow 1.x
+            // default that some operators never changed after upgrading) or an anonymous/public
+            // role has been granted read access. Custom DAG code often embeds credentials or
+            // business logic, and depending on RBAC configuration the same unauthenticated access
+            // can extend to triggering DAG runs - arbitrary code execution on the Airflow host.
+            ExposureProbeSpec.altPort("EXPOSURE_AIRFLOW_UNAUTH", "/api/v1/dags", 8080),
+            // MLflow has no built-in authentication mechanism at all, the same situation as
+            // Prometheus - reachability of its own tracking-server API is itself the finding,
+            // not a bypass of anything. Discloses every experiment, run, metric, parameter, and
+            // model artifact path tracked on the server.
+            ExposureProbeSpec.altPort("EXPOSURE_MLFLOW_UNAUTH", "/api/2.0/mlflow/experiments/list", 5000),
             // etcd's v3 gRPC-gateway KV API on its default client port (2379). etcd backs
             // Kubernetes' entire cluster state - including Secrets, which (absent an explicit
             // encryption-at-rest configuration) are stored base64-encoded, i.e. plaintext-
@@ -251,8 +279,11 @@ public class ExposedPathFetcher {
         Map<String, ProbeResponse> sourceMapResponses = fetchSourceMapCandidates(hostname);
         Map<Integer, String> jdwpResponses = probeJdwp(hostname);
         ProbeResponse rabbitMqResponse = probeRabbitMq(hostname);
+        String vncResponse = probeVnc(hostname);
+        String snmpResponse = probeSnmp(hostname);
         return new ExposedPathFetchResult(
-                baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse);
+                baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse,
+                vncResponse, snmpResponse);
     }
 
     /** Same-host {@code <script src>} URLs referenced by the homepage, capped and bounded - the input to EXPOSURE_JS_SOURCE_MAP. */
@@ -556,6 +587,83 @@ public class ExposedPathFetcher {
                 return null;
             }
             return new String(buf, 0, read, StandardCharsets.US_ASCII);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * VNC's RFB protocol handshake directly reveals whether a server requires a password at all,
+     * without needing to actually attempt a login. On connect, the server sends a fixed 12-byte
+     * version banner ("RFB 003.008\n" or similar); the client echoes a version back; the server
+     * then replies with a 1-byte count of supported security types followed by that many 1-byte
+     * type codes (RFB 3.7+). A server offering only type 1 ("None") grants a connection with zero
+     * authentication at all - direct remote desktop access. Captured as raw bytes-as-string, same
+     * style as probeRedis/probeJdwpPort; the decision logic below inspects specific byte offsets
+     * rather than treating this as text.
+     */
+    private String probeVnc(String hostname) {
+        HostnameRateLimiter.shared().acquire(hostname);
+        try (Socket socket = new Socket()) {
+            java.net.InetAddress resolved = SafeAddressValidator.resolveSafeAddress(hostname);
+            socket.connect(new InetSocketAddress(resolved, 5900), ALT_PORT_CONNECT_TIMEOUT_S * 1000);
+            socket.setSoTimeout(REQUEST_TIMEOUT_S * 1000);
+            byte[] banner = new byte[12];
+            int bannerRead = socket.getInputStream().readNBytes(banner, 0, 12);
+            if (bannerRead < 12) {
+                return null;
+            }
+            // Echo the server's own version back - the standard RFB client-version-reply step,
+            // required before the server will send its security-type list.
+            socket.getOutputStream().write(banner);
+            socket.getOutputStream().flush();
+            byte[] secTypes = new byte[16];
+            int secRead = socket.getInputStream().read(secTypes);
+            if (secRead <= 0) {
+                return null;
+            }
+            byte[] result = new byte[12 + secRead];
+            System.arraycopy(banner, 0, result, 0, 12);
+            System.arraycopy(secTypes, 0, result, 12, secRead);
+            return new String(result, 0, result.length, StandardCharsets.ISO_8859_1);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * SNMPv1 GetRequest for sysDescr.0 (OID 1.3.6.1.2.1.1.1.0) with the well-known default
+     * community string "public" - the first and only UDP (rather than TCP/HTTP) probe in this
+     * module, since SNMP has no TCP transport. A device with a different (correctly secured)
+     * community string silently drops an unrecognized-community request per the SNMP spec -
+     * there's no auth-rejection response to distinguish from a timeout, so getting ANY response
+     * back to this specific "public" request is itself the positive signal, same reasoning as
+     * probeRedis's own "a real server never produces this null result" logic. The request bytes
+     * below are a fixed, hand-built BER/ASN.1 encoding (SNMP's wire format) - deterministic given
+     * a fixed community string, OID, and request-id, so there's no need to build this
+     * dynamically.
+     */
+    private static final byte[] SNMP_GET_SYSDESCR_PUBLIC = {
+        0x30, 0x26, 0x02, 0x01, 0x00, 0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, (byte) 0xA0, 0x19, 0x02, 0x01,
+        0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x0E, 0x30, 0x0C, 0x06, 0x08, 0x2B, 0x06, 0x01, 0x02, 0x01,
+        0x01, 0x01, 0x00, 0x05, 0x00
+    };
+
+    private String probeSnmp(String hostname) {
+        HostnameRateLimiter.shared().acquire(hostname);
+        try (DatagramSocket socket = new DatagramSocket()) {
+            java.net.InetAddress resolved = SafeAddressValidator.resolveSafeAddress(hostname);
+            socket.setSoTimeout(ALT_PORT_CONNECT_TIMEOUT_S * 1000);
+            DatagramPacket request =
+                    new DatagramPacket(SNMP_GET_SYSDESCR_PUBLIC, SNMP_GET_SYSDESCR_PUBLIC.length, resolved, 161);
+            socket.send(request);
+            byte[] buf = new byte[1024];
+            DatagramPacket response = new DatagramPacket(buf, buf.length);
+            socket.receive(response);
+            if (response.getLength() <= 0) {
+                return null;
+            }
+            return new String(buf, 0, response.getLength(), StandardCharsets.ISO_8859_1);
         } catch (Exception e) {
             return null;
         }

@@ -232,6 +232,25 @@ public final class ExposedPathDecisionLogic {
         // ({"error":"unauthorized",...}), which the array-vs-object distinction naturally excludes.
         addAltPortIfMatches(findings, hostname + ":5984", r, "EXPOSURE_COUCHDB_ADMIN_PARTY",
                 b -> b.trim().startsWith("[") && b.contains("_users"));
+        // A real unauthenticated Jupyter instance's /api/status is plain JSON carrying both of
+        // these keys; a token/password-protected install answers 403 instead (which
+        // addAltPortIfMatches' own status==200 gate already excludes regardless of body shape).
+        addAltPortIfMatches(findings, hostname + ":8888", r, "EXPOSURE_JUPYTER_UNAUTH",
+                b -> b.contains("\"started\"") && b.contains("\"kernels\""));
+        // Same false-positive guard EXPOSURE_PHPMYADMIN already established: require the
+        // distinctive page title AND a login-form-specific marker together, not just a stray
+        // mention of "pgAdmin" in unrelated page text. pgAdmin's login form uses an email field
+        // (not a plain username field like phpMyAdmin/Adminer), a distinctive quirk of its own.
+        addAltPortIfMatches(findings, hostname + ":5050", r, "EXPOSURE_PGADMIN",
+                b -> b.contains("pgAdmin 4") && b.contains("name=\"email\""));
+        // A real, readable Airflow DAG list is a JSON object with a "dags" array; an
+        // authentication-requiring instance answers 401/403 instead.
+        addAltPortIfMatches(findings, hostname + ":8080", r, "EXPOSURE_AIRFLOW_UNAUTH",
+                b -> b.contains("\"dags\""));
+        // MLflow has no authentication mechanism at all - reachability of its own tracking-server
+        // API, confirmed by a real "experiments" response shape, is itself the finding.
+        addAltPortIfMatches(findings, hostname + ":5000", r, "EXPOSURE_MLFLOW_UNAUTH",
+                b -> b.contains("\"experiments\""));
         // etcd's gRPC-gateway response envelope always nests a "header" object whose
         // "cluster_id" field is rendered as a JSON STRING (etcd's own int64-as-string encoding
         // quirk, e.g. "cluster_id":"14841639068965178418") - a combination specific enough to
@@ -298,6 +317,14 @@ public final class ExposedPathDecisionLogic {
         if (rabbitMq != null && rabbitMq.status() == 200 && rabbitMq.body() != null
                 && rabbitMq.body().contains("\"name\":\"guest\"")) {
             findings.add(finding("EXPOSURE_RABBITMQ_DEFAULT_CREDS", hostname + ":15672", Map.of()));
+        }
+
+        if (isVncNoAuthPositive(result.vncResponse())) {
+            findings.add(finding("EXPOSURE_VNC_NO_AUTH", hostname + ":5900", Map.of()));
+        }
+
+        if (isSnmpDefaultCommunityPositive(result.snmpResponse())) {
+            findings.add(finding("EXPOSURE_SNMP_DEFAULT_COMMUNITY", hostname + ":161", Map.of()));
         }
 
         // No soft-404/baseline-dupe guard needed here, same reasoning as the alt-port checks
@@ -553,6 +580,42 @@ public final class ExposedPathDecisionLogic {
         return "JDWP-Handshake".equals(jdwpResponse);
     }
 
+    /**
+     * {@code vncResponse} is the server's 12-byte RFB version banner followed by its
+     * security-type-list reply (see probeVnc). Byte 12 is the type count, byte 13 is the first
+     * (and, for a positive, only) type code - value 1 is "None", meaning the server will accept a
+     * connection with no authentication at all. Requiring the banner to start with "RFB " first
+     * guards against misreading some unrelated service's reply on this port as a false positive.
+     */
+    static boolean isVncNoAuthPositive(String vncResponse) {
+        return vncResponse != null
+                && vncResponse.length() >= 14
+                && vncResponse.startsWith("RFB ")
+                && vncResponse.charAt(12) == 1
+                && vncResponse.charAt(13) == 1;
+    }
+
+    /**
+     * {@code snmpResponse} is the raw BER/ASN.1 bytes of whatever answered our SNMPv1 GetRequest
+     * for sysDescr.0 with community "public" (see probeSnmp). A real SNMP agent's GetResponse PDU
+     * is tagged 0xA2 (context-constructed tag 2) within a top-level SEQUENCE (tag 0x30) - checking
+     * for 0xA2 early in the response is enough to confirm this is a genuine SNMP reply accepting
+     * the "public" community, not an unrelated UDP service's unrelated datagram landing on the
+     * same port by coincidence.
+     */
+    static boolean isSnmpDefaultCommunityPositive(String snmpResponse) {
+        if (snmpResponse == null || snmpResponse.isEmpty() || snmpResponse.charAt(0) != 0x30) {
+            return false;
+        }
+        int searchLimit = Math.min(snmpResponse.length(), 20);
+        for (int i = 0; i < searchLimit; i++) {
+            if (snmpResponse.charAt(i) == 0xA2) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static RawFinding finding(String ruleId, String affectedAsset, ProbeResponse evidenceSource) {
         // "url" - a live report asked for exactly this: the finding said an API schema was
         // exposed but gave no way to see where, forcing a manual guess-and-check of every
@@ -680,6 +743,27 @@ public final class ExposedPathDecisionLogic {
                             + "CVE-2017-12629 XXE+RCE via the Config API, CVE-2019-0193 RCE via the "
                             + "DataImportHandler) - bare unauthenticated admin access is itself the meaningful "
                             + "finding, independent of any one specific CVE.")),
+            Map.entry("EXPOSURE_JUPYTER_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Jupyter Notebook exposed without authentication",
+                    "A Jupyter Notebook instance on its default port (8888) answered its API without requiring "
+                            + "a token or password, confirmed via a real /api/status response. Jupyter's "
+                            + "notebook cells execute arbitrary code - unauthenticated access is equivalent to "
+                            + "direct remote code execution on the host.")),
+            Map.entry("EXPOSURE_PGADMIN", new RuleMeta(Severity.HIGH,
+                    "pgAdmin console exposed",
+                    "A pgAdmin database-administration login console is publicly reachable.")),
+            Map.entry("EXPOSURE_AIRFLOW_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Apache Airflow exposed without authentication",
+                    "An Airflow webserver's REST API answered a real DAG list without authentication, "
+                            + "disclosing every DAG's own Python source - which often embeds credentials or "
+                            + "business logic - and, depending on the instance's role configuration, may also "
+                            + "allow triggering DAG runs, i.e. arbitrary code execution on the Airflow host.")),
+            Map.entry("EXPOSURE_MLFLOW_UNAUTH", new RuleMeta(Severity.HIGH,
+                    "MLflow tracking server exposed without authentication",
+                    "An MLflow tracking server's API on its default port (5000) is reachable, disclosing every "
+                            + "experiment, run, metric, parameter, and model artifact path tracked on the "
+                            + "server. MLflow has no built-in authentication mechanism at all, so reachability "
+                            + "itself is the finding.")),
             Map.entry("EXPOSURE_COUCHDB_ADMIN_PARTY", new RuleMeta(Severity.CRITICAL,
                     "CouchDB reachable with no admin user configured (\"admin party\")",
                     "A CouchDB instance answered /_all_dbs without authentication, listing every database on the "
@@ -710,6 +794,18 @@ public final class ExposedPathDecisionLogic {
                             + "credential pair (guest:guest), confirmed via a successful authenticated request. "
                             + "This grants full management access - viewing and manipulating queues, exchanges, "
                             + "and messages - to anyone who tries the default login.")),
+            Map.entry("EXPOSURE_VNC_NO_AUTH", new RuleMeta(Severity.CRITICAL,
+                    "VNC reachable with no authentication required",
+                    "A VNC server on its default port (5900) offers only the \"None\" security type, confirmed "
+                            + "via the RFB protocol's own handshake, meaning any connection is granted full "
+                            + "remote desktop access with no password or other authentication at all.")),
+            Map.entry("EXPOSURE_SNMP_DEFAULT_COMMUNITY", new RuleMeta(Severity.HIGH,
+                    "SNMP accepts the default \"public\" community string",
+                    "An SNMP agent answered a GetRequest for sysDescr.0 using the well-known default community "
+                            + "string \"public\", confirmed via a real GetResponse reply. This discloses device "
+                            + "and network configuration details and, depending on the agent's configuration, may "
+                            + "also allow write access (SNMP SET) using the same or another commonly-guessed "
+                            + "community string.")),
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
                     "The Consul HTTP API is reachable without authentication.")),
