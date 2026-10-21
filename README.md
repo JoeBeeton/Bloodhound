@@ -70,6 +70,10 @@ does so under a two-tier scanning model that keeps that legal:
   resumable across runs), and OWASP ZAP active scanning (SQLi/XSS/path-
   traversal probes) for authorized targets.
 
+See [`docs/RULES.md`](docs/RULES.md) for the full rules catalog — every
+individual check Bloodhound runs, with its severity, description, and
+remediation advice.
+
 ![Open findings — severity, category, evidence, and score impact per finding](docs/screenshots/target-detail-findings.png)
 
 Every finding rolls up into a 0–100 score per category and overall (A–F
