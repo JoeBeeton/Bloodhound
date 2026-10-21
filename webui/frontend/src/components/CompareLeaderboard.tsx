@@ -10,11 +10,7 @@ interface Row {
   deltaSinceFirst: number | null;
 }
 
-function scoreAndGrade(
-  s: CompareSeries,
-  mode: CompareScoreMode,
-  snapshot: CompareSeries["history"][number],
-) {
+function scoreAndGrade(mode: CompareScoreMode, snapshot: CompareSeries["history"][number]) {
   if (mode === "tier1") {
     return {
       score: snapshot.tier1OverallScore ?? snapshot.overallScore,
@@ -30,8 +26,8 @@ function buildRows(series: CompareSeries[], mode: CompareScoreMode): Row[] {
     .map((s) => {
       const first = s.history[0];
       const latest = s.history[s.history.length - 1];
-      const { score, grade } = scoreAndGrade(s, mode, latest);
-      const firstScore = scoreAndGrade(s, mode, first).score;
+      const { score, grade } = scoreAndGrade(mode, latest);
+      const firstScore = scoreAndGrade(mode, first).score;
       return {
         series: s,
         score,
