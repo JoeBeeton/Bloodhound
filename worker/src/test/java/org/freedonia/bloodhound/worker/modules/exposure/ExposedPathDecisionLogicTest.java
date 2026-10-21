@@ -388,6 +388,157 @@ class ExposedPathDecisionLogicTest {
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_RABBITMQ_DEFAULT_CREDS");
     }
 
+    @Test
+    void vnc_noneSecurityTypeOffered_flaggedCritical() {
+        String banner = "RFB 003.008\n";
+        String secTypes = new String(new byte[] {1, 1}, java.nio.charset.StandardCharsets.ISO_8859_1);
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null);
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_VNC_NO_AUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:5900");
+        });
+    }
+
+    @Test
+    void vnc_passwordRequired_notFlagged() {
+        // Security type 2 (VNC Authentication) rather than 1 (None) - a real password-protected
+        // server.
+        String banner = "RFB 003.008\n";
+        String secTypes = new String(new byte[] {1, 2}, java.nio.charset.StandardCharsets.ISO_8859_1);
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_VNC_NO_AUTH");
+    }
+
+    @Test
+    void vnc_notActuallyRfb_notFlagged() {
+        // Some unrelated service happened to answer on 5900 - not an RFB banner at all.
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(),
+                "HTTP/1.1 200 OK\r\n\r\n", null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_VNC_NO_AUTH");
+    }
+
+    @Test
+    void vnc_unreachable_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(BASELINE_404, Map.of(), null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_VNC_NO_AUTH");
+    }
+
+    @Test
+    void snmp_realGetResponsePdu_flaggedHigh() {
+        // A minimal but structurally real SNMP GetResponse: SEQUENCE(0x30) wrapping a
+        // GetResponse PDU tag (0xA2) within the first 20 bytes.
+        byte[] raw = {
+            0x30, 0x29, 0x02, 0x01, 0x00, 0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, (byte) 0xA2, 0x1C, 0x02,
+            0x01, 0x01, 0x02, 0x01, 0x00
+        };
+        String snmpResponse = new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1);
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), null, snmpResponse);
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SNMP_DEFAULT_COMMUNITY");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:161");
+        });
+    }
+
+    @Test
+    void snmp_noResponse_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(BASELINE_404, Map.of(), null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SNMP_DEFAULT_COMMUNITY");
+    }
+
+    @Test
+    void jupyter_unauthenticatedStatus_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"started\":\"2026-01-01T00:00:00Z\",\"last_activity\":\"2026-01-01T00:00:00Z\","
+                + "\"connections\":0,\"kernels\":0}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_JUPYTER_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_JUPYTER_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8888");
+        });
+    }
+
+    @Test
+    void jupyter_forbidden_notFlagged() {
+        String body = "{\"message\":\"Forbidden\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_JUPYTER_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JUPYTER_UNAUTH");
+    }
+
+    @Test
+    void pgAdmin_loginFormPresent_flaggedHighWithPortInAssetName() {
+        String body = "<html><head><title>pgAdmin 4</title></head><body>"
+                + "<form><input name=\"email\"/><input name=\"password\"/></form></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_PGADMIN", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_PGADMIN");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:5050");
+        });
+    }
+
+    @Test
+    void pgAdmin_unrelatedPage_notFlagged() {
+        String body = "<html><body>some unrelated page</body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_PGADMIN", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_PGADMIN");
+    }
+
+    @Test
+    void airflow_realDagListShape_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"dags\":[{\"dag_id\":\"example_dag\",\"is_paused\":false}],\"total_entries\":1}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_AIRFLOW_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_AIRFLOW_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8080");
+        });
+    }
+
+    @Test
+    void airflow_authRequired_notFlagged() {
+        String body = "{\"detail\":\"Unauthorized\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_AIRFLOW_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_AIRFLOW_UNAUTH");
+    }
+
+    @Test
+    void mlflow_realExperimentsListShape_flaggedHighWithPortInAssetName() {
+        String body = "{\"experiments\":[{\"experiment_id\":\"0\",\"name\":\"Default\"}]}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_MLFLOW_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_MLFLOW_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("HIGH");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:5000");
+        });
+    }
+
+    @Test
+    void mlflow_unrelatedResponse_notFlagged() {
+        String body = "<html><body>404</body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_MLFLOW_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_MLFLOW_UNAUTH");
+    }
+
     /**
      * Real false positive found during Milestone 9's live verification: github.com/phpmyadmin
      * resolves to the real phpMyAdmin project's GitHub org page (a 200, unrelated to any exposed
