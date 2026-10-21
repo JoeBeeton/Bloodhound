@@ -924,6 +924,28 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void kubectlProxyAltPort_positiveNamespaceListShape_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"kind\":\"NamespaceList\",\"apiVersion\":\"v1\",\"items\":[{\"metadata\":{\"name\":\"default\"}}]}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_KUBECTL_PROXY_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_KUBECTL_PROXY_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8001");
+        });
+    }
+
+    @Test
+    void kubectlProxyAltPort_forbiddenResponseBody_notFlagged() {
+        String body = "{\"kind\":\"Status\",\"apiVersion\":\"v1\",\"status\":\"Failure\",\"reason\":\"Forbidden\","
+                + "\"message\":\"namespaces is forbidden: User \\\"system:anonymous\\\" cannot list resource\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_KUBECTL_PROXY_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_KUBECTL_PROXY_UNAUTH");
+    }
+
+    @Test
     void securityTxtExpired_pastExpiresDate_flaggedInfo() {
         String body = "Contact: mailto:security@example.com\nExpires: 2020-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(

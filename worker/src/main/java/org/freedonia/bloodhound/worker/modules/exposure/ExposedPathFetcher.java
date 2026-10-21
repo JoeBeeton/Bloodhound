@@ -183,6 +183,16 @@ public class ExposedPathFetcher {
             // EXPOSURE_DOCKER_API_TLS.
             ExposureProbeSpec.altPort("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", "/script", 8080),
             ExposureProbeSpec.altPortHttps("EXPOSURE_KUBERNETES_API_UNAUTH", "/api/v1/namespaces", 6443),
+            // `kubectl proxy`'s own default port and purpose: an unauthenticated plain-HTTP proxy
+            // straight to the cluster API, normally bound to localhost for local development
+            // convenience - but Kubernetes' own hardening docs specifically warn against running
+            // it with --address=0.0.0.0 on a reachable host, and real-world incidents (the 2018
+            // Tesla cryptojacking breach among them) trace back to exactly this misconfiguration.
+            // Distinct from EXPOSURE_KUBERNETES_API_UNAUTH above (that's the apiserver's own TLS
+            // port, 6443) - this is a separate, plain-HTTP exposure vector with its own default
+            // port, the same same-service-different-port split already used for
+            // EXPOSURE_DOCKER_API/EXPOSURE_DOCKER_API_TLS.
+            ExposureProbeSpec.altPort("EXPOSURE_KUBECTL_PROXY_UNAUTH", "/api/v1/namespaces", 8001),
             ExposureProbeSpec.get("EXPOSURE_APACHE_SERVER_STATUS", List.of("/server-status", "/server-status/")),
             ExposureProbeSpec.get("EXPOSURE_NGINX_STUB_STATUS", List.of("/nginx_status", "/status", "/basic_status")));
 
