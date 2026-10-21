@@ -45,7 +45,8 @@ public class JobClaimService {
         // is what makes an idle worker (nothing to claim) still show up as online in
         // WorkersController, since it's polling this endpoint on a fixed interval either way.
         workerRepository.heartbeat(workerId);
-        List<ScanJob> claimed = scanJobRepository.claim(workerId, capacity, leaseMinutes);
+        List<ScanJob> claimed =
+                scanJobRepository.claim(workerId, capacity, leaseMinutes, ScanRunService.allTier2ModuleTypes());
         // attemptCount on the row is the count *before* this try (0 for a fresh job) - +1 makes
         // the logged attempt_number 1-indexed, matching how a human reads a retry timeline.
         claimed.forEach(job -> {

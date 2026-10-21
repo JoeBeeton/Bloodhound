@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -33,14 +35,17 @@ public class TargetAuthorizationController {
     private final TargetRepository targetRepository;
     private final TargetAuthorizationRepository authorizationRepository;
     private final AuditLogRepository auditLogRepository;
+    private final ScanJobRepository scanJobRepository;
 
     public TargetAuthorizationController(
             TargetRepository targetRepository,
             TargetAuthorizationRepository authorizationRepository,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            ScanJobRepository scanJobRepository) {
         this.targetRepository = targetRepository;
         this.authorizationRepository = authorizationRepository;
         this.auditLogRepository = auditLogRepository;
+        this.scanJobRepository = scanJobRepository;
     }
 
     @GetMapping
@@ -93,6 +98,11 @@ public class TargetAuthorizationController {
         requireWriteAccess(principal);
         Target target = requireOwnedTarget(id, principal);
         authorizationRepository.revokeCurrent(id, principal.userId());
+        // A security review found this flipped authorization_status but left any already-queued
+        // deep-scan jobs (PORT_SCAN_DEEP/ZAP_ACTIVE_SCAN/NUCLEI_SCAN/BUCKET_BRUTE_FORCE) sitting in
+        // the queue unchanged - they would still get claimed and run. See
+        // ScanJobRepository#cancelNonTerminalTier2ForTarget's own javadoc.
+        scanJobRepository.cancelNonTerminalTier2ForTarget(id, ScanRunService.allTier2ModuleTypes());
         auditLogRepository.record(
                 principal.organizationId(),
                 principal.userId(),
