@@ -173,10 +173,14 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
             ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
             ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080),
-            // Jenkins's Groovy script console (/script), unauthenticated, is full remote code
-            // execution - run arbitrary Groovy, which can shell out, on the Jenkins host. A
-            // classic, heavily-flagged misconfiguration (Shodan/Censys dorks and Nuclei templates
-            // both target it directly) that every major commercial/OSS scanner checks for.
+            // Deliberately a separate rule_id from the plain-host EXPOSURE_JENKINS_SCRIPT probe
+            // above, not a merge - reusing that rule_id here would collide as a Map key in the
+            // same fetch (two concurrently-run probes would silently overwrite one another in
+            // ExposedPathFetcher's single responses map). This checks a genuinely different
+            // attack surface: Jenkins's own dedicated default port (8080), separate from whatever
+            // the site's main HTTP(S) port the plain-host probe already reaches - the same
+            // same-service-different-port split already used for EXPOSURE_DOCKER_API/
+            // EXPOSURE_DOCKER_API_TLS.
             ExposureProbeSpec.altPort("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", "/script", 8080),
             ExposureProbeSpec.altPortHttps("EXPOSURE_KUBERNETES_API_UNAUTH", "/api/v1/namespaces", 6443),
             ExposureProbeSpec.get("EXPOSURE_APACHE_SERVER_STATUS", List.of("/server-status", "/server-status/")),

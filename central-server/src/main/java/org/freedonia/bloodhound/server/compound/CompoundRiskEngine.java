@@ -88,7 +88,17 @@ public final class CompoundRiskEngine {
                     List.of(
                             new TriggerGroup(
                                     "exposed admin console",
-                                    ruleIdIn("EXPOSURE_JENKINS_SCRIPT", "EXPOSURE_PHPMYADMIN", "EXPOSURE_KIBANA_UNAUTH")),
+                                    // EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH: the same underlying
+                                    // console, checked on Jenkins's own dedicated port (8080)
+                                    // rather than the plain-host EXPOSURE_JENKINS_SCRIPT probe's
+                                    // port - a distinct rule_id (see that probe's own comment for
+                                    // why they can't share one), but the same admin-console risk
+                                    // this pattern exists to catch either way.
+                                    ruleIdIn(
+                                            "EXPOSURE_JENKINS_SCRIPT",
+                                            "EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH",
+                                            "EXPOSURE_PHPMYADMIN",
+                                            "EXPOSURE_KIBANA_UNAUTH")),
                             new TriggerGroup(
                                     "interceptable transport",
                                     ruleIdIn(
