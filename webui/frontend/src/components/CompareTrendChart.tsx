@@ -1,4 +1,14 @@
-import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceArea,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { ChartContainer } from "./ChartContainer";
 import { GRADE_BANDS } from "../lib/gradeBands";
 import type { CompareSeries } from "../lib/types";
 
@@ -33,7 +43,11 @@ function normalizeHue(hue: number): number {
  * closest hue that's at least `minSeparation` from every already-assigned hue - staying as close
  * as possible to the id's own preferred hue rather than jumping to an arbitrary free slot, so a
  * nudge (when one is needed at all) is the smallest one that resolves the collision. */
-function findHue(preferred: number, assigned: number[], minSeparation: number): number {
+function findHue(
+  preferred: number,
+  assigned: number[],
+  minSeparation: number,
+): number {
   if (assigned.every((h) => hueDistance(h, preferred) >= minSeparation)) {
     return preferred;
   }
@@ -83,7 +97,10 @@ export function colorsForSeries(ids: string[]): Map<string, string> {
   const result = new Map<string, string>();
   for (const id of sorted) {
     const preferred = hashToHue(id);
-    const minSeparation = assigned.length === 0 ? 360 : Math.min(PREFERRED_MIN_SEPARATION_DEG, 360 / (assigned.length + 1));
+    const minSeparation =
+      assigned.length === 0
+        ? 360
+        : Math.min(PREFERRED_MIN_SEPARATION_DEG, 360 / (assigned.length + 1));
     const hue = findHue(preferred, assigned, minSeparation);
     assigned.push(hue);
     result.set(id, `hsl(${hue}, ${SATURATION}%, ${LIGHTNESS}%)`);
@@ -101,10 +118,16 @@ interface SeriesPoint {
 /** Each target scans on its own schedule, so one series rarely has a real point at exactly the
  * moment another series does - shared by both the Line data and the tooltip below so they always
  * agree on what a series' own history actually contains. */
-export function seriesPoints(s: CompareSeries, mode: CompareScoreMode): SeriesPoint[] {
+export function seriesPoints(
+  s: CompareSeries,
+  mode: CompareScoreMode,
+): SeriesPoint[] {
   return s.history.map((h) => ({
     computedAtMs: new Date(h.computedAt).getTime(),
-    score: mode === "tier1" ? h.tier1OverallScore ?? h.overallScore : h.overallScore,
+    score:
+      mode === "tier1"
+        ? (h.tier1OverallScore ?? h.overallScore)
+        : h.overallScore,
   }));
 }
 
@@ -132,7 +155,11 @@ export interface TooltipRow {
  * no scan exactly here is honestly "whatever its last known value was," not a fabricated blend
  * between two unrelated targets' scan times.
  */
-export function compareTooltipRows(series: CompareSeries[], mode: CompareScoreMode, label: number): TooltipRow[] {
+export function compareTooltipRows(
+  series: CompareSeries[],
+  mode: CompareScoreMode,
+  label: number,
+): TooltipRow[] {
   return series
     .map((s) => {
       const points = seriesPoints(s, mode);
@@ -140,9 +167,16 @@ export function compareTooltipRows(series: CompareSeries[], mode: CompareScoreMo
         return null;
       }
       const nearest = points.reduce((closest, p) =>
-        Math.abs(p.computedAtMs - label) < Math.abs(closest.computedAtMs - label) ? p : closest,
+        Math.abs(p.computedAtMs - label) <
+        Math.abs(closest.computedAtMs - label)
+          ? p
+          : closest,
       );
-      return { targetId: s.targetId, name: `${s.hostname} (${s.targetType})`, score: nearest.score };
+      return {
+        targetId: s.targetId,
+        name: `${s.hostname} (${s.targetType})`,
+        score: nearest.score,
+      };
     })
     .filter((row): row is TooltipRow => row !== null);
 }
@@ -178,7 +212,9 @@ function CompareTooltipContent({
         padding: "8px 12px",
       }}
     >
-      <div style={{ color: "#7a8aa0", marginBottom: 4 }}>{new Date(label).toLocaleString()}</div>
+      <div style={{ color: "#7a8aa0", marginBottom: 4 }}>
+        {new Date(label).toLocaleString()}
+      </div>
       {rows.map((row) => (
         <div key={row.targetId} style={{ color: colors.get(row.targetId) }}>
           {row.name} : {row.score.toFixed(2)}
@@ -192,12 +228,18 @@ function CompareTooltipContent({
  * score vs. competitors" comparison this chart exists for spelled out as text, not left to guess
  * from an unlabeled multi-line SVG. One clause per target with any history; targets with none yet
  * are silently skipped here the same way their Line simply never renders a series. */
-export function summarizeComparison(series: CompareSeries[], mode: CompareScoreMode): string {
+export function summarizeComparison(
+  series: CompareSeries[],
+  mode: CompareScoreMode,
+): string {
   const clauses = series
     .filter((s) => s.history.length > 0)
     .map((s) => {
       const latest = s.history[s.history.length - 1];
-      const score = mode === "tier1" ? (latest.tier1OverallScore ?? latest.overallScore) : latest.overallScore;
+      const score =
+        mode === "tier1"
+          ? (latest.tier1OverallScore ?? latest.overallScore)
+          : latest.overallScore;
       return `${s.hostname} at ${score.toFixed(0)}`;
     });
   if (clauses.length === 0) {
@@ -221,14 +263,25 @@ export function summarizeComparison(series: CompareSeries[], mode: CompareScoreM
  * identically in both modes - that's correct, not a bug, since it never had
  * Tier 2-exclusive findings to differ by.
  */
-export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; mode: CompareScoreMode }) {
+export function CompareTrendChart({
+  series,
+  mode,
+}: {
+  series: CompareSeries[];
+  mode: CompareScoreMode;
+}) {
   if (series.length === 0) {
-    return <p className="font-mono text-sm text-slate-400">Select at least one target to compare.</p>;
+    return (
+      <p className="font-mono text-sm text-slate-400">
+        Select at least one target to compare.
+      </p>
+    );
   }
   if (!series.some((s) => s.history.length > 0)) {
     return (
       <p className="font-mono text-sm text-slate-400">
-        No scan history yet for the selected targets — run a scan to start the trend.
+        No scan history yet for the selected targets — run a scan to start the
+        trend.
       </p>
     );
   }
@@ -236,76 +289,92 @@ export function CompareTrendChart({ series, mode }: { series: CompareSeries[]; m
   const colors = colorsForSeries(series.map((s) => s.targetId));
 
   return (
-    <div
-      className="h-80 w-full rounded-lg border border-neon-cyan/20 bg-panel/60 p-4"
-      role="img"
-      aria-label={summarizeComparison(series, mode)}
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        {/* left:0 (not a negative margin) + a wider YAxis: a negative left margin combined
-            with a narrow axis width clips the leading digit(s) of 2-3 digit tick labels
-            ("100" rendered as "0", "75" as "5") - found via Milestone 9's real screenshot
-            review. right:28 leaves room so the final X-axis date label isn't clipped either. */}
-        <LineChart margin={{ top: 8, right: 28, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.1)" />
-          {GRADE_BANDS.map((band) => (
-            <ReferenceArea
-              key={band.label}
-              y1={band.y1}
-              y2={band.y2}
-              fill={band.color}
-              fillOpacity={band.opacity}
-              stroke="none"
-              ifOverflow="extendDomain"
-              // insideRight, not insideLeft: the numeric Y-axis ticks (0/25/50/75/100) already
-              // live right at the left edge - a grade letter landing at the same height (e.g.
-              // "C" beside "75") read as visual clutter, confirmed via a real screenshot review.
-              // The right edge is otherwise empty space.
-              label={{
-                value: band.label,
-                position: "insideRight",
-                fill: band.color,
-                fillOpacity: 0.5,
-                fontSize: 10,
-                fontFamily: "JetBrains Mono, monospace",
-              }}
-            />
-          ))}
-          <XAxis
-            dataKey="computedAtMs"
-            type="number"
-            domain={["dataMin", "dataMax"]}
-            tickFormatter={(ms: number) => new Date(ms).toLocaleDateString()}
-            stroke="#7a8aa0"
-            fontSize={11}
-            fontFamily="JetBrains Mono, monospace"
+    <ChartContainer ariaLabel={summarizeComparison(series, mode)}>
+      {/* left:0 (not a negative margin) + a wider YAxis: a negative left margin combined
+          with a narrow axis width clips the leading digit(s) of 2-3 digit tick labels
+          ("100" rendered as "0", "75" as "5") - found via Milestone 9's real screenshot
+          review. right:28 leaves room so the final X-axis date label isn't clipped either. */}
+      <LineChart margin={{ top: 8, right: 28, bottom: 0, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.1)" />
+        {GRADE_BANDS.map((band) => (
+          <ReferenceArea
+            key={band.label}
+            y1={band.y1}
+            y2={band.y2}
+            fill={band.color}
+            fillOpacity={band.opacity}
+            stroke="none"
+            ifOverflow="extendDomain"
+            // insideRight, not insideLeft: the numeric Y-axis ticks (0/25/50/75/100) already
+            // live right at the left edge - a grade letter landing at the same height (e.g.
+            // "C" beside "75") read as visual clutter, confirmed via a real screenshot review.
+            // The right edge is otherwise empty space.
+            label={{
+              value: band.label,
+              position: "insideRight",
+              fill: band.color,
+              fillOpacity: 0.5,
+              fontSize: 10,
+              fontFamily: "JetBrains Mono, monospace",
+            }}
           />
-          <YAxis domain={[0, 100]} stroke="#7a8aa0" fontSize={11} fontFamily="JetBrains Mono, monospace" width={40} />
-          <Tooltip content={<CompareTooltipContent series={series} mode={mode} colors={colors} />} />
-          <Legend formatter={(value) => <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>{value}</span>} />
-          {series.map((s) => {
-            const color = colors.get(s.targetId)!;
-            // Pre-fix snapshots have no tier1OverallScore - fall back to the full score rather
-            // than dropping the point, so old history doesn't just vanish from the "tier1" view.
-            const data = seriesPoints(s, mode);
-            return (
-              <Line
-                key={s.targetId}
-                name={`${s.hostname} (${s.targetType})`}
-                data={data}
-                type="monotone"
-                dataKey="score"
-                stroke={color}
-                strokeWidth={2}
-                dot={{ r: 3, fill: color, strokeWidth: 0 }}
-                activeDot={{ r: 6 }}
-                isAnimationActive={false}
-                connectNulls
-              />
-            );
-          })}
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+        ))}
+        <XAxis
+          dataKey="computedAtMs"
+          type="number"
+          domain={["dataMin", "dataMax"]}
+          tickFormatter={(ms: number) => new Date(ms).toLocaleDateString()}
+          stroke="#7a8aa0"
+          fontSize={11}
+          fontFamily="JetBrains Mono, monospace"
+        />
+        <YAxis
+          domain={[0, 100]}
+          stroke="#7a8aa0"
+          fontSize={11}
+          fontFamily="JetBrains Mono, monospace"
+          width={40}
+        />
+        <Tooltip
+          content={
+            <CompareTooltipContent
+              series={series}
+              mode={mode}
+              colors={colors}
+            />
+          }
+        />
+        <Legend
+          formatter={(value) => (
+            <span
+              style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}
+            >
+              {value}
+            </span>
+          )}
+        />
+        {series.map((s) => {
+          const color = colors.get(s.targetId)!;
+          // Pre-fix snapshots have no tier1OverallScore - fall back to the full score rather
+          // than dropping the point, so old history doesn't just vanish from the "tier1" view.
+          const data = seriesPoints(s, mode);
+          return (
+            <Line
+              key={s.targetId}
+              name={`${s.hostname} (${s.targetType})`}
+              data={data}
+              type="monotone"
+              dataKey="score"
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 3, fill: color, strokeWidth: 0 }}
+              activeDot={{ r: 6 }}
+              isAnimationActive={false}
+              connectNulls
+            />
+          );
+        })}
+      </LineChart>
+    </ChartContainer>
   );
 }
