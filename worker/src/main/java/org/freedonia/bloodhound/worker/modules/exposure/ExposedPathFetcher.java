@@ -170,6 +170,12 @@ public class ExposedPathFetcher {
             ExposureProbeSpec.altPortHttps("EXPOSURE_DOCKER_API_TLS", "/version", 2376),
             ExposureProbeSpec.altPort("EXPOSURE_ELASTICSEARCH_UNAUTH", "/", 9200),
             ExposureProbeSpec.altPort("EXPOSURE_CONSUL_UNAUTH", "/v1/status/leader", 8500),
+            // Distinct from EXPOSURE_PROMETHEUS_METRICS (an individual application's own scraped
+            // /metrics endpoint): this is the Prometheus SERVER itself, on its own default port
+            // (9090), with its query API left open. Unauthenticated access here discloses the
+            // full scrape configuration - every monitored service/job name across the whole
+            // fleet, a far broader reconnaissance surface than one app's own counters.
+            ExposureProbeSpec.altPort("EXPOSURE_PROMETHEUS_SERVER_UNAUTH", "/api/v1/status/config", 9090),
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
             ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
             ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080),

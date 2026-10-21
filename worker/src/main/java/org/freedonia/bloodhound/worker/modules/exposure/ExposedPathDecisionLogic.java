@@ -215,6 +215,11 @@ public final class ExposedPathDecisionLogic {
                 b -> b.contains("\"cluster_name\"") || b.contains("you_know_for_search"));
         addAltPortIfMatches(findings, hostname + ":8500", r, "EXPOSURE_CONSUL_UNAUTH",
                 b -> b.trim().matches("(?s)\"[0-9.]+:[0-9]+\""));
+        // The real /api/v1/status/config response wraps the full scrape configuration YAML in a
+        // "status":"success" envelope; a hardened install (e.g. an auth-requiring reverse proxy
+        // in front) would instead return an auth challenge or error page, never this shape.
+        addAltPortIfMatches(findings, hostname + ":9090", r, "EXPOSURE_PROMETHEUS_SERVER_UNAUTH",
+                b -> b.contains("\"status\":\"success\"") && b.contains("scrape_configs"));
         // Grafana/Mongo Express/Traefik's own conventional default ports - not independently
         // live-verified against a real running instance the way some other checks in this file
         // were (see ProductSlugMapper's own analogous caveat for an example of this codebase's
@@ -633,6 +638,12 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
                     "The Consul HTTP API is reachable without authentication.")),
+            Map.entry("EXPOSURE_PROMETHEUS_SERVER_UNAUTH", new RuleMeta(Severity.HIGH,
+                    "Prometheus server exposed without authentication",
+                    "The Prometheus server's own query API is reachable on its default port (9090) without "
+                            + "authentication, disclosing the full scrape configuration - every monitored "
+                            + "service/job name across the whole fleet. This is distinct from, and broader than, "
+                            + "a single application's own exposed /metrics endpoint.")),
             Map.entry("EXPOSURE_BACKUP_ARCHIVE", new RuleMeta(Severity.CRITICAL,
                     "Exposed backup archive",
                     "A publicly readable backup archive (.zip/.tar.gz) was found at a commonly-guessed path, "
