@@ -226,6 +226,12 @@ public final class ExposedPathDecisionLogic {
         // returns a 401/403 challenge instead.
         addAltPortIfMatches(findings, hostname + ":8983", r, "EXPOSURE_SOLR_ADMIN_UNAUTH",
                 b -> b.contains("\"solr_home\"") && b.contains("\"lucene\""));
+        // A real unauthenticated _all_dbs response is a JSON ARRAY containing the literal
+        // "_users" system database name - present on every CouchDB install, modern or old. A
+        // hardened (post-2.0, admin-user-configured) instance instead returns a JSON OBJECT error
+        // ({"error":"unauthorized",...}), which the array-vs-object distinction naturally excludes.
+        addAltPortIfMatches(findings, hostname + ":5984", r, "EXPOSURE_COUCHDB_ADMIN_PARTY",
+                b -> b.trim().startsWith("[") && b.contains("_users"));
         // etcd's gRPC-gateway response envelope always nests a "header" object whose
         // "cluster_id" field is rendered as a JSON STRING (etcd's own int64-as-string encoding
         // quirk, e.g. "cluster_id":"14841639068965178418") - a combination specific enough to
@@ -674,6 +680,12 @@ public final class ExposedPathDecisionLogic {
                             + "CVE-2017-12629 XXE+RCE via the Config API, CVE-2019-0193 RCE via the "
                             + "DataImportHandler) - bare unauthenticated admin access is itself the meaningful "
                             + "finding, independent of any one specific CVE.")),
+            Map.entry("EXPOSURE_COUCHDB_ADMIN_PARTY", new RuleMeta(Severity.CRITICAL,
+                    "CouchDB reachable with no admin user configured (\"admin party\")",
+                    "A CouchDB instance answered /_all_dbs without authentication, listing every database on the "
+                            + "server. This is CouchDB's historical \"admin party\" mode (no admin user configured "
+                            + "at all, the pre-2.0 default) - with no admin user set, read and write access to "
+                            + "every database is open to anyone who connects.")),
             Map.entry("EXPOSURE_ETCD_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "etcd exposed without authentication",
                     "An etcd instance's v3 KV API is reachable on its default port (2379) without authentication, "

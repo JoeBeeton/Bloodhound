@@ -1054,6 +1054,27 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void couchdbAltPort_realAllDbsArrayShape_flaggedCriticalWithPortInAssetName() {
+        String body = "[\"_replicator\",\"_users\",\"mydb\"]";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_COUCHDB_ADMIN_PARTY", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_COUCHDB_ADMIN_PARTY");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:5984");
+        });
+    }
+
+    @Test
+    void couchdbAltPort_unauthorizedErrorObject_notFlagged() {
+        String body = "{\"error\":\"unauthorized\",\"reason\":\"You are not a server admin.\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_COUCHDB_ADMIN_PARTY", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_COUCHDB_ADMIN_PARTY");
+    }
+
+    @Test
     void etcdAltPort_realKvRangeResponseShape_flaggedCriticalWithPortInAssetName() {
         String body = "{\"header\":{\"cluster_id\":\"14841639068965178418\",\"member_id\":\"10276657743932975437\","
                 + "\"revision\":\"42\",\"raft_term\":\"2\"},\"kvs\":[{\"key\":\"L3JlZ2lzdHJ5L3NlY3JldHMvZGVmYXVsdA==\","

@@ -184,6 +184,12 @@ public class ExposedPathFetcher {
             // the DataImportHandler), making bare unauthenticated admin access itself the
             // meaningful finding, independent of any one specific CVE.
             ExposureProbeSpec.altPort("EXPOSURE_SOLR_ADMIN_UNAUTH", "/solr/admin/info/system", 8983),
+            // CouchDB's historical "admin party" mode (no admin user configured at all - the
+            // pre-2.0 default, still reachable on any instance that skipped the setup wizard):
+            // anyone can read (and in true admin-party mode, write) any database with no
+            // authentication whatsoever. /_all_dbs lists every database on the server - itself a
+            // meaningful disclosure even short of confirming write access.
+            ExposureProbeSpec.altPort("EXPOSURE_COUCHDB_ADMIN_PARTY", "/_all_dbs", 5984),
             // etcd's v3 gRPC-gateway KV API on its default client port (2379). etcd backs
             // Kubernetes' entire cluster state - including Secrets, which (absent an explicit
             // encryption-at-rest configuration) are stored base64-encoded, i.e. plaintext-
