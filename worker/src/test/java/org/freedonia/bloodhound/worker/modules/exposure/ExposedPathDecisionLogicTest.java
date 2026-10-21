@@ -324,6 +324,41 @@ class ExposedPathDecisionLogicTest {
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_REDIS_UNAUTH");
     }
 
+    @Test
+    void jdwp_realHandshakeEchoOnPort5005_flaggedCriticalWithPortInAssetName() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(5005, "JDWP-Handshake"));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_JDWP_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:5005");
+        });
+    }
+
+    @Test
+    void jdwp_realHandshakeEchoOnPort8000_flaggedWithPortInAssetName() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(8000, "JDWP-Handshake"));
+        assertThat(ExposedPathDecisionLogic.decide(HOST, result))
+                .anySatisfy(f -> assertThat(f.affectedAsset()).isEqualTo("example.com:8000"));
+    }
+
+    @Test
+    void jdwp_unrelatedServiceOnThatPort_notFlagged() {
+        // Something other than JDWP happened to answer on 5005/8000 (or nothing meaningful at
+        // all) - anything other than an exact echo of the handshake string is not a positive.
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(5005, "HTTP/1.1 400 Bad Request"));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JDWP_UNAUTH");
+    }
+
+    @Test
+    void jdwp_noResponsesAtAll_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(BASELINE_404, Map.of(), null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JDWP_UNAUTH");
+    }
+
     /**
      * Real false positive found during Milestone 9's live verification: github.com/phpmyadmin
      * resolves to the real phpMyAdmin project's GitHub org page (a 200, unrelated to any exposed

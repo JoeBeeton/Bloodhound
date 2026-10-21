@@ -235,7 +235,8 @@ public class ExposedPathFetcher {
 
         String redisResponse = probeRedis(hostname);
         Map<String, ProbeResponse> sourceMapResponses = fetchSourceMapCandidates(hostname);
-        return new ExposedPathFetchResult(baseline, responses, redisResponse, sourceMapResponses);
+        Map<Integer, String> jdwpResponses = probeJdwp(hostname);
+        return new ExposedPathFetchResult(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses);
     }
 
     /** Same-host {@code <script src>} URLs referenced by the homepage, capped and bounded - the input to EXPOSURE_JS_SOURCE_MAP. */
@@ -453,6 +454,56 @@ public class ExposedPathFetcher {
                 return null;
             }
             return new String(buf, 0, read, StandardCharsets.ISO_8859_1);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * JDWP (Java Debug Wire Protocol) has no built-in authentication at all by design - the
+     * protocol's own spec has no concept of a credential. A reachable JDWP listener (started with
+     * e.g. {@code -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:8000} for remote
+     * debugging convenience) lets anyone who can connect invoke arbitrary methods and inject
+     * arbitrary bytecode into the running JVM - direct, unauthenticated remote code execution,
+     * with a well-known public exploit module. Unlike Redis there's no single universal default
+     * port, so both of JDWP's two conventional debug ports (5005 - IntelliJ/Eclipse's own
+     * suggested default; 8000 - another extremely common convention) are probed. The protocol's
+     * own handshake: the connecting side sends the literal ASCII string "JDWP-Handshake" (14
+     * bytes, no terminator), and a real JDWP listener echoes back the exact same string.
+     */
+    private static final List<Integer> JDWP_CANDIDATE_PORTS = List.of(5005, 8000);
+
+    private static final String JDWP_HANDSHAKE = "JDWP-Handshake";
+
+    private Map<Integer, String> probeJdwp(String hostname) {
+        Map<Integer, String> results = new java.util.LinkedHashMap<>();
+        for (int port : JDWP_CANDIDATE_PORTS) {
+            String response = probeJdwpPort(hostname, port);
+            if (response != null) {
+                results.put(port, response);
+            }
+        }
+        return results;
+    }
+
+    private String probeJdwpPort(String hostname, int port) {
+        HostnameRateLimiter.shared().acquire(hostname);
+        try (Socket socket = new Socket()) {
+            // Same reasoning as probeRedis's own equivalent comment: a raw socket connect by
+            // hostname needs its own SSRF re-check, and connecting to the one already-validated
+            // address (rather than letting the socket re-resolve the hostname independently)
+            // closes the DNS-rebinding TOCTOU window.
+            java.net.InetAddress resolved = SafeAddressValidator.resolveSafeAddress(hostname);
+            socket.connect(new InetSocketAddress(resolved, port), ALT_PORT_CONNECT_TIMEOUT_S * 1000);
+            socket.setSoTimeout(REQUEST_TIMEOUT_S * 1000);
+            socket.getOutputStream().write(JDWP_HANDSHAKE.getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            byte[] buf = new byte[64];
+            int read = socket.getInputStream().read(buf);
+            if (read <= 0) {
+                return null;
+            }
+            return new String(buf, 0, read, StandardCharsets.US_ASCII);
         } catch (Exception e) {
             return null;
         }
