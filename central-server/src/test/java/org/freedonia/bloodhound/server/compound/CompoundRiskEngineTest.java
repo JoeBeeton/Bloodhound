@@ -148,6 +148,21 @@ class CompoundRiskEngineTest {
     }
 
     @Test
+    void interceptableAdminAccess_firesWithJenkinsOwnPortVariantPlusWeakTls() {
+        // EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH (Jenkins checked on its own dedicated port 8080)
+        // is a distinct rule_id from the plain-host EXPOSURE_JENKINS_SCRIPT probe, but the same
+        // admin-console risk this pattern exists to catch either way.
+        List<Finding> findings = List.of(
+                finding("EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH", "CRITICAL", "EXPOSURE", "ci.example.com:8080"),
+                finding("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN", "HIGH", "TLS", "ci.example.com:8080"));
+
+        List<CompoundMatch> matches = CompoundRiskEngine.evaluate(findings);
+
+        assertThat(matches).anySatisfy(
+                m -> assertThat(m.pattern().ruleId()).isEqualTo("COMPOUND_INTERCEPTABLE_ADMIN_ACCESS"));
+    }
+
+    @Test
     void sourceAndCredentialExposure_firesWithGitConfigAndEnvFileTogether() {
         List<Finding> findings = List.of(
                 finding("EXPOSURE_GIT_CONFIG", "CRITICAL", "EXPOSURE", "old.example.com"),
