@@ -176,6 +176,14 @@ public class ExposedPathFetcher {
             // full scrape configuration - every monitored service/job name across the whole
             // fleet, a far broader reconnaissance surface than one app's own counters.
             ExposureProbeSpec.altPort("EXPOSURE_PROMETHEUS_SERVER_UNAUTH", "/api/v1/status/config", 9090),
+            // Apache Solr has no built-in authentication enabled by default - its admin API is
+            // reachable on its default port (8983) with no credentials whatsoever unless an
+            // operator explicitly layers on Basic Auth/Kerberos or a reverse proxy. Solr's own
+            // history includes multiple RCE-class CVEs reachable once any admin API access is
+            // available (e.g. CVE-2017-12629 XXE+RCE via the Config API, CVE-2019-0193 RCE via
+            // the DataImportHandler), making bare unauthenticated admin access itself the
+            // meaningful finding, independent of any one specific CVE.
+            ExposureProbeSpec.altPort("EXPOSURE_SOLR_ADMIN_UNAUTH", "/solr/admin/info/system", 8983),
             // etcd's v3 gRPC-gateway KV API on its default client port (2379). etcd backs
             // Kubernetes' entire cluster state - including Secrets, which (absent an explicit
             // encryption-at-rest configuration) are stored base64-encoded, i.e. plaintext-

@@ -1032,6 +1032,28 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void solrAdminAltPort_realSystemInfoShape_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"solr_home\":\"/var/solr/data\",\"lucene\":{\"solr-spec-version\":\"9.4.0\"},"
+                + "\"jvm\":{\"version\":\"17.0.9\"}}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_SOLR_ADMIN_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_SOLR_ADMIN_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:8983");
+        });
+    }
+
+    @Test
+    void solrAdminAltPort_authChallengePage_notFlagged() {
+        String body = "<html><body><h1>401 Unauthorized</h1></body></html>";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_SOLR_ADMIN_UNAUTH", new ProbeResponse(200, "text/html", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_SOLR_ADMIN_UNAUTH");
+    }
+
+    @Test
     void etcdAltPort_realKvRangeResponseShape_flaggedCriticalWithPortInAssetName() {
         String body = "{\"header\":{\"cluster_id\":\"14841639068965178418\",\"member_id\":\"10276657743932975437\","
                 + "\"revision\":\"42\",\"raft_term\":\"2\"},\"kvs\":[{\"key\":\"L3JlZ2lzdHJ5L3NlY3JldHMvZGVmYXVsdA==\","
