@@ -176,6 +176,15 @@ public class ExposedPathFetcher {
             // full scrape configuration - every monitored service/job name across the whole
             // fleet, a far broader reconnaissance surface than one app's own counters.
             ExposureProbeSpec.altPort("EXPOSURE_PROMETHEUS_SERVER_UNAUTH", "/api/v1/status/config", 9090),
+            // etcd's v3 gRPC-gateway KV API on its default client port (2379). etcd backs
+            // Kubernetes' entire cluster state - including Secrets, which (absent an explicit
+            // encryption-at-rest configuration) are stored base64-encoded, i.e. plaintext-
+            // equivalent - so an unauthenticated, queryable etcd is close to full cluster
+            // compromise, not just a data-disclosure finding. The request body is a RangeRequest
+            // for key=range_end=0x00 (base64 "AA=="), etcd's own documented convention for "every
+            // key in the store."
+            ExposureProbeSpec.altPortPost(
+                    "EXPOSURE_ETCD_UNAUTH", "/v3/kv/range", 2379, "{\"key\":\"AA==\",\"range_end\":\"AA==\"}"),
             ExposureProbeSpec.altPort("EXPOSURE_GRAFANA_UNAUTH", "/api/health", 3000),
             ExposureProbeSpec.altPort("EXPOSURE_MONGO_EXPRESS_UNAUTH", "/", 8081),
             ExposureProbeSpec.altPort("EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH", "/api/rawdata", 8080),

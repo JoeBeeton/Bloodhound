@@ -44,4 +44,9 @@ public record ExposureProbeSpec(
     static ExposureProbeSpec altPortHttps(String ruleId, String path, int port) {
         return new ExposureProbeSpec(ruleId, List.of(path), "GET", null, port, true, false);
     }
+
+    /** Like {@link #post} but on a non-default port - etcd's v3 gRPC-gateway KV API requires POST. */
+    static ExposureProbeSpec altPortPost(String ruleId, String path, int port, String body) {
+        return new ExposureProbeSpec(ruleId, List.of(path), "POST", body, port, false, false);
+    }
 }

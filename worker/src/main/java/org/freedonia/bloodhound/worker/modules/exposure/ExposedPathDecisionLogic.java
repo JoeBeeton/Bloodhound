@@ -220,6 +220,14 @@ public final class ExposedPathDecisionLogic {
         // in front) would instead return an auth challenge or error page, never this shape.
         addAltPortIfMatches(findings, hostname + ":9090", r, "EXPOSURE_PROMETHEUS_SERVER_UNAUTH",
                 b -> b.contains("\"status\":\"success\"") && b.contains("scrape_configs"));
+        // etcd's gRPC-gateway response envelope always nests a "header" object whose
+        // "cluster_id" field is rendered as a JSON STRING (etcd's own int64-as-string encoding
+        // quirk, e.g. "cluster_id":"14841639068965178418") - a combination specific enough to
+        // confirm a genuine, successfully-executed KV query rather than merely "port 2379
+        // answers something" (an auth-rejecting response would instead carry a gRPC error code,
+        // not this envelope shape).
+        addAltPortIfMatches(findings, hostname + ":2379", r, "EXPOSURE_ETCD_UNAUTH",
+                b -> b.contains("\"header\"") && b.contains("\"cluster_id\""));
         // Grafana/Mongo Express/Traefik's own conventional default ports - not independently
         // live-verified against a real running instance the way some other checks in this file
         // were (see ProductSlugMapper's own analogous caveat for an example of this codebase's
@@ -632,6 +640,14 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_ELASTICSEARCH_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Elasticsearch exposed without authentication",
                     "An Elasticsearch HTTP API is reachable without authentication, allowing full access to indexed data.")),
+            Map.entry("EXPOSURE_ETCD_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "etcd exposed without authentication",
+                    "An etcd instance's v3 KV API is reachable on its default port (2379) without authentication, "
+                            + "allowing a full read of every key in the store. etcd commonly backs Kubernetes' "
+                            + "entire cluster state, including Secrets, which (absent an explicit "
+                            + "encryption-at-rest configuration) are stored base64-encoded rather than truly "
+                            + "encrypted - making an exposed, unauthenticated etcd close to a full cluster "
+                            + "compromise, not just a data-disclosure finding.")),
             Map.entry("EXPOSURE_REDIS_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Redis exposed without authentication",
                     "A Redis instance answered INFO without authentication, allowing full read/write access to stored data.")),

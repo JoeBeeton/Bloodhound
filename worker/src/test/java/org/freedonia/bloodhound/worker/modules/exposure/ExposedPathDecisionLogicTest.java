@@ -968,6 +968,30 @@ class ExposedPathDecisionLogicTest {
     }
 
     @Test
+    void etcdAltPort_realKvRangeResponseShape_flaggedCriticalWithPortInAssetName() {
+        String body = "{\"header\":{\"cluster_id\":\"14841639068965178418\",\"member_id\":\"10276657743932975437\","
+                + "\"revision\":\"42\",\"raft_term\":\"2\"},\"kvs\":[{\"key\":\"L3JlZ2lzdHJ5L3NlY3JldHMvZGVmYXVsdA==\","
+                + "\"value\":\"c2VjcmV0LXZhbHVl\"}],\"count\":\"1\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ETCD_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_ETCD_UNAUTH");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:2379");
+        });
+    }
+
+    @Test
+    void etcdAltPort_authRejectionShape_notFlagged() {
+        String body = "{\"error\":\"etcdserver: user name is empty\",\"code\":7,\"message\":"
+                + "\"etcdserver: user name is empty\"}";
+        ExposedPathFetchResult result = resultWith(BASELINE_404, Map.of(
+                "EXPOSURE_ETCD_UNAUTH", new ProbeResponse(200, "application/json", (long) body.length(), body)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_ETCD_UNAUTH");
+    }
+
+    @Test
     void securityTxtExpired_pastExpiresDate_flaggedInfo() {
         String body = "Contact: mailto:security@example.com\nExpires: 2020-01-01T00:00:00Z\n";
         ExposedPathFetchResult result = resultWith(
