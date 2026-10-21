@@ -279,6 +279,15 @@ public final class ExposedPathDecisionLogic {
             }
         }
 
+        // A successful /api/whoami with guest:guest confirms the default credential pair is both
+        // active and reachable from outside localhost - a hardened or default-modern instance
+        // rejects it with 401, which addIfMatches-style status gating below treats as a negative.
+        ProbeResponse rabbitMq = result.rabbitMqResponse();
+        if (rabbitMq != null && rabbitMq.status() == 200 && rabbitMq.body() != null
+                && rabbitMq.body().contains("\"name\":\"guest\"")) {
+            findings.add(finding("EXPOSURE_RABBITMQ_DEFAULT_CREDS", hostname + ":15672", Map.of()));
+        }
+
         // No soft-404/baseline-dupe guard needed here, same reasoning as the alt-port checks
         // above: each of these URLs is unique to the script it was derived from, and the positive
         // signature (a genuine source-map JSON shape) is specific enough on its own that a generic
@@ -669,6 +678,12 @@ public final class ExposedPathDecisionLogic {
                             + "connect can invoke arbitrary methods and inject arbitrary bytecode into the "
                             + "running JVM, equivalent to direct, unauthenticated remote code execution. A "
                             + "well-known public exploit module targets exactly this.")),
+            Map.entry("EXPOSURE_RABBITMQ_DEFAULT_CREDS", new RuleMeta(Severity.CRITICAL,
+                    "RabbitMQ management API accepts default credentials",
+                    "The RabbitMQ management API on its default port (15672) accepted the well-known default "
+                            + "credential pair (guest:guest), confirmed via a successful authenticated request. "
+                            + "This grants full management access - viewing and manipulating queues, exchanges, "
+                            + "and messages - to anyone who tries the default login.")),
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
                     "The Consul HTTP API is reachable without authentication.")),

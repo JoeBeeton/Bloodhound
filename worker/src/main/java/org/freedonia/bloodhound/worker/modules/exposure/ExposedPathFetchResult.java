@@ -12,17 +12,20 @@ import java.util.Map;
  * @param jdwpResponses port (5005 or 8000, JDWP's two conventional debug ports - unlike Redis
  *     there's no single universal default) -> raw bytes-as-string read after sending the
  *     "JDWP-Handshake" ASCII string, or absent if unreachable on that port
+ * @param rabbitMqResponse response to GET /api/whoami on :15672 with the guest:guest default
+ *     credential pair - see EXPOSURE_RABBITMQ_DEFAULT_CREDS
  */
 public record ExposedPathFetchResult(
         ProbeResponse baseline,
         Map<String, ProbeResponse> responses,
         String redisResponse,
         Map<String, ProbeResponse> sourceMapResponses,
-        Map<Integer, String> jdwpResponses) {
+        Map<Integer, String> jdwpResponses,
+        ProbeResponse rabbitMqResponse) {
 
-    /** Test convenience - production code always populates sourceMapResponses/jdwpResponses (possibly empty). */
+    /** Test convenience - production code always populates sourceMapResponses/jdwpResponses/rabbitMqResponse. */
     ExposedPathFetchResult(ProbeResponse baseline, Map<String, ProbeResponse> responses, String redisResponse) {
-        this(baseline, responses, redisResponse, Map.of(), Map.of());
+        this(baseline, responses, redisResponse, Map.of(), Map.of(), ProbeResponse.unreachable());
     }
 
     /** Test convenience for cases exercising sourceMapResponses specifically. */
@@ -31,6 +34,16 @@ public record ExposedPathFetchResult(
             Map<String, ProbeResponse> responses,
             String redisResponse,
             Map<String, ProbeResponse> sourceMapResponses) {
-        this(baseline, responses, redisResponse, sourceMapResponses, Map.of());
+        this(baseline, responses, redisResponse, sourceMapResponses, Map.of(), ProbeResponse.unreachable());
+    }
+
+    /** Test convenience for cases exercising jdwpResponses specifically. */
+    ExposedPathFetchResult(
+            ProbeResponse baseline,
+            Map<String, ProbeResponse> responses,
+            String redisResponse,
+            Map<String, ProbeResponse> sourceMapResponses,
+            Map<Integer, String> jdwpResponses) {
+        this(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, ProbeResponse.unreachable());
     }
 }
