@@ -1,5 +1,5 @@
 # Bloodhound Rules Catalog
-Bloodhound currently ships **156 rules** across 10 categories. This document is generated directly from the live `rules_catalog` table (`central-server`'s database, populated by the Flyway migrations under `central-server/src/main/resources/db/migration/`) and reflects the catalog as of the date below - re-run the generation query after adding or changing rules to keep it current.
+Bloodhound currently ships **162 rules** across 10 categories. This document is generated directly from the live `rules_catalog` table (`central-server`'s database, populated by the Flyway migrations under `central-server/src/main/resources/db/migration/`) and reflects the catalog as of the date below - re-run the generation query after adding or changing rules to keep it current.
 
 _Last regenerated: 2026-10-21._
 
@@ -7,16 +7,16 @@ _Last regenerated: 2026-10-21._
 
 | Severity | Count |
 |---|---|
-| 🔴 CRITICAL | 45 |
-| 🟠 HIGH | 36 |
+| 🔴 CRITICAL | 48 |
+| 🟠 HIGH | 39 |
 | 🟡 MEDIUM | 39 |
 | 🔵 LOW | 19 |
 | ⚪ INFO | 17 |
-| **Total** | **156** |
+| **Total** | **162** |
 
 | Category | Count |
 |---|---|
-| [Exposure](#exposure) | 67 |
+| [Exposure](#exposure) | 73 |
 | [Network / Ports](#network--ports) | 11 |
 | [DNS Posture](#dns-posture) | 24 |
 | [TLS / HSTS](#tls--hsts) | 16 |
@@ -29,7 +29,7 @@ _Last regenerated: 2026-10-21._
 
 ## Table of contents
 
-- [Exposure](#exposure) (67)
+- [Exposure](#exposure) (73)
 - [Network / Ports](#network--ports) (11)
 - [DNS Posture](#dns-posture) (24)
 - [TLS / HSTS](#tls--hsts) (16)
@@ -46,6 +46,7 @@ _Last regenerated: 2026-10-21._
 |---|---|---|---|
 | `EXPOSURE_ACTUATOR_ENV` | 🔴 CRITICAL | Spring Boot Actuator environment endpoint exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_ACTUATOR_HEAPDUMP` | 🔴 CRITICAL | Spring Boot Actuator heap dump exposed | Tier 1 + Tier 2 |
+| `EXPOSURE_AIRFLOW_UNAUTH` | 🔴 CRITICAL | Apache Airflow exposed without authentication | Tier 1 + Tier 2 |
 | `EXPOSURE_AWS_CREDENTIALS` | 🔴 CRITICAL | Exposed AWS credentials file | Tier 1 + Tier 2 |
 | `EXPOSURE_BACKUP_ARCHIVE` | 🔴 CRITICAL | Exposed backup archive | Tier 1 + Tier 2 |
 | `EXPOSURE_CLOUD_BUCKET_BRUTEFORCE_DISCOVERED_PUBLIC` | 🔴 CRITICAL | Publicly listable cloud storage bucket (discovered via brand-name guessing) | Tier 2 (deep scan) only |
@@ -61,6 +62,7 @@ _Last regenerated: 2026-10-21._
 | `EXPOSURE_JDWP_UNAUTH` | 🔴 CRITICAL | Java Debug Wire Protocol (JDWP) exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_JENKINS_SCRIPT` | 🔴 CRITICAL | Jenkins script console exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_JENKINS_SCRIPT_CONSOLE_UNAUTH` | 🔴 CRITICAL | Jenkins script console exposed without authentication | Tier 1 + Tier 2 |
+| `EXPOSURE_JUPYTER_UNAUTH` | 🔴 CRITICAL | Jupyter Notebook exposed without authentication | Tier 1 + Tier 2 |
 | `EXPOSURE_KUBECTL_PROXY_UNAUTH` | 🔴 CRITICAL | kubectl proxy exposed without authentication | Tier 1 + Tier 2 |
 | `EXPOSURE_KUBERNETES_API_UNAUTH` | 🔴 CRITICAL | Kubernetes API server allows anonymous access | Tier 1 + Tier 2 |
 | `EXPOSURE_LIVE_SECRET_DETECTED` | 🔴 CRITICAL | Live-looking secret found in exposed file | Tier 1 + Tier 2 |
@@ -72,6 +74,7 @@ _Last regenerated: 2026-10-21._
 | `EXPOSURE_SQL_DUMP_FILE` | 🔴 CRITICAL | Exposed SQL database dump | Tier 1 + Tier 2 |
 | `EXPOSURE_SSH_PRIVATE_KEY` | 🔴 CRITICAL | Exposed private key file | Tier 1 + Tier 2 |
 | `EXPOSURE_SVN_ENTRIES` | 🔴 CRITICAL | Exposed .svn/entries | Tier 1 + Tier 2 |
+| `EXPOSURE_VNC_NO_AUTH` | 🔴 CRITICAL | VNC reachable with no authentication required | Tier 1 + Tier 2 |
 | `TECH_KNOWN_EXPLOITED_VULNERABILITY` | 🔴 CRITICAL | Actively exploited vulnerability in detected software | Tier 1 + Tier 2 |
 | `EXPOSURE_ACTUATOR_BEANS` | 🟠 HIGH | Spring Boot Actuator beans endpoint exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_ACTUATOR_CONFIGPROPS` | 🟠 HIGH | Spring Boot Actuator configprops endpoint exposed | Tier 1 + Tier 2 |
@@ -88,9 +91,12 @@ _Last regenerated: 2026-10-21._
 | `EXPOSURE_KIBANA_UNAUTH` | 🟠 HIGH | Kibana console exposed without authentication | Tier 1 + Tier 2 |
 | `EXPOSURE_LARAVEL_DEBUG_MODE` | 🟠 HIGH | Laravel debug mode enabled | Tier 1 + Tier 2 |
 | `EXPOSURE_LARAVEL_TELESCOPE` | 🟠 HIGH | Laravel Telescope exposed | Tier 1 + Tier 2 |
+| `EXPOSURE_MLFLOW_UNAUTH` | 🟠 HIGH | MLflow tracking server exposed without authentication | Tier 1 + Tier 2 |
+| `EXPOSURE_PGADMIN` | 🟠 HIGH | pgAdmin console exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_PHPMYADMIN` | 🟠 HIGH | phpMyAdmin console exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_PHP_INFO` | 🟠 HIGH | phpinfo() page exposed | Tier 1 + Tier 2 |
 | `EXPOSURE_PROMETHEUS_SERVER_UNAUTH` | 🟠 HIGH | Prometheus server exposed without authentication | Tier 1 + Tier 2 |
+| `EXPOSURE_SNMP_DEFAULT_COMMUNITY` | 🟠 HIGH | SNMP accepts the default "public" community string | Tier 1 + Tier 2 |
 | `EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH` | 🟠 HIGH | Traefik dashboard exposed without authentication | Tier 1 + Tier 2 |
 | `EXPOSURE_ACTUATOR_HEALTH_DETAILS` | 🟡 MEDIUM | Spring Boot Actuator health endpoint discloses internal system details | Tier 1 + Tier 2 |
 | `EXPOSURE_APACHE_SERVER_STATUS` | 🟡 MEDIUM | Apache mod_status page exposed | Tier 1 + Tier 2 |
@@ -127,6 +133,14 @@ The /actuator/env endpoint is publicly reachable and discloses environment varia
 The /actuator/heapdump endpoint is publicly reachable and returns a full JVM heap dump, which frequently contains credentials, session tokens, and other secrets held in memory.
 
 **Remediation:** Disable or authenticate the heapdump actuator endpoint (management.endpoint.heapdump.enabled=false, or restrict actuator exposure to an internal network/authenticated management port).
+
+### `EXPOSURE_AIRFLOW_UNAUTH`
+
+**Apache Airflow exposed without authentication** — 🔴 CRITICAL
+
+An Airflow webserver's REST API answered a real DAG list without authentication, disclosing every DAG's own Python source - which often embeds credentials or business logic - and, depending on the instance's role configuration, may also allow triggering DAG runs, i.e. arbitrary code execution on the Airflow host.
+
+**Remediation:** Enable Airflow's authentication (RBAC) and ensure no anonymous/public role has been granted access, then restrict network access to the webserver to trusted hosts only.
 
 ### `EXPOSURE_AWS_CREDENTIALS`
 
@@ -248,6 +262,14 @@ Jenkins's Groovy script console is publicly reachable without authentication, al
 
 **Remediation:** Enable Jenkins's security realm and authorization strategy so the script console requires an authenticated administrator, and firewall the Jenkins port to trusted hosts only.
 
+### `EXPOSURE_JUPYTER_UNAUTH`
+
+**Jupyter Notebook exposed without authentication** — 🔴 CRITICAL
+
+A Jupyter Notebook instance on its default port (8888) answered its API without requiring a token or password, confirmed via a real /api/status response. Jupyter's notebook cells execute arbitrary code - unauthenticated access is equivalent to direct remote code execution on the host.
+
+**Remediation:** Set a token or password immediately (Jupyter generates one by default; never run with --NotebookApp.token='' or --NotebookApp.password='' on a publicly reachable host), and restrict network access to trusted hosts only.
+
 ### `EXPOSURE_KUBECTL_PROXY_UNAUTH`
 
 **kubectl proxy exposed without authentication** — 🔴 CRITICAL
@@ -335,6 +357,14 @@ A publicly readable PEM-format private key (RSA/DSA/EC/OpenSSH) was found at a c
 A Subversion working copy's .svn/entries file is publicly readable, disclosing the full repository URL and revision metadata and often enabling source reconstruction, the same risk EXPOSURE_GIT_CONFIG covers for Git.
 
 **Remediation:** Remove the .svn directory from the publicly served web root, or explicitly block access to paths starting with .svn at the web server or reverse proxy.
+
+### `EXPOSURE_VNC_NO_AUTH`
+
+**VNC reachable with no authentication required** — 🔴 CRITICAL
+
+A VNC server on its default port (5900) offers only the "None" security type, confirmed via the RFB protocol's own handshake, meaning any connection is granted full remote desktop access with no password or other authentication at all.
+
+**Remediation:** Configure a VNC password immediately (or disable the "None" security type in the server's configuration), and restrict network access to the VNC port to trusted hosts only.
 
 ### `TECH_KNOWN_EXPLOITED_VULNERABILITY`
 
@@ -464,6 +494,22 @@ Laravel's Telescope debugging dashboard is publicly reachable, disclosing applic
 
 **Remediation:** Restrict Telescope's gate to authorized users only, or disable it in production.
 
+### `EXPOSURE_MLFLOW_UNAUTH`
+
+**MLflow tracking server exposed without authentication** — 🟠 HIGH
+
+An MLflow tracking server's API on its default port (5000) is reachable, disclosing every experiment, run, metric, parameter, and model artifact path tracked on the server. MLflow has no built-in authentication mechanism at all, so reachability itself is the finding.
+
+**Remediation:** Put an authenticating reverse proxy in front of the MLflow tracking server, or restrict access to trusted internal networks only.
+
+### `EXPOSURE_PGADMIN`
+
+**pgAdmin console exposed** — 🟠 HIGH
+
+A pgAdmin database-administration login console is publicly reachable.
+
+**Remediation:** Restrict network access to the pgAdmin console to trusted hosts only, and ensure a strong master password is set.
+
 ### `EXPOSURE_PHPMYADMIN`
 
 **phpMyAdmin console exposed** — 🟠 HIGH
@@ -487,6 +533,14 @@ A publicly reachable phpinfo() page discloses detailed server configuration - lo
 The Prometheus server's own query API is reachable on its default port (9090) without authentication, disclosing the full scrape configuration - every monitored service/job name across the whole fleet. This is distinct from, and broader than, a single application's own exposed /metrics endpoint.
 
 **Remediation:** Put an authenticating reverse proxy in front of the Prometheus server, or restrict access to trusted internal networks only. Prometheus has no built-in authentication of its own.
+
+### `EXPOSURE_SNMP_DEFAULT_COMMUNITY`
+
+**SNMP accepts the default "public" community string** — 🟠 HIGH
+
+An SNMP agent answered a GetRequest for sysDescr.0 using the well-known default community string "public", confirmed via a real GetResponse reply. This discloses device and network configuration details and, depending on the agent's configuration, may also allow write access (SNMP SET) using the same or another commonly-guessed community string.
+
+**Remediation:** Change the default community strings immediately, restrict SNMP access to trusted management hosts only (via ACLs on the device), and migrate to SNMPv3 with authentication/encryption where supported.
 
 ### `EXPOSURE_TRAEFIK_DASHBOARD_UNAUTH`
 
