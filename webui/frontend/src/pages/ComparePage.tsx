@@ -3,12 +3,24 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { CompareScoreMode } from "../components/CompareTrendChart";
 import { CompareTrendChart } from "../components/CompareTrendChart";
+import { CompareCategoryChart } from "../components/CompareCategoryChart";
+import { CompareFindingsChart } from "../components/CompareFindingsChart";
+import { CompareLeaderboard } from "../components/CompareLeaderboard";
 import { ErrorState } from "../components/ErrorState";
 import { Shell } from "../components/Shell";
 import { TargetTypeBadge } from "../components/TargetTypeBadge";
 import { apiFetch } from "../lib/apiClient";
 import type { CompareSeries, Portfolio, Target } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
+
+const VIEW_MODES = ["trend", "categories", "findings", "leaderboard"] as const;
+type ViewMode = (typeof VIEW_MODES)[number];
+const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+  trend: "Trend",
+  categories: "Categories",
+  findings: "Findings",
+  leaderboard: "Leaderboard",
+};
 
 async function fetchTargets(): Promise<Target[]> {
   const res = await apiFetch("/api/v1/targets");
@@ -23,10 +35,14 @@ async function fetchPortfolios(): Promise<Portfolio[]> {
 }
 
 /** targetIds and portfolioIds are independent selections - either (or both) can be empty; the backend accepts either param missing entirely. */
-async function fetchCompare(targetIds: string[], portfolioIds: string[]): Promise<CompareSeries[]> {
+async function fetchCompare(
+  targetIds: string[],
+  portfolioIds: string[],
+): Promise<CompareSeries[]> {
   const params = new URLSearchParams();
   if (targetIds.length > 0) params.set("targetIds", targetIds.join(","));
-  if (portfolioIds.length > 0) params.set("portfolioIds", portfolioIds.join(","));
+  if (portfolioIds.length > 0)
+    params.set("portfolioIds", portfolioIds.join(","));
   const res = await apiFetch(`/api/v1/compare?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load comparison.");
   return res.json();
@@ -40,8 +56,14 @@ async function fetchCompare(targetIds: string[], portfolioIds: string[]): Promis
  */
 export function ComparePage() {
   usePageTitle("Compare");
-  const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: fetchTargets });
-  const portfoliosQuery = useQuery({ queryKey: ["portfolios"], queryFn: fetchPortfolios });
+  const targetsQuery = useQuery({
+    queryKey: ["targets"],
+    queryFn: fetchTargets,
+  });
+  const portfoliosQuery = useQuery({
+    queryKey: ["portfolios"],
+    queryFn: fetchPortfolios,
+  });
   // A product review found a comparison you'd actually built - a specific set of competitor
   // domains, in "full picture" mode - vanished the moment the tab was reloaded or the URL was
   // shared with a colleague, silently reverting to the OWN-targets default. Persisted in the URL
@@ -53,14 +75,22 @@ export function ComparePage() {
   // authorized targets - in practice, your own - so plotting the full score by default would
   // make your own domain look artificially worse than a competitor purely because it was
   // scanned more thoroughly, not because it's less secure.
-  const scoreMode: CompareScoreMode = searchParams.get("mode") === "full" ? "full" : "tier1";
+  const scoreMode: CompareScoreMode =
+    searchParams.get("mode") === "full" ? "full" : "tier1";
+  const urlView = searchParams.get("view");
+  const viewMode: ViewMode = VIEW_MODES.includes(urlView as ViewMode)
+    ? (urlView as ViewMode)
+    : "trend";
 
   // Absent from the URL entirely: default-select OWN targets. An explicit (even empty)
   // targetIds param always wins, so a deliberately-cleared selection stays cleared on reload
   // rather than snapping back to the default.
   const effectiveSelected = useMemo(() => {
-    if (urlTargetIds !== null) return new Set(urlTargetIds.split(",").filter(Boolean));
-    const ownIds = (targetsQuery.data ?? []).filter((t) => t.targetType === "OWN").map((t) => t.id);
+    if (urlTargetIds !== null)
+      return new Set(urlTargetIds.split(",").filter(Boolean));
+    const ownIds = (targetsQuery.data ?? [])
+      .filter((t) => t.targetType === "OWN")
+      .map((t) => t.id);
     return new Set(ownIds);
   }, [urlTargetIds, targetsQuery.data]);
 
@@ -68,14 +98,21 @@ export function ComparePage() {
   // user deliberately created and picks explicitly, there's no equivalent "obvious default" for it.
   const urlPortfolioIds = searchParams.get("portfolioIds");
   const effectiveSelectedPortfolios = useMemo(
-    () => new Set(urlPortfolioIds ? urlPortfolioIds.split(",").filter(Boolean) : []),
+    () =>
+      new Set(
+        urlPortfolioIds ? urlPortfolioIds.split(",").filter(Boolean) : [],
+      ),
     [urlPortfolioIds],
   );
 
   const targetIds = [...effectiveSelected];
   const portfolioIds = [...effectiveSelectedPortfolios];
   const compareQuery = useQuery({
-    queryKey: ["compare", targetIds.sort().join(","), portfolioIds.sort().join(",")],
+    queryKey: [
+      "compare",
+      targetIds.sort().join(","),
+      portfolioIds.sort().join(","),
+    ],
     queryFn: () => fetchCompare(targetIds, portfolioIds),
     enabled: targetIds.length > 0 || portfolioIds.length > 0,
   });
@@ -119,25 +156,50 @@ export function ComparePage() {
     );
   }
 
+  function setViewMode(view: ViewMode) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        view === "trend" ? params.delete("view") : params.set("view", view);
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
   return (
     <Shell>
-      <div className="w-full max-w-4xl text-left">
+      <div className="w-full max-w-6xl text-left">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">Differential Analysis</p>
-            <h1 className="font-display text-2xl font-bold text-neon-cyan">Compare</h1>
+            <p className="font-mono text-sm uppercase tracking-[0.3em] text-neon-magenta">
+              Differential Analysis
+            </p>
+            <h1 className="font-display text-2xl font-bold text-neon-cyan">
+              Compare
+            </h1>
           </div>
-          <Link to="/targets" className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan">
+          <Link
+            to="/targets"
+            className="font-mono text-xs uppercase tracking-widest text-slate-400 hover:text-neon-cyan"
+          >
             ← Targets
           </Link>
         </div>
 
-        {targetsQuery.isLoading && <p className="font-mono text-sm text-slate-400">Loading targets…</p>}
+        {targetsQuery.isLoading && (
+          <p className="font-mono text-sm text-slate-400">Loading targets…</p>
+        )}
         {targetsQuery.isError && (
-          <ErrorState message="Failed to load targets." onRetry={() => targetsQuery.refetch()} />
+          <ErrorState
+            message="Failed to load targets."
+            onRetry={() => targetsQuery.refetch()}
+          />
         )}
         {targetsQuery.data?.length === 0 && (
-          <p className="font-mono text-sm text-slate-400">No targets yet — add one on the Targets page first.</p>
+          <p className="font-mono text-sm text-slate-400">
+            No targets yet — add one on the Targets page first.
+          </p>
         )}
 
         {targetsQuery.data && targetsQuery.data.length > 0 && (
@@ -165,10 +227,14 @@ export function ComparePage() {
 
             {portfoliosQuery.data && portfoliosQuery.data.length > 0 && (
               <div className="mb-6">
-                <p className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-400">Portfolios</p>
+                <p className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-400">
+                  Portfolios
+                </p>
                 <div className="flex flex-wrap gap-2 rounded-lg border border-neon-magenta/20 bg-panel/60 p-4">
                   {portfoliosQuery.data.map((portfolio) => {
-                    const isSelected = effectiveSelectedPortfolios.has(portfolio.id);
+                    const isSelected = effectiveSelectedPortfolios.has(
+                      portfolio.id,
+                    );
                     return (
                       <button
                         key={portfolio.id}
@@ -191,45 +257,107 @@ export function ComparePage() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div
                 role="group"
-                aria-label="Score mode"
+                aria-label="View"
                 className="inline-flex rounded border border-neon-cyan/20 bg-panel/60 p-0.5 font-mono text-xs uppercase tracking-widest"
               >
-                <button
-                  aria-pressed={scoreMode === "tier1"}
-                  onClick={() => setScoreMode("tier1")}
-                  className={`rounded px-3 py-1.5 transition ${
-                    scoreMode === "tier1" ? "bg-neon-cyan/15 text-neon-cyan" : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Fair comparison
-                </button>
-                <button
-                  aria-pressed={scoreMode === "full"}
-                  onClick={() => setScoreMode("full")}
-                  className={`rounded px-3 py-1.5 transition ${
-                    scoreMode === "full" ? "bg-neon-magenta/15 text-neon-magenta" : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Full picture
-                </button>
+                {VIEW_MODES.map((view) => (
+                  <button
+                    key={view}
+                    aria-pressed={viewMode === view}
+                    onClick={() => setViewMode(view)}
+                    className={`rounded px-3 py-1.5 transition ${
+                      viewMode === view
+                        ? "bg-neon-cyan/15 text-neon-cyan"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    {VIEW_MODE_LABELS[view]}
+                  </button>
+                ))}
               </div>
-              <p className="max-w-md text-right font-mono text-[11px] leading-tight text-slate-500">
+
+              {/* findingCounts carries no tier1/full split (see CompareFindingsChart's own doc
+                  comment) - this toggle has no effect on that view, so it's hidden there rather
+                  than shown doing nothing. */}
+              {viewMode !== "findings" && (
+                <div
+                  role="group"
+                  aria-label="Score mode"
+                  className="inline-flex rounded border border-neon-cyan/20 bg-panel/60 p-0.5 font-mono text-xs uppercase tracking-widest"
+                >
+                  <button
+                    aria-pressed={scoreMode === "tier1"}
+                    onClick={() => setScoreMode("tier1")}
+                    className={`rounded px-3 py-1.5 transition ${
+                      scoreMode === "tier1"
+                        ? "bg-neon-cyan/15 text-neon-cyan"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Fair comparison
+                  </button>
+                  <button
+                    aria-pressed={scoreMode === "full"}
+                    onClick={() => setScoreMode("full")}
+                    className={`rounded px-3 py-1.5 transition ${
+                      scoreMode === "full"
+                        ? "bg-neon-magenta/15 text-neon-magenta"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Full picture
+                  </button>
+                </div>
+              )}
+            </div>
+            {viewMode !== "findings" && (
+              <p className="mb-3 text-right font-mono text-[11px] leading-tight text-slate-500">
                 {scoreMode === "tier1"
                   ? "Tier 1 findings only — the same scope every tracked domain gets, so scores are directly comparable."
                   : "Includes findings from authorized deep scans, which only ever run against your own domains."}
               </p>
-            </div>
+            )}
 
-            {compareQuery.isLoading && (targetIds.length > 0 || portfolioIds.length > 0) && (
-              <p className="font-mono text-sm text-slate-400">Loading comparison…</p>
-            )}
+            {compareQuery.isLoading &&
+              (targetIds.length > 0 || portfolioIds.length > 0) && (
+                <p className="font-mono text-sm text-slate-400">
+                  Loading comparison…
+                </p>
+              )}
             {compareQuery.isError && (
-              <ErrorState message="Failed to load comparison." onRetry={() => compareQuery.refetch()} />
+              <ErrorState
+                message="Failed to load comparison."
+                onRetry={() => compareQuery.refetch()}
+              />
             )}
-            <CompareTrendChart
-              series={targetIds.length > 0 || portfolioIds.length > 0 ? (compareQuery.data ?? []) : []}
-              mode={scoreMode}
-            />
+            {(() => {
+              const activeSeries =
+                targetIds.length > 0 || portfolioIds.length > 0
+                  ? (compareQuery.data ?? [])
+                  : [];
+              switch (viewMode) {
+                case "categories":
+                  return (
+                    <CompareCategoryChart
+                      series={activeSeries}
+                      mode={scoreMode}
+                    />
+                  );
+                case "findings":
+                  return <CompareFindingsChart series={activeSeries} />;
+                case "leaderboard":
+                  return (
+                    <CompareLeaderboard
+                      series={activeSeries}
+                      mode={scoreMode}
+                    />
+                  );
+                default:
+                  return (
+                    <CompareTrendChart series={activeSeries} mode={scoreMode} />
+                  );
+              }
+            })()}
           </>
         )}
       </div>
