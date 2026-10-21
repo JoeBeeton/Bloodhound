@@ -236,7 +236,9 @@ public class ExposedPathFetcher {
         String redisResponse = probeRedis(hostname);
         Map<String, ProbeResponse> sourceMapResponses = fetchSourceMapCandidates(hostname);
         Map<Integer, String> jdwpResponses = probeJdwp(hostname);
-        return new ExposedPathFetchResult(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses);
+        ProbeResponse rabbitMqResponse = probeRabbitMq(hostname);
+        return new ExposedPathFetchResult(
+                baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse);
     }
 
     /** Same-host {@code <script src>} URLs referenced by the homepage, capped and bounded - the input to EXPOSURE_JS_SOURCE_MAP. */
@@ -484,6 +486,42 @@ public class ExposedPathFetcher {
             }
         }
         return results;
+    }
+
+    /**
+     * RabbitMQ's management plugin REST API on its default port (15672), probed with its own
+     * extremely well-known default credential pair (guest:guest) - the same single
+     * well-known-credential pattern FtpAnonymousChecker already established for anonymous FTP
+     * login, not a brute-force attempt. Modern RabbitMQ (since 3.3.0) restricts the guest user to
+     * localhost connections by default, but real-world deployments routinely re-enable remote
+     * guest access or simply never changed the password. /api/whoami is deliberately used over
+     * the heavier /api/overview - same auth requirement, smaller response.
+     */
+    private ProbeResponse probeRabbitMq(String hostname) {
+        HostnameRateLimiter.shared().acquire(hostname);
+        String credential = java.util.Base64.getEncoder().encodeToString("guest:guest".getBytes(StandardCharsets.UTF_8));
+        URI uri = URI.create("http://" + hostname + ":15672/api/whoami");
+        try {
+            SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(ALT_PORT_CONNECT_TIMEOUT_S))
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_S))
+                    .header("User-Agent", ScanUserAgent.VALUE)
+                    .header("Authorization", "Basic " + credential)
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            String body = response.body() == null
+                    ? ""
+                    : response.body().substring(0, Math.min(response.body().length(), BODY_LIMIT_BYTES));
+            return new ProbeResponse(
+                    response.statusCode(), response.headers().firstValue("content-type").orElse(null),
+                    (long) body.length(), body, uri.toString());
+        } catch (Exception e) {
+            return ProbeResponse.unreachable();
+        }
     }
 
     private String probeJdwpPort(String hostname, int port) {

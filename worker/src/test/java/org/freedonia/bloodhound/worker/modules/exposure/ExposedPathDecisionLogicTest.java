@@ -359,6 +359,35 @@ class ExposedPathDecisionLogicTest {
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JDWP_UNAUTH");
     }
 
+    @Test
+    void rabbitMq_guestGuestAccepted_flaggedCritical() {
+        String body = "{\"name\":\"guest\",\"tags\":\"administrator\"}";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(),
+                new ProbeResponse(200, "application/json", (long) body.length(), body));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("EXPOSURE_RABBITMQ_DEFAULT_CREDS");
+            assertThat(f.severity().name()).isEqualTo("CRITICAL");
+            assertThat(f.affectedAsset()).isEqualTo("example.com:15672");
+        });
+    }
+
+    @Test
+    void rabbitMq_credentialsRejected_notFlagged() {
+        String body = "{\"error\":\"not_authorised\",\"reason\":\"Login failed\"}";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(),
+                new ProbeResponse(401, "application/json", (long) body.length(), body));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_RABBITMQ_DEFAULT_CREDS");
+    }
+
+    @Test
+    void rabbitMq_unreachable_notFlagged() {
+        ExposedPathFetchResult result = new ExposedPathFetchResult(BASELINE_404, Map.of(), null);
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_RABBITMQ_DEFAULT_CREDS");
+    }
+
     /**
      * Real false positive found during Milestone 9's live verification: github.com/phpmyadmin
      * resolves to the real phpMyAdmin project's GitHub org page (a 200, unrelated to any exposed
