@@ -237,6 +237,10 @@ public final class ExposedPathDecisionLogic {
         // 6443 answers something" (which a properly-secured, mTLS-only API server would also do).
         addAltPortIfMatches(findings, hostname + ":6443", r, "EXPOSURE_KUBERNETES_API_UNAUTH",
                 b -> b.contains("\"NamespaceList\""));
+        // Same NamespaceList fingerprint, same reasoning, different port/transport: `kubectl
+        // proxy`'s own default port (8001, plain HTTP) rather than the apiserver's own TLS port.
+        addAltPortIfMatches(findings, hostname + ":8001", r, "EXPOSURE_KUBECTL_PROXY_UNAUTH",
+                b -> b.contains("\"NamespaceList\""));
         // Apache mod_status's own distinctive page heading - a classic, well-known information
         // disclosure endpoint (Nikto's default checklist includes it) that discloses current
         // requests in flight, including client IPs and the URLs/query strings being processed -
@@ -727,6 +731,15 @@ public final class ExposedPathDecisionLogic {
                             + "cluster's real namespace list. Anonymous read access to cluster-management data is "
                             + "often a foothold for broader cluster compromise - this is the control plane itself, "
                             + "not just an application.")),
+            Map.entry("EXPOSURE_KUBECTL_PROXY_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "kubectl proxy exposed without authentication",
+                    "A kubectl proxy instance is publicly reachable on its default port (8001) and answers an "
+                            + "authenticated endpoint (/api/v1/namespaces) without credentials, disclosing the "
+                            + "cluster's real namespace list. kubectl proxy is meant for local development "
+                            + "convenience and is normally bound to localhost - Kubernetes' own hardening "
+                            + "documentation specifically warns against running it with a public bind address, "
+                            + "and real-world incidents (including the 2018 Tesla cryptojacking breach) trace "
+                            + "back to exactly this misconfiguration.")),
             Map.entry("EXPOSURE_APACHE_SERVER_STATUS", new RuleMeta(Severity.MEDIUM,
                     "Apache mod_status page exposed",
                     "The Apache mod_status page (/server-status) is publicly reachable, disclosing currently "
