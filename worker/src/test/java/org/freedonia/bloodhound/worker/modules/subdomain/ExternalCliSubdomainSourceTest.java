@@ -47,4 +47,41 @@ class ExternalCliSubdomainSourceTest {
         // nowhere near "hangs forever" - before the fix, this test would never have completed.
         assertThat(elapsedMs).isLessThan(90_000);
     }
+
+    private static final class UnsafeToScanSource extends ExternalCliSubdomainSource {
+        @Override
+        protected boolean isUnsafeToScan(String rootDomain) {
+            return true;
+        }
+
+        @Override
+        protected List<String> command(String rootDomain) {
+            throw new AssertionError("must not be called once isUnsafeToScan has refused this domain");
+        }
+
+        @Override
+        protected List<String> parseOutput(String stdout, String rootDomain) {
+            throw new AssertionError("must not be called - no process was ever started");
+        }
+
+        @Override
+        public String sourceName() {
+            return "UNSAFE_TEST_SOURCE";
+        }
+    }
+
+    @Test
+    void isUnsafeToScan_shortCircuitsBeforeBuildingOrRunningTheCommand() {
+        List<String> result = new UnsafeToScanSource().discover("example.com");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void defaultIsUnsafeToScan_isFalse_forSourcesThatDoNotOverrideIt() {
+        // Subfinder (passive/API-backed) never dials rootDomain itself - this is the default every
+        // such source gets for free, exercised directly against the base class's own no-op
+        // (HangingSource doesn't override isUnsafeToScan, same as the real SubfinderCliSource).
+        assertThat(new HangingSource().isUnsafeToScan("example.com")).isFalse();
+    }
 }
