@@ -306,6 +306,10 @@ public class TargetController {
             // authorized.
             if (!"OWN".equals(request.targetType()) && !request.targetType().equals(before.targetType())) {
                 targetAuthorizationRepository.revokeCurrent(id, principal.userId());
+                // A security review found this revoked authorization_status but left any
+                // already-queued deep-scan jobs sitting in the queue unchanged - see
+                // ScanJobRepository#cancelNonTerminalTier2ForTarget's own javadoc.
+                scanJobRepository.cancelNonTerminalTier2ForTarget(id, ScanRunService.allTier2ModuleTypes());
             }
         }
         // An audit/reliability review found this endpoint - the only way "Remove"/"Restore" on

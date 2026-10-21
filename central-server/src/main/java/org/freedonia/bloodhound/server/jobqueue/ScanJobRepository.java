@@ -260,7 +260,19 @@ public class ScanJobRepository {
      * history at all (COALESCE to epoch) sorts first, same as it should. sj.created_at remains the
      * final fallback for the vanishingly rare case two targets' last_claimed_at are identical.
      */
-    public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes) {
+    /**
+     * A security review found this never checked {@code targets.authorization_status} at all - a
+     * deep scan already queued when Tier 2 authorization is revoked (or the target is retyped
+     * away from {@code OWN}) kept right on being claimed and run, since nothing here joined
+     * against the target's current state. {@link #cancelNonTerminalTier2ForTarget} handles the
+     * already-queued half of that gap; this join is the belt-and-suspenders other half, so even a
+     * job this method somehow missed cancelling (a revoke racing a claim) still can't be claimed
+     * once the target is no longer {@code OWN}+{@code AUTHORIZED}. Tier 1 module types are
+     * unaffected - the {@code NOT IN} branch of the OR short-circuits the join for them.
+     */
+    public List<ScanJob> claim(String workerId, int capacity, int leaseMinutes, List<String> tier2ModuleTypes) {
+        String tier2Placeholders =
+                tier2ModuleTypes.stream().map(m -> "?").collect(java.util.stream.Collectors.joining(","));
         String sql =
                 """
                 WITH ranked AS (
@@ -277,6 +289,7 @@ public class ScanJobRepository {
                 claimed AS (
                     SELECT sj.id FROM scan_jobs sj
                     JOIN ranked r ON r.id = sj.id
+                    JOIN targets t ON t.id = sj.target_id
                     LEFT JOIN target_last_claimed tlc ON tlc.target_id = sj.target_id
                     WHERE sj.status = 'PENDING' AND sj.run_after <= now()
                       AND (
@@ -285,6 +298,10 @@ public class ScanJobRepository {
                               pg_try_advisory_xact_lock(?)
                               AND (SELECT count(*) FROM scan_jobs WHERE module_type = 'ZAP_ACTIVE_SCAN' AND status IN ('CLAIMED', 'RUNNING')) < ?
                           )
+                      )
+                      AND (
+                          sj.module_type NOT IN (%s)
+                          OR (t.target_type = 'OWN' AND t.authorization_status = 'AUTHORIZED')
                       )
                     ORDER BY sj.priority DESC, r.target_rank ASC,
                              COALESCE(tlc.last_claimed_at, '-infinity'::timestamptz) ASC, sj.created_at ASC
@@ -297,8 +314,15 @@ public class ScanJobRepository {
                 FROM claimed
                 WHERE sj.id = claimed.id
                 RETURNING sj.*
-                """;
-        return jdbc.query(sql, ROW_MAPPER, ZAP_CLAIM_LOCK_KEY, zapMaxConcurrentScans, capacity, workerId, leaseMinutes);
+                """
+                        .formatted(tier2Placeholders);
+        Object[] args = java.util.stream.Stream.of(
+                        java.util.stream.Stream.of(ZAP_CLAIM_LOCK_KEY, zapMaxConcurrentScans),
+                        tier2ModuleTypes.stream(),
+                        java.util.stream.Stream.of(capacity, workerId, leaseMinutes))
+                .flatMap(s -> s)
+                .toArray();
+        return jdbc.query(sql, ROW_MAPPER, args);
     }
 
     /** Returns true iff a matching, still-leased job was found and extended. */
@@ -330,6 +354,20 @@ public class ScanJobRepository {
      * exhausted, see {@link org.freedonia.bloodhound.common.scanmodule.HostUnreachableException}),
      * or empty if no matching claimed job was found (unknown id / wrong worker / already
      * terminal).
+     *
+     * <p>A security review found the two {@code UPDATE}s below used to write by {@code id} alone,
+     * unlike {@link #complete}'s single guarded {@code UPDATE} - the initial {@code SELECT} did
+     * check {@code claimed_by}/status, but nothing stopped the job's state from changing between
+     * that read and the later write. Under Postgres read committed, a late {@code fail()} call
+     * (holding only the worker key, not even this specific job's current lease) could read a stale
+     * CLAIMED/RUNNING row, then block on its own {@code UPDATE} behind {@link #result}'s
+     * transaction, and after that one committed COMPLETE, overwrite it back to PENDING/FAILED -
+     * requeuing a job that already succeeded and already has findings written. The same shape
+     * could overwrite a CANCELLED row from {@link #cancelNonTerminalForRun}. Both {@code UPDATE}s
+     * now repeat the identical {@code id = ? AND claimed_by = ? AND status IN (...)} guard the
+     * {@code SELECT} used, and a 0-row result (the job moved out from under this call) is treated
+     * exactly like "no matching claimed job was found" rather than silently assumed to have
+     * applied.
      */
     public Optional<String> fail(UUID id, String workerId, String errorDetail, boolean confirmedUnreachable) {
         Optional<ScanJob> jobOpt = jdbc.query(
@@ -353,28 +391,32 @@ public class ScanJobRepository {
             // number (30s, 120s, capped at 300s) - distinct from the lease reaper's own
             // retry path below, which handles jobs that got stuck/timed out rather than
             // ones that explicitly reported failure.
-            jdbc.update(
+            int updated = jdbc.update(
                     "UPDATE scan_jobs SET status = 'PENDING', claimed_by = NULL, claimed_at = NULL, "
                             + "lease_expires_at = NULL, attempt_count = ?, error_detail = ?, "
-                            + "run_after = now() + make_interval(secs => ?) WHERE id = ?",
+                            + "run_after = now() + make_interval(secs => ?) "
+                            + "WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
                     nextAttempt,
                     errorDetail,
                     backoffSeconds(nextAttempt),
-                    id);
-            return Optional.of("PENDING");
+                    id,
+                    workerId);
+            return updated == 1 ? Optional.of("PENDING") : Optional.empty();
         }
         // A host confirmed unreachable (DNS resolution failure) is a correct scan outcome, not a
         // failure - still retried the same as any other error above in case it's a transient DNS
         // blip, but once retries are exhausted it lands on its own terminal status so
         // ScanRunService#checkAndCompleteRun can exclude it from PARTIAL_FAILURE.
         String terminalStatus = confirmedUnreachable ? "UNREACHABLE" : "FAILED";
-        jdbc.update(
-                "UPDATE scan_jobs SET status = ?, attempt_count = ?, error_detail = ? WHERE id = ?",
+        int updated = jdbc.update(
+                "UPDATE scan_jobs SET status = ?, attempt_count = ?, error_detail = ? "
+                        + "WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
                 terminalStatus,
                 nextAttempt,
                 errorDetail,
-                id);
-        return Optional.of(terminalStatus);
+                id,
+                workerId);
+        return updated == 1 ? Optional.of(terminalStatus) : Optional.empty();
     }
 
     /**
@@ -388,6 +430,35 @@ public class ScanJobRepository {
         jdbc.update(
                 "UPDATE scan_jobs SET status = 'CANCELLED' WHERE scan_run_id = ? AND status IN ('PENDING', 'CLAIMED', 'RUNNING')",
                 scanRunId);
+    }
+
+    /**
+     * A security review found that revoking Tier 2 authorization (or retyping a target away from
+     * {@code OWN}) flipped {@code authorization_status} but left any already-queued deep-scan jobs
+     * (PORT_SCAN_DEEP/ZAP_ACTIVE_SCAN/NUCLEI_SCAN/BUCKET_BRUTE_FORCE) sitting in the queue exactly
+     * as before - {@link #claim} never joined {@code targets.authorization_status} at all, so they
+     * would still get picked up and run to completion. Called from
+     * {@code TargetAuthorizationController#revoke} and from {@code TargetController#update}'s
+     * away-from-{@code OWN} transition, alongside the existing {@code revokeCurrent} call each
+     * already makes. A job a worker has already claimed keeps running - same documented limitation
+     * {@link #cancelNonTerminalForRun} already has, this queue has no way to interrupt work already
+     * handed out - but nothing new gets claimed once this runs, and {@link #claim} below now also
+     * refuses these module types server-side regardless of timing.
+     */
+    public void cancelNonTerminalTier2ForTarget(UUID targetId, List<String> tier2ModuleTypes) {
+        if (tier2ModuleTypes.isEmpty()) {
+            return;
+        }
+        String placeholders = tier2ModuleTypes.stream().map(m -> "?").collect(java.util.stream.Collectors.joining(","));
+        Object[] args = new Object[tier2ModuleTypes.size() + 1];
+        args[0] = targetId;
+        for (int i = 0; i < tier2ModuleTypes.size(); i++) {
+            args[i + 1] = tier2ModuleTypes.get(i);
+        }
+        jdbc.update(
+                "UPDATE scan_jobs SET status = 'CANCELLED' WHERE target_id = ? "
+                        + "AND module_type IN (" + placeholders + ") AND status IN ('PENDING', 'CLAIMED', 'RUNNING')",
+                args);
     }
 
     /** 30s after the 1st failure, 120s after the 2nd, capped at 300s for any later attempt. */

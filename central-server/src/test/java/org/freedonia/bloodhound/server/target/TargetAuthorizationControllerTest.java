@@ -14,6 +14,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
@@ -23,8 +25,9 @@ class TargetAuthorizationControllerTest {
     private final TargetRepository targetRepository = mock(TargetRepository.class);
     private final TargetAuthorizationRepository authorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
-    private final TargetAuthorizationController controller =
-            new TargetAuthorizationController(targetRepository, authorizationRepository, auditLogRepository);
+    private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final TargetAuthorizationController controller = new TargetAuthorizationController(
+            targetRepository, authorizationRepository, auditLogRepository, scanJobRepository);
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID targetId = UUID.randomUUID();
@@ -149,6 +152,20 @@ class TargetAuthorizationControllerTest {
 
         assertThat(response.authorizationStatus()).isEqualTo("UNAUTHORIZED");
         verify(authorizationRepository).revokeCurrent(targetId, admin.userId());
+    }
+
+    @Test
+    void revoke_cancelsAnyAlreadyQueuedTier2Jobs() {
+        // A security review found revoke() flipped authorization_status but left already-queued
+        // deep-scan jobs (PORT_SCAN_DEEP/ZAP_ACTIVE_SCAN/NUCLEI_SCAN/BUCKET_BRUTE_FORCE) sitting in
+        // the queue unchanged - they would still get claimed and run.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target("AUTHORIZED")));
+        when(targetRepository.findById(targetId)).thenReturn(Optional.of(target("UNAUTHORIZED")));
+        when(authorizationRepository.findHistory(targetId)).thenReturn(List.of());
+
+        controller.revoke(targetId, admin);
+
+        verify(scanJobRepository).cancelNonTerminalTier2ForTarget(targetId, ScanRunService.allTier2ModuleTypes());
     }
 
     @Test

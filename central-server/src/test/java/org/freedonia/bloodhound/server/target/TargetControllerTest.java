@@ -22,6 +22,7 @@ import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
 import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
+import org.freedonia.bloodhound.server.target.dto.UpdateTargetRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -209,5 +210,34 @@ class TargetControllerTest {
                 controller.createBulk(new BulkCreateTargetsRequest(List.of("example.com"), "OWN"), admin);
 
         assertThat(response.getStatusCode().value()).isEqualTo(201);
+    }
+
+    @Test
+    void update_retypingAwayFromOwn_revokesAuthorizationAndCancelsQueuedTier2Jobs() {
+        // A security review found "authorize as OWN, then PATCH the type to COMPETITOR" revoked
+        // authorization_status (already covered elsewhere) but left any already-queued deep-scan
+        // jobs sitting in the queue unchanged - they would still get claimed and run.
+        UUID targetId = UUID.randomUUID();
+        Target before = target(targetId, "example.com");
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(java.util.Optional.of(before));
+        when(targetRepository.findById(targetId)).thenReturn(java.util.Optional.of(before));
+
+        controller(100).update(targetId, new UpdateTargetRequest(null, null, null, "COMPETITOR"), admin);
+
+        verify(targetAuthorizationRepository).revokeCurrent(targetId, admin.userId());
+        verify(scanJobRepository).cancelNonTerminalTier2ForTarget(targetId, ScanRunService.allTier2ModuleTypes());
+    }
+
+    @Test
+    void update_retypingButStayingOwn_doesNotRevokeOrCancelAnything() {
+        UUID targetId = UUID.randomUUID();
+        Target before = target(targetId, "example.com");
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(java.util.Optional.of(before));
+        when(targetRepository.findById(targetId)).thenReturn(java.util.Optional.of(before));
+
+        controller(100).update(targetId, new UpdateTargetRequest(null, null, null, "OWN"), admin);
+
+        verify(targetAuthorizationRepository, never()).revokeCurrent(any(), any());
+        verify(scanJobRepository, never()).cancelNonTerminalTier2ForTarget(any(), any());
     }
 }
