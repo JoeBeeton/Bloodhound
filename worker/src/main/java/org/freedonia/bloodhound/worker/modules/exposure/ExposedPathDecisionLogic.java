@@ -273,6 +273,12 @@ public final class ExposedPathDecisionLogic {
             findings.add(finding("EXPOSURE_REDIS_UNAUTH", hostname + ":6379", Map.of()));
         }
 
+        for (Map.Entry<Integer, String> entry : result.jdwpResponses().entrySet()) {
+            if (isJdwpPositive(entry.getValue())) {
+                findings.add(finding("EXPOSURE_JDWP_UNAUTH", hostname + ":" + entry.getKey(), Map.of()));
+            }
+        }
+
         // No soft-404/baseline-dupe guard needed here, same reasoning as the alt-port checks
         // above: each of these URLs is unique to the script it was derived from, and the positive
         // signature (a genuine source-map JSON shape) is specific enough on its own that a generic
@@ -521,6 +527,11 @@ public final class ExposedPathDecisionLogic {
         return redisResponse != null && redisResponse.startsWith("$") && redisResponse.contains("redis_version:");
     }
 
+    /** JDWP's own handshake has no auth concept at all - an exact echo of the sent string is the only possible "yes" signal. */
+    static boolean isJdwpPositive(String jdwpResponse) {
+        return "JDWP-Handshake".equals(jdwpResponse);
+    }
+
     private static RawFinding finding(String ruleId, String affectedAsset, ProbeResponse evidenceSource) {
         // "url" - a live report asked for exactly this: the finding said an API schema was
         // exposed but gave no way to see where, forcing a manual guess-and-check of every
@@ -651,6 +662,13 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_REDIS_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Redis exposed without authentication",
                     "A Redis instance answered INFO without authentication, allowing full read/write access to stored data.")),
+            Map.entry("EXPOSURE_JDWP_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Java Debug Wire Protocol (JDWP) exposed",
+                    "A JDWP debug listener is reachable on one of its conventional debug ports (5005 or 8000). "
+                            + "JDWP has no authentication concept at all by protocol design - anyone who can "
+                            + "connect can invoke arbitrary methods and inject arbitrary bytecode into the "
+                            + "running JVM, equivalent to direct, unauthenticated remote code execution. A "
+                            + "well-known public exploit module targets exactly this.")),
             Map.entry("EXPOSURE_CONSUL_UNAUTH", new RuleMeta(Severity.HIGH,
                     "Consul API exposed without authentication",
                     "The Consul HTTP API is reachable without authentication.")),
