@@ -220,6 +220,12 @@ public final class ExposedPathDecisionLogic {
         // in front) would instead return an auth challenge or error page, never this shape.
         addAltPortIfMatches(findings, hostname + ":9090", r, "EXPOSURE_PROMETHEUS_SERVER_UNAUTH",
                 b -> b.contains("\"status\":\"success\"") && b.contains("scrape_configs"));
+        // Solr's /admin/info/system response, when reachable, nests both a "solr_home" path and
+        // a "lucene" object - a combination specific to a real Solr admin API response, not a
+        // generic JSON error page. A hardened install (behind an auth-requiring reverse proxy)
+        // returns a 401/403 challenge instead.
+        addAltPortIfMatches(findings, hostname + ":8983", r, "EXPOSURE_SOLR_ADMIN_UNAUTH",
+                b -> b.contains("\"solr_home\"") && b.contains("\"lucene\""));
         // etcd's gRPC-gateway response envelope always nests a "header" object whose
         // "cluster_id" field is rendered as a JSON STRING (etcd's own int64-as-string encoding
         // quirk, e.g. "cluster_id":"14841639068965178418") - a combination specific enough to
@@ -660,6 +666,14 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_ELASTICSEARCH_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "Elasticsearch exposed without authentication",
                     "An Elasticsearch HTTP API is reachable without authentication, allowing full access to indexed data.")),
+            Map.entry("EXPOSURE_SOLR_ADMIN_UNAUTH", new RuleMeta(Severity.CRITICAL,
+                    "Apache Solr admin API exposed without authentication",
+                    "The Apache Solr admin API is reachable on its default port (8983) without authentication. "
+                            + "Solr has no built-in authentication enabled by default, and its history includes "
+                            + "multiple RCE-class CVEs reachable once any admin API access is available (e.g. "
+                            + "CVE-2017-12629 XXE+RCE via the Config API, CVE-2019-0193 RCE via the "
+                            + "DataImportHandler) - bare unauthenticated admin access is itself the meaningful "
+                            + "finding, independent of any one specific CVE.")),
             Map.entry("EXPOSURE_ETCD_UNAUTH", new RuleMeta(Severity.CRITICAL,
                     "etcd exposed without authentication",
                     "An etcd instance's v3 KV API is reachable on its default port (2379) without authentication, "
