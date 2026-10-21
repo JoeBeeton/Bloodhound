@@ -22,6 +22,43 @@ const VIEW_MODE_LABELS: Record<ViewMode, string> = {
   leaderboard: "Leaderboard",
 };
 
+// A competitor-UX review (UpGuard, which lets a comparison span the past month/quarter/year)
+// found this page had no equivalent at all - every view always plotted a target's ENTIRE
+// available history, with no way to zoom to a recent window. "all" (the default) preserves the
+// page's prior behavior exactly, so existing shared/bookmarked URLs keep showing what they always
+// showed; the filter is purely additive.
+const RANGES = ["30d", "90d", "1y", "all"] as const;
+type RangeFilter = (typeof RANGES)[number];
+const RANGE_LABELS: Record<RangeFilter, string> = {
+  "30d": "30d",
+  "90d": "90d",
+  "1y": "1y",
+  all: "All time",
+};
+const RANGE_DAYS: Record<Exclude<RangeFilter, "all">, number> = {
+  "30d": 30,
+  "90d": 90,
+  "1y": 365,
+};
+
+/** Only Trend (which plots every point) and Leaderboard's "change since" delta (which anchors on
+ * the window's own first point) are actually affected by the range - Categories/Findings always
+ * read just the latest snapshot regardless, so filtering history before it reaches any view keeps
+ * that correct for free rather than needing each view to know about ranges itself. */
+function applyRange(
+  series: CompareSeries[],
+  range: RangeFilter,
+): CompareSeries[] {
+  if (range === "all") return series;
+  const cutoffMs = Date.now() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000;
+  return series.map((s) => ({
+    ...s,
+    history: s.history.filter(
+      (h) => new Date(h.computedAt).getTime() >= cutoffMs,
+    ),
+  }));
+}
+
 async function fetchTargets(): Promise<Target[]> {
   const res = await apiFetch("/api/v1/targets");
   if (!res.ok) throw new Error("Failed to load targets.");
@@ -81,6 +118,10 @@ export function ComparePage() {
   const viewMode: ViewMode = VIEW_MODES.includes(urlView as ViewMode)
     ? (urlView as ViewMode)
     : "trend";
+  const urlRange = searchParams.get("range");
+  const range: RangeFilter = RANGES.includes(urlRange as RangeFilter)
+    ? (urlRange as RangeFilter)
+    : "all";
 
   // Absent from the URL entirely: default-select OWN targets. An explicit (even empty)
   // targetIds param always wins, so a deliberately-cleared selection stays cleared on reload
@@ -161,6 +202,17 @@ export function ComparePage() {
       (prev) => {
         const params = new URLSearchParams(prev);
         view === "trend" ? params.delete("view") : params.set("view", view);
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
+  function setRange(next: RangeFilter) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        next === "all" ? params.delete("range") : params.set("range", next);
         return params;
       },
       { replace: true },
@@ -276,6 +328,34 @@ export function ComparePage() {
                 ))}
               </div>
 
+              {/* Only Trend (which plots every point) and Leaderboard (whose "change" column
+                  anchors on the window's own first point) are actually affected by range -
+                  Categories/Findings always read just the latest snapshot, so the control is
+                  hidden there rather than shown doing nothing, same reasoning as the score-mode
+                  toggle's own conditional below. */}
+              {(viewMode === "trend" || viewMode === "leaderboard") && (
+                <div
+                  role="group"
+                  aria-label="Time range"
+                  className="inline-flex rounded border border-neon-cyan/20 bg-panel/60 p-0.5 font-mono text-xs uppercase tracking-widest"
+                >
+                  {RANGES.map((r) => (
+                    <button
+                      key={r}
+                      aria-pressed={range === r}
+                      onClick={() => setRange(r)}
+                      className={`rounded px-3 py-1.5 transition ${
+                        range === r
+                          ? "bg-neon-cyan/15 text-neon-cyan"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {RANGE_LABELS[r]}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* findingCounts carries no tier1/full split (see CompareFindingsChart's own doc
                   comment) - this toggle has no effect on that view, so it's hidden there rather
                   than shown doing nothing. */}
@@ -335,6 +415,11 @@ export function ComparePage() {
                 targetIds.length > 0 || portfolioIds.length > 0
                   ? (compareQuery.data ?? [])
                   : [];
+              // Categories/Findings always read just the latest snapshot regardless of range (see
+              // the range control's own conditional above) - ranging their input could otherwise
+              // wrongly show "no history" when the most recent real scan simply predates the
+              // selected window, rather than not existing at all.
+              const rangedSeries = applyRange(activeSeries, range);
               switch (viewMode) {
                 case "categories":
                   return (
@@ -348,13 +433,13 @@ export function ComparePage() {
                 case "leaderboard":
                   return (
                     <CompareLeaderboard
-                      series={activeSeries}
+                      series={rangedSeries}
                       mode={scoreMode}
                     />
                   );
                 default:
                   return (
-                    <CompareTrendChart series={activeSeries} mode={scoreMode} />
+                    <CompareTrendChart series={rangedSeries} mode={scoreMode} />
                   );
               }
             })()}

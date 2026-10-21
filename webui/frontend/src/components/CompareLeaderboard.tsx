@@ -107,7 +107,14 @@ export function CompareLeaderboard({
           {rows.map((row, i) => (
             <tr
               key={row.series.targetId}
-              className="border-b border-neon-cyan/10 last:border-0"
+              // A competitor-UX review (ShadowMap's own benchmark view ranks peers with "your
+              // organization" visually picked out) found a plain ranked list left OWN targets no
+              // more visible than any competitor's row once the list got long - a faint cyan wash
+              // (not a border, which would compete with the row separators) now sets them apart
+              // without needing a legend to explain it.
+              className={`border-b border-neon-cyan/10 last:border-0 ${
+                row.series.targetType === "OWN" ? "bg-neon-cyan/5" : ""
+              }`}
             >
               <td className="px-4 py-3 text-slate-500">{i + 1}</td>
               <td className="px-4 py-3">
