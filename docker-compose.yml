@@ -10,9 +10,19 @@
 #   app_net      central-server, worker, webui - job-queue/API traffic. Not
 #                internal: central-server and worker both need real internet
 #                egress (CT-log/crt.sh lookups, scanning real external hosts).
-#   scan_net     worker, zap, screenshotter - the Tier 2/typosquat sidecars'
-#                control-plane network. juice-shop is deliberately NOT on
-#                this network.
+#   scan_net     worker, zap - ZAP's control-plane network. juice-shop is
+#                deliberately NOT on this network.
+#   screenshot_net  worker, screenshotter only. A security review found
+#                screenshotter shared scan_net with zap - the typosquat
+#                monitor screenshots newly-registered lookalike domains, which
+#                are by definition attacker-controlled, so a page it loads
+#                could ask Chromium to connect to zap:8080 (ZAP requires its
+#                own api.key to do anything, but network-level reachability to
+#                the active-scan engine from a page rendering untrusted HTML
+#                is exactly the class of risk this segmentation exists to
+#                remove everywhere else). Its own dedicated network means
+#                screenshotter and zap no longer share any Docker network at
+#                all - Chromium cannot even resolve "zap" by name from here.
 #   targets_net  worker, zap, juice-shop, juiceshop-proxy - the practice
 #                target's own network. internal:true: none of juice-shop,
 #                juiceshop-proxy, or a compromised instance of either has any
@@ -41,6 +51,7 @@ networks:
     internal: true
   app_net:
   scan_net:
+  screenshot_net:
   targets_net:
     internal: true
   idp_net:
@@ -196,6 +207,7 @@ services:
     networks:
       - app_net
       - scan_net
+      - screenshot_net
       - targets_net
 
   # Tier 2 active-scan engine (OWASP ZAP), REST API only - no host port, and
@@ -252,14 +264,15 @@ services:
   # the same reasoning already applied to zap above - a heavy external
   # rendering engine stays out of the JVM image entirely, worker just calls
   # its REST API. Only ever screenshots real (or candidate-typosquat) public
-  # domains, never juice-shop, so scan_net alone - not targets_net - is
-  # sufficient reachability.
+  # domains, never juice-shop, so screenshot_net alone - not targets_net - is
+  # sufficient reachability. On its own dedicated network (not scan_net) so it
+  # shares no network with zap at all - see the networks: block's own comment.
   screenshotter:
     image: ghcr.io/browserless/chromium
     environment:
       TOKEN: ${SCREENSHOTTER_API_KEY}
     networks:
-      - scan_net
+      - screenshot_net
     # Same incident as zap's own comment above - this had neither a restart policy nor a
     # healthcheck, so a `docker compose ps` after it silently died gave no signal at all (not even
     # a stale "healthy"/"unhealthy" - browserless/chromium defines no HEALTHCHECK of its own,
