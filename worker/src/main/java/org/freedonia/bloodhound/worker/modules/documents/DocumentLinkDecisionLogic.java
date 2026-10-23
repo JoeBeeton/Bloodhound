@@ -84,6 +84,21 @@ public final class DocumentLinkDecisionLogic {
      * cost of not treating two independent subdomains of a shared multi-part public suffix (e.g.
      * "a.example.co.uk" and "b.example.co.uk") as the same site - a narrower, not broader, result
      * than the eTLD+1 comparison would give.
+     *
+     * <p>A rules-parity review found the un-bounded reverse direction a real bug, not just an
+     * eTLD+1 imprecision: {@code baseHost.endsWith("." + linkHost)} with no limit on how many
+     * labels get peeled lets an attacker-controlled href on the target's own homepage name
+     * ANY dot-suffix of the real host - including a bare public suffix. A page at
+     * "www.example.com" linking {@code href="https://com/malicious.pdf"} would have this method
+     * return true ("www.example.com".endsWith(".com")), downloading and parsing a document from a
+     * domain the attacker (anyone who can register under that TLD) controls, not the target's own
+     * site. Bounded to peeling exactly one label - the stated legitimate case (the apex and its
+     * immediate subdomain treated as the same site, in either direction) still works; an
+     * arbitrary-depth/public-suffix match in the risky (reverse) direction no longer does. The
+     * forward direction (linkHost an arbitrary-depth subdomain of baseHost) is left unbounded on
+     * purpose - it was never the bug: a deeper, more-specific name under the real target site
+     * carries no equivalent risk, since it can never resolve to a shorter public suffix the
+     * attacker doesn't control.
      */
     private static boolean isSameSite(String linkHost, String baseHost) {
         if (linkHost == null || baseHost == null) {
@@ -91,7 +106,19 @@ public final class DocumentLinkDecisionLogic {
         }
         String a = linkHost.toLowerCase(Locale.ROOT);
         String b = baseHost.toLowerCase(Locale.ROOT);
-        return a.equals(b) || a.endsWith("." + b) || b.endsWith("." + a);
+        if (a.equals(b) || a.endsWith("." + b)) {
+            return true;
+        }
+        return isOneLabelSubdomainOf(b, a);
+    }
+
+    /** True iff {@code host} is exactly {@code "<one-label>." + ofParent}, not an arbitrary-depth descendant. */
+    private static boolean isOneLabelSubdomainOf(String host, String ofParent) {
+        if (!host.endsWith("." + ofParent)) {
+            return false;
+        }
+        String leadingLabels = host.substring(0, host.length() - ofParent.length() - 1);
+        return !leadingLabels.isEmpty() && leadingLabels.indexOf('.') == -1;
     }
 
     private static String extensionOf(String href) {

@@ -48,6 +48,24 @@ class DocumentLinkDecisionLogicTest {
     }
 
     @Test
+    void absoluteLink_barePublicSuffixOfBaseHost_rejected() {
+        // A rules-parity review found the old unbounded reverse-suffix check let a page at
+        // "www.example.com" treat ANY dot-suffix of its own host as the same site, including a
+        // bare TLD: "www.example.com".endsWith(".com") is true, so href="https://com/malware.pdf"
+        // would have been downloaded and parsed as if it were the target's own document.
+        String html = "<a href=\"https://com/malware.pdf\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls("https://www.example.com/", html)).isEmpty();
+    }
+
+    @Test
+    void absoluteLink_grandparentDomainOfADeepSubdomainTarget_rejected() {
+        // Same bug, a less extreme shape: the reverse direction is bounded to peeling exactly one
+        // label, so a two-level-deep page can't reach all the way up to its grandparent domain.
+        String html = "<a href=\"https://example.com/handbook.pdf\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls("https://a.blog.example.com/", html)).isEmpty();
+    }
+
+    @Test
     void absoluteLink_parentDomainOfASubdomainTarget_kept() {
         // The reverse subdomain relationship also counts as the same site - a page on
         // "blog.example.com" linking back to its own apex "example.com" is the same legitimate
@@ -55,6 +73,16 @@ class DocumentLinkDecisionLogicTest {
         String html = "<a href=\"https://example.com/handbook.pdf\">Report</a>";
         assertThat(DocumentLinkDecisionLogic.extractDocumentUrls("https://blog.example.com/", html))
                 .containsExactly("https://example.com/handbook.pdf");
+    }
+
+    @Test
+    void absoluteLink_deeplyNestedSubdomainOfBaseHost_stillKept() {
+        // The forward direction (linkHost a subdomain of baseHost, however deep) is deliberately
+        // left unbounded - it was never the bug, since a more-specific name under the real site
+        // carries no equivalent risk. Only the reverse direction is bounded to one label.
+        String html = "<a href=\"https://assets.cdn.example.com/report.docx\">Report</a>";
+        assertThat(DocumentLinkDecisionLogic.extractDocumentUrls(HOMEPAGE, html))
+                .containsExactly("https://assets.cdn.example.com/report.docx");
     }
 
     @Test
