@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.xbill.DNS.ARecord;
 import org.xbill.DNS.DClass;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.Record;
+import org.xbill.DNS.TXTRecord;
 import org.xbill.DNS.TextParseException;
 
 /**
@@ -25,6 +27,12 @@ class DnsZoneFetcherTest {
 
     private static Record record(String hostname) throws TextParseException, UnknownHostException {
         return new ARecord(Name.fromString(hostname + "."), DClass.IN, 300, InetAddress.getByName("192.0.2.1"));
+    }
+
+    /** ~2.6KB on the wire (ten 255-byte TXT strings) - a few thousand of these cross MAX_AXFR_BYTES long before MAX_AXFR_RECORDS would. */
+    private static Record bigRecord(String hostname) throws TextParseException {
+        return new TXTRecord(
+                Name.fromString(hostname + "."), DClass.IN, 300, java.util.Collections.nCopies(10, "x".repeat(255)));
     }
 
     @Test
@@ -49,6 +57,24 @@ class DnsZoneFetcherTest {
         // The cap-exceeding record itself is never added - the transfer stops exactly at the cap,
         // not one past it.
         assertThat(handler.records).hasSize(DnsZoneFetcher.MAX_AXFR_RECORDS);
+    }
+
+    /**
+     * A rules-parity review found the record-count cap alone assumes every record is small -
+     * a handful of oversized records (TXT/RRSIG, say) could exhaust significant memory well
+     * before hitting 50,000 of them. This proves the byte cap trips first in exactly that shape.
+     */
+    @Test
+    void exceedingTheByteCap_throwsBeforeEverReachingTheRecordCountCap() throws Exception {
+        DnsZoneFetcher.CappedAxfrHandler handler = new DnsZoneFetcher.CappedAxfrHandler();
+
+        assertThatThrownBy(() -> {
+            for (int i = 0; i < DnsZoneFetcher.MAX_AXFR_RECORDS; i++) {
+                handler.handleRecord(bigRecord(i + ".example.com"));
+            }
+        }).isInstanceOf(DnsZoneFetcher.AxfrRecordCapExceeded.class);
+
+        assertThat(handler.records.size()).isLessThan(DnsZoneFetcher.MAX_AXFR_RECORDS);
     }
 
     @Test

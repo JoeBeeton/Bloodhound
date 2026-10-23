@@ -15,6 +15,7 @@ import org.xbill.DNS.Name;
 import org.xbill.DNS.NSRecord;
 import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
+import org.xbill.DNS.Section;
 import org.xbill.DNS.SimpleResolver;
 import org.xbill.DNS.Type;
 import org.xbill.DNS.ZoneTransferException;
@@ -196,6 +197,19 @@ public class DnsZoneFetcher {
     static final int MAX_AXFR_RECORDS = 50_000;
 
     /**
+     * A rules-parity review found the record-count cap above assumes every record is small -
+     * 50,000 records of unbounded SIZE EACH (a handful of maliciously oversized TXT/RRSIG
+     * records, say) can still exhaust significant memory well before hitting that count. This is
+     * the backstop: wire-format byte count (what actually occupies memory/network, not the
+     * record count), summed as records arrive, same "stop the read itself" shape as the count
+     * cap right above it. 10MB is generous for any zone this check has a legitimate reason to
+     * fully buffer (confirming zone-transfer is allowed, not archiving the zone), while still
+     * bounding a hostile nameserver well below anything that threatens the worker's 2G cgroup
+     * limit even across several concurrent scans.
+     */
+    static final int MAX_AXFR_BYTES = 10_000_000;
+
+    /**
      * Unchecked so it can propagate straight out of {@link ZoneTransferIn.ZoneTransferHandler#handleRecord}
      * (which only declares the checked {@link ZoneTransferException}) past dnsjava's internal
      * transfer loop to {@link #attemptAxfr}'s own catch below, without dnsjava mistaking it for a
@@ -210,6 +224,7 @@ public class DnsZoneFetcher {
 
     static final class CappedAxfrHandler implements ZoneTransferIn.ZoneTransferHandler {
         final List<Record> records = new ArrayList<>();
+        private long totalBytes = 0;
 
         @Override
         public void startAXFR() {}
@@ -226,6 +241,10 @@ public class DnsZoneFetcher {
         @Override
         public void handleRecord(Record record) {
             if (records.size() >= MAX_AXFR_RECORDS) {
+                throw new AxfrRecordCapExceeded();
+            }
+            totalBytes += record.toWire(Section.ANSWER).length;
+            if (totalBytes > MAX_AXFR_BYTES) {
                 throw new AxfrRecordCapExceeded();
             }
             records.add(record);
