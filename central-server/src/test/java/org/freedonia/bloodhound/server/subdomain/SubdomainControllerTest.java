@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -197,6 +198,24 @@ class SubdomainControllerTest {
         assertThatThrownBy(() -> controller.add(
                         targetId, new SubdomainController.AddSubdomainRequest("evil.com"), principal))
                 .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void add_malformedHostname_rejectedBeforeTheScopeCheck() {
+        // A security review found this endpoint had no hostname-shape check at all - this exact
+        // value's host (per java.net.URI) is "central-server", which SafeAddressValidator's
+        // resolve-and-check would wave through as a never-resolving name while inScope's suffix
+        // check never even applied, since "example.com" is still a trailing match on the raw
+        // string. Rejected here before any of that runs.
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+
+        assertThatThrownBy(() -> controller.add(
+                        targetId,
+                        new SubdomainController.AddSubdomainRequest("central-server#.example.com"),
+                        principal))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(400));
+        verify(subdomainRepository, never()).upsert(any(), any(), any(), any(), any());
     }
 
     @Test
