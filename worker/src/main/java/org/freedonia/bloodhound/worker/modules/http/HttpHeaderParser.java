@@ -58,14 +58,21 @@ public final class HttpHeaderParser {
         // key.
         for (String setCookie : result.setCookieHeaders()) {
             String asset = hostname + ": " + cookieName(setCookie);
-            String lower = setCookie.toLowerCase();
-            if (!lower.contains("secure")) {
+            // A rules-parity review found the old whole-line substring checks
+            // (lower.contains("secure") etc.) could be suppressed by a cookie NAME or VALUE that
+            // merely happens to contain the flag's text - e.g. "session=secure_abc123; HttpOnly"
+            // (no actual Secure attribute) or "insecure_flag=1; Secure" (the real attribute IS
+            // present, but even the fixed case would've gotten lucky there) - matched by
+            // hasCookieAttribute below, which only looks at the ;-separated attribute list after
+            // the cookie's own name=value pair, not the whole raw header line.
+            boolean hasSecure = hasCookieAttribute(setCookie, "secure");
+            if (!hasSecure) {
                 findings.add(finding("COOKIE_MISSING_SECURE_FLAG", Severity.MEDIUM, asset, Map.of("cookie", setCookie)));
             }
-            if (!lower.contains("httponly")) {
+            if (!hasCookieAttribute(setCookie, "httponly")) {
                 findings.add(finding("COOKIE_MISSING_HTTPONLY_FLAG", Severity.MEDIUM, asset, Map.of("cookie", setCookie)));
             }
-            if (!lower.contains("samesite")) {
+            if (!hasCookieAttribute(setCookie, "samesite")) {
                 findings.add(finding("COOKIE_MISSING_SAMESITE", Severity.LOW, asset, Map.of("cookie", setCookie)));
             }
             // Only worth flagging once Secure is already present - a cookie missing Secure
@@ -74,7 +81,7 @@ public final class HttpHeaderParser {
             // stronger of the two - the browser refuses to even accept a same-named cookie set
             // by a subdomain - but __Secure- alone is still worth crediting as a step up from a
             // bare Secure cookie.
-            if (lower.contains("secure")) {
+            if (hasSecure) {
                 String name = cookieName(setCookie);
                 if (!name.startsWith("__Host-") && !name.startsWith("__Secure-")) {
                     findings.add(finding(
@@ -104,6 +111,25 @@ public final class HttpHeaderParser {
         int semi = setCookieHeader.indexOf(';');
         int end = semi > 0 ? semi : setCookieHeader.length();
         return eq > 0 && eq < end ? setCookieHeader.substring(0, eq).trim() : setCookieHeader.substring(0, end).trim();
+    }
+
+    /**
+     * True iff one of this cookie's {@code ;}-separated attributes (never the leading
+     * name=value pair at index 0, which is not an attribute and could coincidentally contain the
+     * flag's own text in the cookie's name or value) has this exact key, case-insensitive -
+     * matches both a bare boolean flag ("Secure") and a valued one ("SameSite=Lax").
+     */
+    private static boolean hasCookieAttribute(String setCookieHeader, String attributeName) {
+        String[] parts = setCookieHeader.split(";");
+        for (int i = 1; i < parts.length; i++) {
+            String trimmed = parts[i].trim();
+            int eq = trimmed.indexOf('=');
+            String key = (eq >= 0 ? trimmed.substring(0, eq) : trimmed).trim();
+            if (key.equalsIgnoreCase(attributeName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String cookieDomainAttribute(String setCookieHeader) {
@@ -154,22 +180,21 @@ public final class HttpHeaderParser {
      * not just ones the site actually trusts). A gap this module had: only presence was checked,
      * never policy quality.
      */
+    /**
+     * A rules-parity review found unsafe-inline/unsafe-eval checked against the WHOLE header
+     * string, conflating "style-src 'unsafe-inline'" (inline CSS - a common, comparatively low-
+     * risk allowance plenty of legitimate sites use) with "script-src 'unsafe-inline'" (inline
+     * script execution - the actual XSS-relevant weakness). A policy with ONLY the former would
+     * be flagged exactly as if it allowed arbitrary inline script. Fixed the same way the
+     * existing per-directive "*" check already works below: split on ';' and look at each
+     * directive's own value list, scoped to the directives that actually control script
+     * execution (script-src, default-src as its fallback) - never style-src.
+     */
     static List<RawFinding> cspWeakPolicyFindings(String hostname, String cspHeaderValue) {
         if (cspHeaderValue == null) {
             return List.of();
         }
         List<String> weaknesses = new ArrayList<>();
-        if (cspHeaderValue.contains("unsafe-inline")) {
-            weaknesses.add("unsafe-inline");
-        }
-        if (cspHeaderValue.contains("unsafe-eval")) {
-            weaknesses.add("unsafe-eval");
-        }
-        // A directive's own value list, not the whole header: "img-src *" is a common, low-risk
-        // allowance (any image host) and must not be confused with "script-src *"/"default-src *"
-        // (any script from anywhere) - splitting on ';' then checking each directive's value list
-        // for a bare "*" token (not "*.example.com", a legitimate wildcard subdomain allowance)
-        // keeps this check from false-positiving on the common, benign case.
         for (String directive : cspHeaderValue.split(";")) {
             String trimmed = directive.trim();
             if (trimmed.isEmpty()) {
@@ -181,9 +206,16 @@ public final class HttpHeaderParser {
                 continue;
             }
             for (int i = 1; i < parts.length; i++) {
-                if (parts[i].equals("*")) {
+                String value = parts[i];
+                // "img-src *" is a common, low-risk allowance (any image host) and must not be
+                // confused with "script-src *"/"default-src *" (any script from anywhere) - a
+                // bare "*" token, not "*.example.com", a legitimate wildcard subdomain allowance.
+                if (value.equals("*")) {
                     weaknesses.add(directiveName + ": *");
-                    break;
+                } else if (value.equals("'unsafe-inline'")) {
+                    weaknesses.add(directiveName + ": unsafe-inline");
+                } else if (value.equals("'unsafe-eval'")) {
+                    weaknesses.add(directiveName + ": unsafe-eval");
                 }
             }
         }
