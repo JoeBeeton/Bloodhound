@@ -189,4 +189,18 @@ class PortScanDecisionLogicTest {
         assertThat(ruleIds(findings)).containsExactly("NETWORK_PROMISCUOUS_PORT_RESPONSE");
         assertThat(findings.get(0).evidence().get("openAdminPorts")).isEqualTo(List.of(445, 3306, 3389, 5432, 27017));
     }
+
+    /**
+     * A rules-parity review found SSH (22) was scanned but produced no finding either way when
+     * open - unlike Docker/Elasticsearch, which get a real application-level probe elsewhere, SSH
+     * had no Tier 1 signal at all.
+     */
+    @Test
+    void sshPort_flaggedAsReachable_informational() {
+        List<RawFinding> findings = PortScanDecisionLogic.decide("example.com", ipv4(List.of(22)));
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("NETWORK_SSH_PORT_REACHABLE");
+        assertThat(findings.get(0).severity().name()).isEqualTo("INFO");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("example.com:22");
+    }
 }

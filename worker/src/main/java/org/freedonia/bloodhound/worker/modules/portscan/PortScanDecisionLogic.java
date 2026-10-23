@@ -49,6 +49,20 @@ public final class PortScanDecisionLogic {
     static final Set<Integer> CLEARTEXT_MAIL_PORTS = Set.of(110, 143);
 
     /**
+     * A rules-parity review found SSH (22) was scanned (it's in {@link TcpConnectPortScanner
+     * #CURATED_PORTS}) but produced literally no finding either way when open - unlike Docker
+     * (2375/2376) and Elasticsearch (9200), which also get a real application-level probe
+     * elsewhere (EXPOSURE_DOCKER_API, EXPOSURE_ELASTICSEARCH_UNAUTH) that gives a more precise
+     * signal than a bare open port ever could, SSH has no Tier 1 exposure check at all - the
+     * negotiable-algorithm check (NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED) is Tier 2 only, so an
+     * analyst looking at a Tier 1-only target's findings had zero visibility into whether it even
+     * runs SSH. Deliberately INFO, not a vulnerability on its own - plenty of legitimate
+     * infrastructure runs SSH on 22 - this is context, the same role HEADER_SERVER_BANNER_VERBOSE
+     * or SUBDOMAIN_NEW_UNEXPECTED play elsewhere: present for completeness, not implying a gap.
+     */
+    static final Set<Integer> SSH_PORT = Set.of(22);
+
+    /**
      * SMB (445), NetBIOS Session Service (139), and the MSRPC endpoint mapper (135) - folded into
      * {@link #ADMIN_DB_PORTS} (so they share its promiscuous-port false-positive protection
      * below) but flagged under their own, more severe rule: these protocols were never designed
@@ -225,6 +239,18 @@ public final class PortScanDecisionLogic {
                                 + "Unlike their TLS-wrapped counterparts (995/993), these protocols send "
                                 + "credentials and mail content unencrypted unless a client separately negotiates "
                                 + "STARTTLS after connecting.",
+                        hostname + ":" + port,
+                        evidence));
+            } else if (SSH_PORT.contains(port)) {
+                findings.add(new RawFinding(
+                        "NETWORK_SSH_PORT_REACHABLE",
+                        Severity.INFO,
+                        Category.NETWORK,
+                        "SSH service reachable from the internet",
+                        "Port 22 (SSH) was found open and reachable. Not a vulnerability on its own - this is "
+                                + "informational, the same role a verbose server banner plays elsewhere - but a "
+                                + "deep scan against an authorized target also checks for negotiable weak "
+                                + "key-exchange/host-key/cipher/MAC algorithms (NETWORK_SSH_WEAK_ALGORITHM_SUPPORTED).",
                         hostname + ":" + port,
                         evidence));
             }
