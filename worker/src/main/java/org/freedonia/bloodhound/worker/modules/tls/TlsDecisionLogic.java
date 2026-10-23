@@ -141,6 +141,15 @@ public final class TlsDecisionLogic {
                     Map.of("hostname", hostname, "certificateNames", r.certDnsNames())));
         }
 
+        // A rules-parity review found this rule_id's name overclaims: it is an issuer-allowlist
+        // heuristic (isKnownIssuer checks the issuer DN against a short hardcoded list of major
+        // public CA name substrings), not a Certificate Transparency log lookup - no CT log is
+        // ever consulted here. The title/description below already describe it honestly
+        // ("unrecognized CA", "outside a curated list") with no CT framing, which is the part a
+        // user actually sees - renaming the bare rule_id itself was deliberately not done, since
+        // it is this finding's identity (findings.rule_id, the per-org rule-disable override
+        // table, and every historical/trend row already use it) and a rename would orphan all of
+        // that for a cosmetic fix. Left as a known naming quirk.
         if (r.certIssuer() != null && !isKnownIssuer(r.certIssuer())) {
             findings.add(finding(
                     "TLS_CT_UNEXPECTED_ISSUER", Severity.MEDIUM, hostname, Map.of("issuer", r.certIssuer())));
