@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
 import org.freedonia.bloodhound.common.scanmodule.HostUnreachableException;
@@ -90,6 +91,7 @@ public class ZapScanRunner {
         Instant deadline = Instant.now().plus(TOTAL_BUDGET);
         startFreshSession();
         disableNoiseScanners();
+        scopeContextToHost(hostname);
 
         // HTTPS first, HTTP fallback - the same order every other HTTP-fetching module in this
         // codebase already uses (see HttpHeaderFetcher), not followed here previously: this
@@ -171,6 +173,32 @@ public class ZapScanRunner {
         }
     }
 
+    /** The one context every scan uses - startFreshSession() wipes it along with everything else, so it's safe to unconditionally recreate per run rather than track per ZAP instance. */
+    private static final String CONTEXT_NAME = "bh-scan";
+
+    /**
+     * A rules-parity review found the spider call had no context at all - no {@code subtreeOnly},
+     * no context, {@code recurse=true} - so it was never confined to the seed host. A comment in
+     * this class's own history records a live crawl requesting Trustpilot, Vimeo, and Facebook
+     * mid-scan. {@code maxChildren} bounds total page COUNT, not which hosts get visited at all.
+     * Scopes the spider (via {@link #spiderAndCheck}'s {@code contextName} param) to exactly this
+     * hostname, over either scheme, on any port - ZAP's own Context "Include in Context" regex,
+     * evaluated by its Java regex engine, so the hostname (already validated upstream against a
+     * strict DNS-label pattern - see HostnamePattern) is escaped via {@link Pattern#quote} rather
+     * than hand-built. Best-effort: a failed call here costs an unscoped spider for this one run,
+     * not a wrong or lost finding, and isn't worth failing the scan over - same posture as
+     * {@link #startFreshSession}/{@link #disableNoiseScanners} right above.
+     */
+    private void scopeContextToHost(String hostname) {
+        try {
+            call("/JSON/context/action/newContext/", Map.of("contextName", CONTEXT_NAME));
+            String regex = "^https?://" + Pattern.quote(hostname) + "(:[0-9]+)?(/.*)?$";
+            call("/JSON/context/action/includeInContext/", Map.of("contextName", CONTEXT_NAME, "regex", regex));
+        } catch (ScanModuleException e) {
+            log.warn("could not scope ZAP's context to {} - spider will run unscoped for this run: {}", hostname, e.getMessage());
+        }
+    }
+
     private record SpiderResult(String targetUrl, boolean reachable) {}
 
     /**
@@ -193,7 +221,11 @@ public class ZapScanRunner {
      */
     private SpiderResult spiderAndCheck(String targetUrl, Instant deadline) throws ScanModuleException {
         String spiderScanId = call("/JSON/spider/action/scan/",
-                Map.of("url", targetUrl, "maxChildren", String.valueOf(SPIDER_MAX_CHILDREN), "recurse", "true"))
+                Map.of(
+                        "url", targetUrl,
+                        "maxChildren", String.valueOf(SPIDER_MAX_CHILDREN),
+                        "recurse", "true",
+                        "contextName", CONTEXT_NAME))
                 .path("scan").asText();
         boolean spiderFinished = pollUntilComplete("spider", () -> spiderStatusPercent(spiderScanId), deadline);
         if (!spiderFinished) {
