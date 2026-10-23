@@ -12,6 +12,7 @@ import org.freedonia.bloodhound.server.findings.FindingRepository;
 import org.freedonia.bloodhound.server.findings.FindingRepository.TlsFindingRow;
 import org.freedonia.bloodhound.server.findings.FindingRepository.WafStatus;
 import org.freedonia.bloodhound.server.subdomain.dto.SubdomainSummary;
+import org.freedonia.bloodhound.server.target.HostnamePattern;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.freedonia.bloodhound.server.tls.TlsGradeCalculator;
@@ -136,6 +137,15 @@ public class SubdomainController {
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         String hostname = request.hostname().trim().toLowerCase();
+        // A security review found this endpoint had no shape check at all, unlike target creation
+        // - SafeAddressValidator#requireSafeIfResolvable treats "does not resolve" as safe, so a
+        // crafted value such as "central-server#.example.com" (java.net.URI parses the host as
+        // just "central-server", dropping everything from "#" on as a fragment) passed inScope's
+        // suffix check, never resolved, and sailed through that guard into a URL built from the
+        // raw string downstream. Same HostnamePattern target creation already enforces.
+        if (!HostnamePattern.PATTERN.matcher(hostname).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "must be a valid domain name");
+        }
         if (!inScope(hostname, target.hostname())) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "hostname must be " + target.hostname() + " or a subdomain of it");

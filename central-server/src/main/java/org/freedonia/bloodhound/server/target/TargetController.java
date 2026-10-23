@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
@@ -43,10 +42,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/targets")
 public class TargetController {
-
-    /** Same pattern CreateTargetRequest's own @Pattern uses - kept in sync as one shared constant so createBulk's imperative per-hostname check can never drift from single-create's bean-validated one. */
-    private static final Pattern HOSTNAME_PATTERN =
-            Pattern.compile("^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$");
 
     private final TargetRepository targetRepository;
     private final ScanRunService scanRunService;
@@ -211,7 +206,7 @@ public class TargetController {
                         hostname, "organization has reached its limit of " + maxTargetsPerOrg + " active targets"));
                 continue;
             }
-            if (!HOSTNAME_PATTERN.matcher(hostname).matches()) {
+            if (!HostnamePattern.PATTERN.matcher(hostname).matches()) {
                 results.add(BulkCreateTargetResult.failure(hostname, "must be a valid domain name"));
                 continue;
             }
