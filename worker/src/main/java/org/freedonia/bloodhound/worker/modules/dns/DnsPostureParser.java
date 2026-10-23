@@ -96,7 +96,15 @@ public final class DnsPostureParser {
             // Independent of the p=none check below - a record can have p=reject and still have
             // nobody watching aggregate reports, or p=none with reports configured. Both gaps
             // matter on their own.
-            if (v.contains("p=none")) {
+            //
+            // A rules-parity review found the old `v.contains("p=none")` substring check had a
+            // real false-positive: "p=reject; sp=none" contains the literal substring "p=none"
+            // (inside "sp=none"), so a record with a strict main policy and only its SUBDOMAIN
+            // policy relaxed would wrongly fire this rule claiming the main policy was none -
+            // confusing two already-separately-covered things (this rule vs
+            // DNS_DMARC_SUBDOMAIN_POLICY_WEAKER below, which already parses the p=/sp= tags
+            // correctly). Parsed via the same tagValue() helper that check already uses.
+            if ("none".equals(tagValue(v, "p"))) {
                 findings.add(finding("DNS_DMARC_POLICY_NONE", Severity.MEDIUM, dmarcHost, Map.of("record", dmarc.get())));
             }
             if (!v.contains("rua=")) {

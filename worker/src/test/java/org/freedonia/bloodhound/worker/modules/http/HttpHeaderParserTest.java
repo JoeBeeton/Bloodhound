@@ -57,8 +57,21 @@ class HttpHeaderParserTest {
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("HEADER_CSP_WEAK_POLICY");
             assertThat(f.severity().name()).isEqualTo("MEDIUM");
-            assertThat(f.evidence()).containsEntry("weaknesses", List.of("unsafe-inline"));
+            assertThat(f.evidence()).containsEntry("weaknesses", List.of("script-src: unsafe-inline"));
         });
+    }
+
+    /**
+     * A rules-parity review found unsafe-inline checked against the whole header string,
+     * conflating style-src's (inline CSS - common, comparatively low-risk) with script-src's
+     * (inline script execution - the actual XSS-relevant weakness this rule exists for).
+     */
+    @Test
+    void cspWithUnsafeInlineOnStyleSrcOnly_notFlaggedWeakPolicy() {
+        Map<String, String> h = allSecureHeaders();
+        h.put("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'");
+        FetchResult result = new FetchResult(true, h, List.of());
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HEADER_CSP_WEAK_POLICY");
     }
 
     @Test
@@ -169,6 +182,29 @@ class HttpHeaderParserTest {
         FetchResult result = new FetchResult(
                 true, allSecureHeaders(), List.of("__Host-session_id=abc123; Path=/; Secure; HttpOnly; SameSite=Lax"));
         assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
+    }
+
+    /**
+     * A rules-parity review found the old whole-line substring checks could be suppressed by a
+     * cookie NAME or VALUE that merely contains the flag's text - none of these three cookies
+     * actually set Secure/HttpOnly/SameSite, but their name/value text alone would have hidden
+     * that under the old "contains(...)" check.
+     */
+    @Test
+    void cookieNameOrValueContainingFlagText_stillFlaggedAsMissing() {
+        FetchResult result = new FetchResult(
+                true,
+                allSecureHeaders(),
+                List.of(
+                        "session=secure_abc123",
+                        "insecure_mode=httponly_test",
+                        "samesite_pref=1"));
+        List<String> ids = ruleIds(HttpHeaderParser.parse("example.com", result));
+        assertThat(ids)
+                .contains("COOKIE_MISSING_SECURE_FLAG", "COOKIE_MISSING_HTTPONLY_FLAG", "COOKIE_MISSING_SAMESITE");
+        // Exactly 3 findings per cookie (9 total) - none of them should also have picked up
+        // COOKIE_MISSING_HOST_PREFIX, which only applies once Secure is genuinely present.
+        assertThat(ids).hasSize(9).doesNotContain("COOKIE_MISSING_HOST_PREFIX");
     }
 
     @Test

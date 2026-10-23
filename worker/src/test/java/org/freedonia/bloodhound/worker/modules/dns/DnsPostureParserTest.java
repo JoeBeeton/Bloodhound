@@ -514,6 +514,12 @@ class DnsPostureParserTest {
             assertThat(f.ruleId()).isEqualTo("DNS_DMARC_SUBDOMAIN_POLICY_WEAKER");
             assertThat(f.severity().name()).isEqualTo("MEDIUM");
         });
+        // A rules-parity review found the old substring check (`v.contains("p=none")`) matched
+        // the literal "p=none" inside "sp=none" here, wrongly firing DNS_DMARC_POLICY_NONE even
+        // though the actual main policy (p=) is reject, not none - a different, already-correctly-
+        // flagged gap (DNS_DMARC_SUBDOMAIN_POLICY_WEAKER, asserted above) got misreported as this
+        // one too.
+        assertThat(ruleIds(findings)).doesNotContain("DNS_DMARC_POLICY_NONE");
     }
 
     @Test
