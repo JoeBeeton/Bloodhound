@@ -83,14 +83,33 @@ class NucleiFindingMapperTest {
     }
 
     @Test
-    void cveIdAndExtractedResults_includedInEvidenceWhenPresent() {
+    void cveId_includedInEvidenceAsIs() {
         NucleiFinding result = new NucleiFinding(
                 "cve-2021-12345", "Some CVE", "critical", "desc", "example.com", "http://example.com",
                 null, List.of("v1.2.3"), "curl ...", "CVE-2021-12345", null);
         RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
         assertThat(f.evidence()).containsEntry("cveId", "CVE-2021-12345");
-        assertThat(f.evidence()).containsEntry("curlCommand", "curl ...");
-        assertThat(f.evidence().get("extractedResults")).isEqualTo(List.of("v1.2.3"));
+    }
+
+    /**
+     * A security review found curlCommand/extractedResults copied verbatim - nuclei's exposure
+     * templates are deliberately written to pull out tokens, keys, and file snippets, and this
+     * mapper was the one place in the pipeline still showing them in full. Neither the raw value
+     * ("curl ..." / "v1.2.3") nor any literal substring of it should appear anywhere in the
+     * finding's evidence.
+     */
+    @Test
+    void curlCommandAndExtractedResults_areRedactedNotCopiedVerbatim() {
+        NucleiFinding result = new NucleiFinding(
+                "cve-2021-12345", "Some CVE", "critical", "desc", "example.com", "http://example.com",
+                null, List.of("v1.2.3"), "curl -H 'Authorization: Bearer s3cr3t'", "CVE-2021-12345", null);
+        RawFinding f = NucleiFindingMapper.map(List.of(result)).get(0);
+
+        assertThat(f.evidence().get("curlCommand")).asString().doesNotContain("s3cr3t").contains("[redacted,");
+        @SuppressWarnings("unchecked")
+        List<String> extracted = (List<String>) f.evidence().get("extractedResults");
+        assertThat(extracted).hasSize(1);
+        assertThat(extracted.get(0)).doesNotContain("v1.2.3").contains("[redacted,");
     }
 
     /** waf-detect's matcher name IS the vendor identified - see NucleiFindingMapper's own comment. */

@@ -10,6 +10,7 @@ import java.util.Set;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
+import org.freedonia.bloodhound.worker.modules.EvidenceRedaction;
 
 /**
  * Pure interpretation of parsed nuclei results into findings - no
@@ -41,14 +42,19 @@ public final class NucleiFindingMapper {
             Map<String, Object> evidence = new LinkedHashMap<>();
             putIfPresent(evidence, "reference", result.reference());
             putIfPresent(evidence, "cveId", result.cveId());
-            putIfPresent(evidence, "curlCommand", result.curlCommand());
+            // A security review found curlCommand and extractedResults copied verbatim - nuclei's
+            // exposure templates are deliberately written to pull out tokens, keys, and file
+            // snippets, and this is the one place in the pipeline that still showed them in full
+            // (nuclei itself runs with -omit-raw). See EvidenceRedaction's own doc for why a hash
+            // + length, not a partial preview, is what replaces the raw value here.
+            putIfPresent(evidence, "curlCommand", EvidenceRedaction.redact(result.curlCommand()));
             // Generic, not waf-detect-specific - same "no per-template special-casing" precedent
             // as everything else here. It just happens to matter most for waf-detect, where each
             // matcher's name IS the vendor identified (e.g. "cloudflare") - see FindingRepository's
             // WAF-status query, the one consumer that currently reads this key by name.
             putIfPresent(evidence, "matcherName", result.matcherName());
             if (!result.extractedResults().isEmpty()) {
-                evidence.put("extractedResults", result.extractedResults());
+                evidence.put("extractedResults", EvidenceRedaction.redactAll(result.extractedResults()));
             }
 
             String affectedAsset = result.matchedAt() != null

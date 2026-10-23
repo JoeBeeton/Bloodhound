@@ -65,7 +65,7 @@ class ZapAlertMapperTest {
     }
 
     @Test
-    void evidenceCarriesSolutionReferenceParamAndConfidence() {
+    void evidenceCarriesSolutionReferenceAndConfidenceAsIs() {
         ZapAlert alert = new ZapAlert(
                 "40012",
                 "Cross Site Scripting (Reflected)",
@@ -83,9 +83,38 @@ class ZapAlertMapperTest {
         assertThat(findings.get(0).evidence())
                 .containsEntry("solution", "Sanitize user input")
                 .containsEntry("reference", "https://owasp.org/xss")
-                .containsEntry("param", "q")
-                .containsEntry("confidence", "High")
-                .containsEntry("evidence", "<script>alert(1)</script>");
+                .containsEntry("confidence", "High");
+    }
+
+    /**
+     * A security review found param/evidence copied verbatim - ZAP's "evidence" field is
+     * deliberately the exact matched substring from the request/response (here, a reflected
+     * payload; in other alerts, a token or cookie value), so neither it nor "param" should appear
+     * literally anywhere in the finding.
+     */
+    @Test
+    void paramAndEvidence_areRedactedNotCopiedVerbatim() {
+        ZapAlert alert = new ZapAlert(
+                "40012",
+                "Cross Site Scripting (Reflected)",
+                "High",
+                "High",
+                "XSS description",
+                "Sanitize user input",
+                "https://owasp.org/xss",
+                "http://juiceshop.local/search?q=%3Cscript%3E",
+                "q",
+                "<script>alert(1)</script>");
+
+        List<RawFinding> findings = ZapAlertMapper.map(List.of(alert));
+
+        // "q" itself is short enough it couldn't leak much either way, but this confirms every
+        // value goes through the same redaction path unconditionally, not just long/risky ones.
+        assertThat(findings.get(0).evidence().get("param")).asString().contains("[redacted,");
+        assertThat(findings.get(0).evidence().get("evidence"))
+                .asString()
+                .doesNotContain("<script>alert(1)</script>")
+                .contains("[redacted,");
     }
 
     @Test

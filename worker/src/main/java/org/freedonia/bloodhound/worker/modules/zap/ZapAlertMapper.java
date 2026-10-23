@@ -8,6 +8,7 @@ import java.util.Set;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
+import org.freedonia.bloodhound.worker.modules.EvidenceRedaction;
 
 /**
  * Pure interpretation of ZAP alerts into findings - no network/JSON work
@@ -44,8 +45,13 @@ public final class ZapAlertMapper {
             Map<String, Object> evidence = new LinkedHashMap<>();
             putIfPresent(evidence, "solution", alert.solution());
             putIfPresent(evidence, "reference", alert.reference());
-            putIfPresent(evidence, "param", alert.param());
-            putIfPresent(evidence, "evidence", alert.evidence());
+            // A security review found param/evidence copied verbatim - ZAP's own "evidence" field
+            // is deliberately the exact matched substring from the request/response (a token,
+            // cookie value, injected payload echoed back, etc.), and "param" is often the request
+            // parameter name+value pair that triggered the alert. See EvidenceRedaction's own doc
+            // for why a hash + length, not a partial preview, replaces the raw value here.
+            putIfPresent(evidence, "param", EvidenceRedaction.redact(alert.param()));
+            putIfPresent(evidence, "evidence", EvidenceRedaction.redact(alert.evidence()));
             putIfPresent(evidence, "confidence", alert.confidence());
 
             findings.add(new RawFinding(
