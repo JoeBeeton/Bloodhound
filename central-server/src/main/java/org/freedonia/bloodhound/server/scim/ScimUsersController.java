@@ -5,7 +5,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
+import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.scim.dto.ScimListResponse;
 import org.freedonia.bloodhound.server.scim.dto.ScimPatchRequest;
 import org.freedonia.bloodhound.server.scim.dto.ScimUserResource;
@@ -48,14 +50,20 @@ public class ScimUsersController {
 
     private final ScimUserRepository scimUserRepository;
     private final AuditLogRepository auditLogRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final ApiKeyRepository apiKeyRepository;
     private final String spBaseUrl;
 
     public ScimUsersController(
             ScimUserRepository scimUserRepository,
             AuditLogRepository auditLogRepository,
+            RefreshTokenRepository refreshTokenRepository,
+            ApiKeyRepository apiKeyRepository,
             @Value("${bloodhound.saml.sp-base-url}") String spBaseUrl) {
         this.scimUserRepository = scimUserRepository;
         this.auditLogRepository = auditLogRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.apiKeyRepository = apiKeyRepository;
         this.spBaseUrl = spBaseUrl;
     }
 
@@ -170,10 +178,24 @@ public class ScimUsersController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Only records a real transition - a redundant PATCH/PUT/DELETE re-sending the account's current active value produces no entry. */
+    /**
+     * Only acts on a real transition - a redundant PATCH/PUT/DELETE re-sending the account's
+     * current active value does nothing.
+     *
+     * <p>A security review found deactivation here only ever flipped {@code users.status} -
+     * unlike the admin-UI path ({@code OrgUserController}), which also revokes refresh tokens and
+     * API keys on exactly this transition. A refresh token stays valid until its next use (the
+     * ACTIVE check only runs at refresh time) and an API key has no live check at all, so an
+     * offboarded SCIM user kept read access for as long as their existing tokens/keys happened to
+     * still be valid - the identical gap already fixed for the admin UI, just not here too.
+     */
     private void recordScimActiveStatusChange(ScimPrincipal principal, UUID userId, boolean before, boolean after) {
         if (before == after) {
             return;
+        }
+        if (!after) {
+            refreshTokenRepository.revokeAllForUser(userId);
+            apiKeyRepository.revokeAllForUser(userId);
         }
         recordScimAudit(principal, after ? "SCIM_USER_ACTIVATED" : "SCIM_USER_DEACTIVATED", userId, null);
     }

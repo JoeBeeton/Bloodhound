@@ -13,7 +13,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
+import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.scim.dto.ScimPatchOperation;
 import org.freedonia.bloodhound.server.scim.dto.ScimPatchRequest;
 import org.freedonia.bloodhound.server.scim.dto.ScimUserWriteRequest;
@@ -30,8 +32,10 @@ class ScimUsersControllerTest {
 
     private final ScimUserRepository scimUserRepository = mock(ScimUserRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
-    private final ScimUsersController controller =
-            new ScimUsersController(scimUserRepository, auditLogRepository, "https://sp.example.com");
+    private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
+    private final ScimUsersController controller = new ScimUsersController(
+            scimUserRepository, auditLogRepository, refreshTokenRepository, apiKeyRepository, "https://sp.example.com");
 
     private final UUID orgId = UUID.randomUUID();
     private final ScimPrincipal principal = new ScimPrincipal(orgId, "Okta");
@@ -62,6 +66,10 @@ class ScimUsersControllerTest {
 
         verify(auditLogRepository)
                 .record(orgId, null, "SCIM: Okta", "SCIM_USER_DEACTIVATED", "USER", userId.toString(), null);
+        // A security review found deactivation here only ever flipped users.status, unlike the
+        // admin-UI path (OrgUserController), which also revokes refresh tokens and API keys.
+        verify(refreshTokenRepository).revokeAllForUser(userId);
+        verify(apiKeyRepository).revokeAllForUser(userId);
     }
 
     @Test
@@ -72,6 +80,8 @@ class ScimUsersControllerTest {
         controller.replace(principal, userId, new ScimUserWriteRequest(null, "alice", null, null, true));
 
         verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+        verify(apiKeyRepository, never()).revokeAllForUser(any());
     }
 
     @Test
@@ -85,6 +95,22 @@ class ScimUsersControllerTest {
 
         verify(auditLogRepository)
                 .record(orgId, null, "SCIM: Okta", "SCIM_USER_ACTIVATED", "USER", userId.toString(), null);
+        // Re-activating must never revoke the credentials it just enabled.
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+        verify(apiKeyRepository, never()).revokeAllForUser(any());
+    }
+
+    @Test
+    void patch_deactivateOperation_revokesRefreshTokensAndApiKeys() {
+        UUID userId = UUID.randomUUID();
+        when(scimUserRepository.findByOrgAndId(orgId, userId)).thenReturn(Optional.of(row(userId, "alice", true)));
+        ScimPatchRequest request =
+                new ScimPatchRequest(List.of(), List.of(new ScimPatchOperation("replace", "active", false)));
+
+        controller.patch(principal, userId, request);
+
+        verify(refreshTokenRepository).revokeAllForUser(userId);
+        verify(apiKeyRepository).revokeAllForUser(userId);
     }
 
     @Test
@@ -111,6 +137,8 @@ class ScimUsersControllerTest {
 
         verify(auditLogRepository)
                 .record(orgId, null, "SCIM: Okta", "SCIM_USER_DEACTIVATED", "USER", userId.toString(), null);
+        verify(refreshTokenRepository).revokeAllForUser(userId);
+        verify(apiKeyRepository).revokeAllForUser(userId);
     }
 
     @Test
@@ -177,5 +205,9 @@ class ScimUsersControllerTest {
         controller.deactivate(principal, userId);
 
         verify(auditLogRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
+        // Already inactive - nothing new to revoke, and revoking on every redundant call would
+        // also pointlessly invalidate a session the user re-activated and started a fresh one on.
+        verify(refreshTokenRepository, never()).revokeAllForUser(any());
+        verify(apiKeyRepository, never()).revokeAllForUser(any());
     }
 }
