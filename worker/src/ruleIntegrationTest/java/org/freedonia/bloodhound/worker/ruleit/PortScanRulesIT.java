@@ -14,12 +14,14 @@ class PortScanRulesIT {
 
     @Test
     void oneAdminPortPlusCleartextManagement() throws Exception {
-        try (PortListeners.PortSink sink = PortListeners.PortSink.open(3306, 21, 23)) {
+        try (PortListeners.PortSink sink = PortListeners.PortSink.open(3306, 21, 23, 22)) {
             ModuleResult result = ScanSupport.run(new LightPortScanModule(), FixtureHosts.PORTS_ONE);
-            ScanSupport.assertRules(result, "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", "PORT_OPEN_UNENCRYPTED_MGMT");
+            ScanSupport.assertRules(
+                    result, "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", "PORT_OPEN_UNENCRYPTED_MGMT", "NETWORK_SSH_PORT_REACHABLE");
             ScanSupport.assertAsset(result, "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE", FixtureHosts.PORTS_ONE + ":3306");
             ScanSupport.assertAsset(result, "PORT_OPEN_UNENCRYPTED_MGMT", FixtureHosts.PORTS_ONE + ":21");
             ScanSupport.assertAsset(result, "PORT_OPEN_UNENCRYPTED_MGMT", FixtureHosts.PORTS_ONE + ":23");
+            ScanSupport.assertAsset(result, "NETWORK_SSH_PORT_REACHABLE", FixtureHosts.PORTS_ONE + ":22");
             ScanSupport.assertAbsent(result, "NETWORK_PROMISCUOUS_PORT_RESPONSE");
         }
     }
