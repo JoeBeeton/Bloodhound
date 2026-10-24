@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * subdomains, with bounded concurrency and a per-host timeout - the shared
  * pattern originally built for TECH_FINGERPRINT and now reused by every Tier
  * 1 module that needs to see the full discovered surface, not just the bare
- * apex (HTTP_HEADERS, TLS_ANALYSIS, EXPOSURE_CHECKS, PORT_SCAN_LIGHT). This
+ * apex (HTTP_HEADERS, TLS_ANALYSIS, PORT_SCAN_LIGHT, TECH_FINGERPRINT). This
  * exists because a target's apex can legitimately have no A/AAAA record at
  * all while its real web presence lives entirely on subdomains - scanning
  * only the apex in that case finds nothing, which is exactly the gap this
@@ -169,8 +169,8 @@ public final class HostFanOut {
 
     /**
      * SSRF guard applied once, here, for every module that fans out via this
-     * class (HTTP_HEADERS, TLS_ANALYSIS, EXPOSURE_CHECKS, PORT_SCAN_LIGHT,
-     * TECH_FINGERPRINT) - the root hostname is already checked at target
+     * class (HTTP_HEADERS, TLS_ANALYSIS, PORT_SCAN_LIGHT, TECH_FINGERPRINT) -
+     * the root hostname is already checked at target
      * creation (see central-server's TargetController), but subdomains are
      * discovered later from crt.sh/subfinder and never go through that check;
      * a malicious or compromised domain could publish a CT-logged certificate

@@ -413,12 +413,12 @@ public class ExposedPathFetcher {
             throws IOException, InterruptedException {
         // Unlike every other target-facing fetcher in this module (HttpHeaderFetcher/TechFetcher/
         // DocumentFetcher via SafeHttpGet, NucleiFetcher/CloudBucketChecker directly), this class makes
-        // ~21 independent connections per host by hostname string rather than a pre-resolved address, and
-        // HostFanOut's one SafeAddressValidator check happens well before any of them - so without a check
-        // here too, a target whose DNS flips after that one check (TTL=0 rebinding) would sail every one of
-        // these connections straight past the SSRF guard. Matches the same single check-then-connect
-        // pattern the rest of the codebase already accepts as its baseline (see SafeHttpGet's javadoc for
-        // the residual TOCTOU gap that pattern doesn't fully close).
+        // ~21 independent connections per host by hostname string rather than a pre-resolved address, so
+        // each one re-checks here rather than relying on a single check somewhere further up the call
+        // chain - a target whose DNS flips mid-scan (TTL=0 rebinding) would otherwise sail every one of
+        // these connections straight past the SSRF guard after just one earlier check. Matches the same
+        // single check-then-connect pattern the rest of the codebase already accepts as its baseline (see
+        // SafeHttpGet's javadoc for the residual TOCTOU gap that pattern doesn't fully close).
         SafeAddressValidator.requireSafeIfResolvable(uri.getHost());
         HttpClient.Builder clientBuilder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(isAltPort ? ALT_PORT_CONNECT_TIMEOUT_S : DEFAULT_PORT_CONNECT_TIMEOUT_S));

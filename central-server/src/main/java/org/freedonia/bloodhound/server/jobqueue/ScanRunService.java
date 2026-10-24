@@ -31,13 +31,24 @@ import org.springframework.stereotype.Service;
 @Service
 public class ScanRunService {
 
-    /** Grows as later milestones add modules. */
+    /**
+     * Grows as later milestones add modules. EXPOSURE_CHECKS is deliberately NOT here - a
+     * security review found it does far more than its "Tier 1 = passive" billing implied:
+     * ExposedPathFetcher attempts a RabbitMQ guest:guest login, POSTs an etcd "dump every key"
+     * range request, probes JDWP/Redis/VNC, and fetches credential-shaped paths
+     * (/.aws/credentials, /id_rsa, /actuator/heapdump, Kubernetes/Docker/Jenkins control APIs).
+     * That ran unconditionally against every COMPETITOR/UNAUTHORIZED target - including real
+     * regulated companies with no scanning authorization at all - which is a materially different
+     * risk than the genuinely passive checks here (DNS lookups, reading response headers, a plain
+     * TCP connect scan). Moved to {@link #TIER2_MODULE_TYPES} below, gated the same way
+     * PORT_SCAN_DEEP/ZAP_ACTIVE_SCAN/NUCLEI_SCAN already are: only ever dispatched by {@link
+     * #createDeepScan} after the caller has confirmed authorization_status = AUTHORIZED.
+     */
     private static final List<String> TIER1_MODULE_TYPES = List.of(
             "DNS_POSTURE",
             "HTTP_HEADERS",
             "TLS_ANALYSIS",
             "SUBDOMAIN_ENUM",
-            "EXPOSURE_CHECKS",
             "PORT_SCAN_LIGHT",
             "WHOIS",
             "TECH_FINGERPRINT",
@@ -68,10 +79,11 @@ public class ScanRunService {
      * any particular subdomain, so it's a once-per-target check too.
      * DOCUMENT_METADATA is included: a linked handbook/whitepaper leaking
      * author info is just as likely to live on a subdomain's homepage as on
-     * the apex.
+     * the apex. EXPOSURE_CHECKS is no longer here - see its own comment on
+     * {@link #TIER1_MODULE_TYPES}; it fans out per-host under {@link #TIER2_MODULE_TYPES} now.
      */
     private static final List<String> SUBDOMAIN_FANOUT_MODULE_TYPES = List.of(
-            "HTTP_HEADERS", "TLS_ANALYSIS", "EXPOSURE_CHECKS", "PORT_SCAN_LIGHT", "TECH_FINGERPRINT", "DOCUMENT_METADATA");
+            "HTTP_HEADERS", "TLS_ANALYSIS", "PORT_SCAN_LIGHT", "TECH_FINGERPRINT", "DOCUMENT_METADATA");
 
     /**
      * Capped because a target can have hundreds of subdomains (e.g.
@@ -89,9 +101,12 @@ public class ScanRunService {
      * (TargetController) has confirmed targets.authorization_status =
      * 'AUTHORIZED' - see TargetAuthorizationController. PORT_SCAN_DEEP,
      * ZAP_ACTIVE_SCAN, and NUCLEI_SCAN all scan known subdomains, not just
-     * the apex, per the same rationale as {@link #SUBDOMAIN_FANOUT_MODULE_TYPES}.
+     * the apex, per the same rationale as {@link #SUBDOMAIN_FANOUT_MODULE_TYPES}. EXPOSURE_CHECKS
+     * joined this list after a security review found it was never actually passive - see the
+     * comment on {@link #TIER1_MODULE_TYPES}.
      */
-    private static final List<String> TIER2_MODULE_TYPES = List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN");
+    private static final List<String> TIER2_MODULE_TYPES =
+            List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS");
 
     /**
      * Tier 2 module types that are properties of the target's *brand*, not of any one host -

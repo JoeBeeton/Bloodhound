@@ -82,8 +82,8 @@ class ScanRunServiceTest {
 
         service.createDeepScan(targetId, triggeredByUserId);
 
-        // 3 host-fanout module types x 3 hosts (root + 2 subdomains) = 9 jobs.
-        for (String moduleType : List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN")) {
+        // 4 host-fanout module types x 3 hosts (root + 2 subdomains) = 12 jobs.
+        for (String moduleType : List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS")) {
             verify(scanJobRepository, times(3)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
         }
     }
@@ -102,7 +102,6 @@ class ScanRunServiceTest {
                 "HTTP_HEADERS",
                 "TLS_ANALYSIS",
                 "SUBDOMAIN_ENUM",
-                "EXPOSURE_CHECKS",
                 "PORT_SCAN_LIGHT",
                 "WHOIS",
                 "TECH_FINGERPRINT",
@@ -112,6 +111,9 @@ class ScanRunServiceTest {
                 "DOCUMENT_METADATA")) {
             verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
         }
+        // EXPOSURE_CHECKS is intentionally not Tier 1 any more (see ScanRunService's own comment)
+        // - it's covered by hostFanoutModules_dispatchOncePerHost_rootPlusEverySubdomain instead,
+        // dispatched once per host like the other Tier 2 modules, not once per run.
     }
 
     @Test
