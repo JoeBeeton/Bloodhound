@@ -75,6 +75,7 @@ function target(overrides: Partial<Target> = {}): Target {
     notes: null,
     wafVendor: null,
     wafScanned: false,
+    estimatedScanDurationSeconds: null,
     ...overrides,
   };
 }

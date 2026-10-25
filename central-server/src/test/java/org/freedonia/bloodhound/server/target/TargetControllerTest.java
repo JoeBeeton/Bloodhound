@@ -3,6 +3,7 @@ package org.freedonia.bloodhound.server.target;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -16,6 +17,7 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobAttemptRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
@@ -35,6 +37,7 @@ class TargetControllerTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final ScanJobAttemptRepository scanJobAttemptRepository = mock(ScanJobAttemptRepository.class);
     private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     // Real, not mocked - same reasoning ApiKeyRateLimiterTest/ApiKeyAuthFilterTest use for their
@@ -46,6 +49,7 @@ class TargetControllerTest {
 
     {
         when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+        when(scanJobAttemptRepository.averageSecondsByModuleType(anyInt())).thenReturn(Map.of());
     }
 
     private TargetController controller(int maxTargetsPerOrg) {
@@ -55,6 +59,7 @@ class TargetControllerTest {
                 scoreSnapshotRepository,
                 scanRunRepository,
                 scanJobRepository,
+                scanJobAttemptRepository,
                 targetAuthorizationRepository,
                 auditLogRepository,
                 targetBulkCreateRateLimiter,

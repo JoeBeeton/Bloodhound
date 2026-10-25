@@ -11,6 +11,7 @@ import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobAttemptRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
@@ -43,11 +44,15 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/targets")
 public class TargetController {
 
+    /** How many recent real completions to average per module_type - see ScanJobAttemptRepository, same sample size ScansController's ETA uses. */
+    private static final int ETA_SAMPLE_SIZE = 30;
+
     private final TargetRepository targetRepository;
     private final ScanRunService scanRunService;
     private final ScoreSnapshotRepository scoreSnapshotRepository;
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
+    private final ScanJobAttemptRepository scanJobAttemptRepository;
     private final TargetAuthorizationRepository targetAuthorizationRepository;
     private final AuditLogRepository auditLogRepository;
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter;
@@ -60,6 +65,7 @@ public class TargetController {
             ScoreSnapshotRepository scoreSnapshotRepository,
             ScanRunRepository scanRunRepository,
             ScanJobRepository scanJobRepository,
+            ScanJobAttemptRepository scanJobAttemptRepository,
             TargetAuthorizationRepository targetAuthorizationRepository,
             AuditLogRepository auditLogRepository,
             TargetBulkCreateRateLimiter targetBulkCreateRateLimiter,
@@ -70,6 +76,7 @@ public class TargetController {
         this.scoreSnapshotRepository = scoreSnapshotRepository;
         this.scanRunRepository = scanRunRepository;
         this.scanJobRepository = scanJobRepository;
+        this.scanJobAttemptRepository = scanJobAttemptRepository;
         this.targetAuthorizationRepository = targetAuthorizationRepository;
         this.auditLogRepository = auditLogRepository;
         this.targetBulkCreateRateLimiter = targetBulkCreateRateLimiter;
@@ -90,7 +97,12 @@ public class TargetController {
         // optimization if that stops being true.
         Map<UUID, ScoreSnapshot> latestScoreByTarget =
                 scoreSnapshotRepository.findLatestForTargets(targets.stream().map(Target::id).toList());
-        return targets.stream().map(t -> composeSummary(t, latestScoreByTarget.get(t.id()))).toList();
+        // One shared historical-average lookup for every target in this response, not one per
+        // target - same reasoning as ScansController's identical call for its own ETA.
+        Map<String, Double> avgSecondsByModuleType = scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE);
+        return targets.stream()
+                .map(t -> composeSummary(t, latestScoreByTarget.get(t.id()), avgSecondsByModuleType))
+                .toList();
     }
 
     /**
@@ -108,6 +120,12 @@ public class TargetController {
 
     /** Same as {@link #composeSummary(Target)}, but takes an already-fetched score - see {@link #list} for why. */
     private TargetSummary composeSummary(Target target, ScoreSnapshot latestScore) {
+        return composeSummary(target, latestScore, scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE));
+    }
+
+    /** Same as {@link #composeSummary(Target, ScoreSnapshot)}, but takes an already-fetched average-duration map - see {@link #list} for why. */
+    private TargetSummary composeSummary(
+            Target target, ScoreSnapshot latestScore, Map<String, Double> avgSecondsByModuleType) {
         var lastScan = scanRunRepository.findMostRecentByTarget(target.id()).orElse(null);
         Instant lastScanAt = null;
         Boolean lastScanWasDeep = null;
@@ -119,7 +137,31 @@ public class TargetController {
         // Only the apex hostname's own entry is needed here - see SubdomainController for the
         // identical per-host lookup driving the map's subdomain-level WAF badges.
         var wafStatus = findingRepository.findWafStatusByTarget(target.id()).get(target.hostname());
-        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus);
+        Long estimatedScanDurationSeconds = estimateTier1ScanDurationSeconds(avgSecondsByModuleType);
+        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus, estimatedScanDurationSeconds);
+    }
+
+    /**
+     * A not-yet-started Tier 1 scan's modules all run concurrently, not sequentially (same model
+     * {@link org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator} already uses for an
+     * in-progress run's uncapped module types) - so the whole run's duration is approximated as
+     * the slowest individual module type's own historical average, not their sum. Null when none
+     * of {@link ScanRunService#allTier1ModuleTypes()} has any historical data yet, rather than a
+     * fabricated guess.
+     */
+    private static Long estimateTier1ScanDurationSeconds(Map<String, Double> avgSecondsByModuleType) {
+        Long max = null;
+        for (String moduleType : ScanRunService.allTier1ModuleTypes()) {
+            Double avg = avgSecondsByModuleType.get(moduleType);
+            if (avg == null) {
+                continue;
+            }
+            long rounded = Math.round(avg);
+            if (max == null || rounded > max) {
+                max = rounded;
+            }
+        }
+        return max;
     }
 
     @PostMapping

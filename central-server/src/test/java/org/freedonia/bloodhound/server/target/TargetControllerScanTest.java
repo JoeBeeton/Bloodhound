@@ -15,6 +15,7 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanJobAttemptRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
@@ -39,15 +40,19 @@ class TargetControllerScanTest {
     private final ScoreSnapshotRepository scoreSnapshotRepository = mock(ScoreSnapshotRepository.class);
     private final ScanRunRepository scanRunRepository = mock(ScanRunRepository.class);
     private final ScanJobRepository scanJobRepository = mock(ScanJobRepository.class);
+    private final ScanJobAttemptRepository scanJobAttemptRepository = mock(ScanJobAttemptRepository.class);
     private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final FindingRepository findingRepository = mock(FindingRepository.class);
     private final TargetController controller = new TargetController(
             targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository,
-            targetAuthorizationRepository, auditLogRepository, new TargetBulkCreateRateLimiter(), findingRepository, 100);
+            scanJobAttemptRepository, targetAuthorizationRepository, auditLogRepository,
+            new TargetBulkCreateRateLimiter(), findingRepository, 100);
 
     {
         when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
+        when(scanJobAttemptRepository.averageSecondsByModuleType(org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(Map.of());
     }
 
     private final UUID orgId = UUID.randomUUID();

@@ -39,6 +39,7 @@ function target(overrides: Partial<Target> = {}): Target {
     notes: null,
     wafVendor: null,
     wafScanned: false,
+    estimatedScanDurationSeconds: null,
     ...overrides,
   };
 }
@@ -217,6 +218,69 @@ describe("TargetsPage - notes indicator and search", () => {
     expect(screen.getByText("prod-a.example.com")).toBeInTheDocument();
     expect(screen.queryByText("prod-b.example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("pad-0.example.com")).not.toBeInTheDocument();
+  });
+});
+
+describe("TargetsPage - next scan label", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows the next scheduled scan time and a duration estimate for an active target", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        target({
+          hostname: "scheduled.example.com",
+          nextScanAt: "2026-01-02T00:00:00Z",
+          estimatedScanDurationSeconds: 125,
+        }),
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("scheduled.example.com", {}, { timeout: 5000 });
+
+    expect(screen.getByText(/next scan:/i)).toBeInTheDocument();
+    expect(screen.getByText(/\(~2m 5s\)/)).toBeInTheDocument();
+  });
+
+  it("omits the duration estimate when there isn't enough scan history yet", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        target({
+          hostname: "new.example.com",
+          nextScanAt: "2026-01-02T00:00:00Z",
+          estimatedScanDurationSeconds: null,
+        }),
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("new.example.com", {}, { timeout: 5000 });
+
+    expect(screen.getByText(/next scan:/i)).toBeInTheDocument();
+    expect(screen.queryByText(/~/)).not.toBeInTheDocument();
+  });
+
+  it("hides the next scan time for a deactivated (removed) target", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        target({
+          hostname: "removed.example.com",
+          isActive: false,
+          estimatedScanDurationSeconds: 90,
+        }),
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("removed.example.com", {}, { timeout: 5000 });
+
+    expect(screen.queryByText(/next scan:/i)).not.toBeInTheDocument();
   });
 });
 

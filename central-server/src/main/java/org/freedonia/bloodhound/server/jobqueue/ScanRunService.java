@@ -131,6 +131,16 @@ public class ScanRunService {
     }
 
     /**
+     * Single source of truth for "which module types a regular/scheduled scan fans out to" - lets
+     * TargetController estimate a not-yet-started scan's duration (see ScanEtaEstimator) against
+     * the exact set {@link #insertTier1Jobs} actually dispatches, without duplicating
+     * {@link #TIER1_MODULE_TYPES}, which stays private here.
+     */
+    public static List<String> allTier1ModuleTypes() {
+        return TIER1_MODULE_TYPES;
+    }
+
+    /**
      * How recently a (candidate, provider) pair must have been checked to be excluded from the
      * next BUCKET_BRUTE_FORCE job's payload - long enough that re-running a deep scan doesn't
      * re-issue the same few hundred requests against AWS/GCS/etc. every time, short enough that

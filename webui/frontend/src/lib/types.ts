@@ -59,6 +59,8 @@ export interface Target {
   wafVendor: string | null;
   /** True once nuclei has scanned this hostname at all - disambiguates "scanned, no WAF found" from "not yet scanned" when wafVendor is null. */
   wafScanned: boolean;
+  /** Heuristic estimate of the next Tier 1 scan's duration, from real historical per-module durations. Null when there isn't enough history yet. */
+  estimatedScanDurationSeconds: number | null;
 }
 
 /** One row in a portfolio's member list - hasScore disambiguates a real overallScore of e.g. 0 from "no scan yet" (overallScore/grade null in that case). */

@@ -866,6 +866,14 @@ function TargetRow({
           </Link>
           <p className="font-mono text-xs uppercase tracking-widest text-slate-400">
             {target.targetType} · {target.isActive ? "active" : "removed"} · <LastScanLabel target={target} />
+            {/* Scheduling is a no-op while a target is deactivated (ScanAutoScheduler only sweeps
+                is_active = TRUE rows), so showing a stale nextScanAt here would be misleading. */}
+            {target.isActive && (
+              <>
+                {" "}
+                · <NextScanLabel target={target} />
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -954,6 +962,28 @@ function LastScanLabel({ target }: { target: Target }) {
     <span>
       Last scan: {new Date(target.lastScanAt).toLocaleString(undefined, LAST_SCAN_DATE_FORMAT)}
       {target.lastScanWasDeep && <span className="text-neon-amber"> (Deep)</span>}
+    </span>
+  );
+}
+
+/** A plain estimate duration (not a start/end range) - "~Xm Ys", the same unit breakdown ScanDetailPage's own formatDuration uses for a real elapsed range. */
+function formatEstimatedDuration(seconds: number): string {
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/**
+ * The next time ScanAutoScheduler's sweep will pick this target up (already computed
+ * server-side - see TargetSummary.nextScanAt), plus a heuristic duration estimate from real
+ * historical per-module-type averages (TargetSummary.estimatedScanDurationSeconds) - absent
+ * when there isn't enough scan history yet for any Tier 1 module type.
+ */
+function NextScanLabel({ target }: { target: Target }) {
+  return (
+    <span>
+      Next scan: {new Date(target.nextScanAt).toLocaleString(undefined, LAST_SCAN_DATE_FORMAT)}
+      {target.estimatedScanDurationSeconds != null && (
+        <span className="text-slate-500"> (~{formatEstimatedDuration(target.estimatedScanDurationSeconds)})</span>
+      )}
     </span>
   );
 }
