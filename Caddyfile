@@ -13,6 +13,12 @@ mcp.bloodhound-asm.com {
     @mcp {
         path /mcp* /oauth2* /.well-known/* /login*
     }
-    reverse_proxy @mcp central-server:8080
-    respond 404
+    # Caddy executes directives in its own fixed internal order, not file order - plain
+    # `reverse_proxy @mcp ...` then `respond 404` would silently run respond() first on
+    # every request (respond sits earlier than reverse_proxy in that fixed order),
+    # never reaching the proxy at all. `route` forces literal, as-written ordering.
+    route {
+        reverse_proxy @mcp central-server:8080
+        respond 404
+    }
 }
