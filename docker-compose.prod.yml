@@ -1,0 +1,114 @@
+# Production override - layer on top of the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Only Caddy is meant to be internet-facing, terminating TLS and reverse-
+# proxying to webui over the internal app_net - see Caddyfile. central-
+# server's 8080 port in the base file is dev convenience (direct API/swagger
+# access) - dropped here per that service's own comment. webui's
+# ApiProxyController already forwards every /api/v1/**, /scim/v2/**, and
+# /swagger-ui.html route a real browser needs, so nothing is lost by not
+# publishing it directly either.
+services:
+  central-server:
+    ports: !override []
+    # central-server's own browser/MCP-client-reachable address (see application.yml's
+    # bloodhound.mcp.issuer-uri) - left at the http://localhost:8080 default in prod, this gets
+    # embedded as the `iss` claim in every MCP OAuth token and in the OAuth discovery documents,
+    # which no real external MCP client could ever use. Must match the scoped Caddy site above.
+    environment:
+      MCP_ISSUER_URI: https://mcp.bloodhound-asm.com
+
+  webui:
+    ports: !override []
+
+  # These three join gluetun's network namespace entirely (see gluetun's own
+  # comment below) instead of their normal networks, so their outbound
+  # traffic egresses through Mullvad. localhost replaces the Docker-DNS
+  # hostnames worker used to reach zap/screenshotter, since a container on
+  # network_mode: service:X has no DNS name of its own on the shared
+  # networks - only gluetun's does. replicas dropped to 1 while behind the
+  # shared namespace: multiple worker replicas would all try to bind the
+  # same actuator port (8081) inside that one shared namespace and collide.
+  worker:
+    networks: !override []
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_started
+    environment:
+      ZAP_BASE_URL: http://localhost:8080
+      SCREENSHOTTER_BASE_URL: http://localhost:3000
+    deploy:
+      replicas: 1
+
+  zap:
+    networks: !override []
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_started
+
+  screenshotter:
+    networks: !override []
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      webui:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  # VPN egress for the scanning containers (worker, zap, screenshotter) - see
+  # the worker/zap/screenshotter network_mode overrides below, which join
+  # this container's network namespace instead of their own. gluetun's
+  # built-in firewall fails closed: if the WireGuard tunnel drops, its
+  # companions lose connectivity entirely rather than falling back to the
+  # host's direct route - the "always enabled" behaviour that was asked for,
+  # not just "on by default." Deliberately NOT a host-wide VPN: SSH and
+  # Caddy/webui stay on the server's normal connection so management access
+  # and the public site are unaffected either way.
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: unless-stopped
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${MULLVAD_WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_ADDRESSES: ${MULLVAD_WIREGUARD_ADDRESSES}
+      SERVER_COUNTRIES: Sweden
+    networks:
+      - app_net
+      - scan_net
+      - screenshot_net
+      - targets_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+volumes:
+  caddy_data:
+  caddy_config:
