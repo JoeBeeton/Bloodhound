@@ -167,6 +167,15 @@ public class McpSecurityConfig {
                     mcpAuthorization.authorizationServer(issuerUri);
                     mcpAuthorization.jwtDecoder(mcpJwtDecoder);
                     mcpAuthorization.validateAudienceClaim(true);
+                    // RFC 9728's scopes_supported was missing from /.well-known/oauth-protected-resource -
+                    // confirmed live: an MCP client (e.g. `claude mcp add`) has no other way to learn it
+                    // should request "mcp.read" at /oauth2/authorize, so it asked for none. Spring AS then
+                    // offered an empty scope set at consent, the user approved it (there was nothing to
+                    // approve), and the resulting token carried no scopes at all - always then rejected by
+                    // this chain's hasAuthority("SCOPE_mcp.read") above. ConsentRequiringRegisteredClientRepository
+                    // already grants the client itself "mcp.read" (its own javadoc explains why), but that
+                    // only fixes what the client is ALLOWED to ask for, not what it actually asks for.
+                    mcpAuthorization.protectedResourceMetadataCustomizer(builder -> builder.scope("mcp.read"));
                 })
                 .addFilterAfter(
                         new McpEnabledGuardFilter(userRepository, organizationRepository),
