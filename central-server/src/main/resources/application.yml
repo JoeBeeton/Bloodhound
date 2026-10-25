@@ -17,6 +17,14 @@ spring:
 
 server:
   port: 8080
+  # Caddy sets X-Forwarded-Proto: https on every request it proxies in (see Caddyfile), but
+  # Spring ignores that header by default - without this, URLs it builds from the raw incoming
+  # request (notably the OAuth2 protected-resource metadata's resource identifier, RFC 9728)
+  # come out as http://mcp.bloodhound-asm.com/... instead of https://, failing MCP clients'
+  # audience check against the https:// issuer in MCP_ISSUER_URI. Safe to trust unconditionally:
+  # central-server's port is never published to the host in prod (docker-compose.prod.yml),
+  # only Caddy can reach it, so nothing else can spoof this header directly.
+  forward-headers-strategy: framework
 
 management:
   endpoints:
