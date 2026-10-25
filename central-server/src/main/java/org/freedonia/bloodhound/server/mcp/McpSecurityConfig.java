@@ -71,6 +71,35 @@ public class McpSecurityConfig {
         // itself, and "?error" is a query string, not a path segment, so it doesn't need a
         // wildcard either.
         http.securityMatcher("/oauth2/**", "/.well-known/**", "/login")
+                // /.well-known/oauth-protected-resource (RFC 9728) is served from THIS chain, not
+                // mcpResourceServerFilterChain below - FilterChainProxy picks the first @Order-matching
+                // chain for a request, and this chain's securityMatcher (".well-known/**") beats the
+                // other chain's ("/mcp/**") for that path, so whatever that OTHER chain configures
+                // never runs here (confirmed live via security debug logging: this chain's own filter
+                // list already includes OAuth2ProtectedResourceMetadataFilter). That filter exists here
+                // because McpAuthorizationServerConfigurer.dynamicClientRegistration(true) below makes
+                // Spring's own OAuth2AuthorizationServerConfigurer auto-add a default, uncustomized
+                // oauth2ResourceServer() to THIS HttpSecurity - with no scopes_supported claim, since
+                // nothing told it any scopes exist. Without that claim, an MCP client has no way to
+                // learn it should request "mcp.read" at /oauth2/authorize: it asks for no scope, Spring
+                // AS offers nothing to approve at consent, and the resulting token - though technically
+                // valid - carries no scopes, always then rejected by mcpResourceServerFilterChain's
+                // hasAuthority("SCOPE_mcp.read") (confirmed live: exactly this sequence, end to end, see
+                // commit history). This explicit call reuses that same auto-added configurer (Spring
+                // Security keys oauth2ResourceServer() by type per HttpSecurity, so a second call merges
+                // rather than replacing) purely to attach scopes_supported - everything else about it
+                // (jwt decoding) is still effectively Spring AS's own default - jwt(withDefaults())
+                // is set here too (duplicating what McpAuthorizationServerConfigurer would otherwise
+                // add on its own) because configurer init() order depends on registration order, not
+                // call-site order in this method: calling oauth2ResourceServer() here with ONLY
+                // protectedResourceMetadata() set (confirmed live) let its own init() run and call
+                // validateConfiguration() before McpAuthorizationServerConfigurer's init() got a
+                // chance to add jwt(withDefaults()) itself - startup crashed with "Jwt and Opaque
+                // Token are the only supported formats ... and neither was found". Setting jwt()
+                // here too makes this call self-sufficient regardless of that ordering.
+                .oauth2ResourceServer(rs -> rs.jwt(withDefaults())
+                        .protectedResourceMetadata(
+                                metadata -> metadata.protectedResourceMetadataCustomizer(builder -> builder.scope("mcp.read"))))
                 // formLogin's own automatic permitAll-for-the-login-page only fires for its
                 // auto-generated default page - setting loginPage("/login") below to
                 // McpLoginConsentPageController's branded one turned that off (confirmed live: an
@@ -167,15 +196,6 @@ public class McpSecurityConfig {
                     mcpAuthorization.authorizationServer(issuerUri);
                     mcpAuthorization.jwtDecoder(mcpJwtDecoder);
                     mcpAuthorization.validateAudienceClaim(true);
-                    // RFC 9728's scopes_supported was missing from /.well-known/oauth-protected-resource -
-                    // confirmed live: an MCP client (e.g. `claude mcp add`) has no other way to learn it
-                    // should request "mcp.read" at /oauth2/authorize, so it asked for none. Spring AS then
-                    // offered an empty scope set at consent, the user approved it (there was nothing to
-                    // approve), and the resulting token carried no scopes at all - always then rejected by
-                    // this chain's hasAuthority("SCOPE_mcp.read") above. ConsentRequiringRegisteredClientRepository
-                    // already grants the client itself "mcp.read" (its own javadoc explains why), but that
-                    // only fixes what the client is ALLOWED to ask for, not what it actually asks for.
-                    mcpAuthorization.protectedResourceMetadataCustomizer(builder -> builder.scope("mcp.read"));
                 })
                 .addFilterAfter(
                         new McpEnabledGuardFilter(userRepository, organizationRepository),
