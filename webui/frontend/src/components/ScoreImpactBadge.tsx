@@ -1,4 +1,5 @@
 import type { ScoreImpact } from "../lib/types";
+import { unscoredCategoryExplanation } from "../lib/scoring";
 
 /**
  * "+2.34 if fixed" for a finding that genuinely moves the score, or an honest
@@ -15,7 +16,7 @@ export function ScoreImpactBadge({ impact }: { impact: ScoreImpact | null | unde
 
   if (!impact.affectsScore) {
     return (
-      <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500" title="This finding's category isn't part of the overall score">
+      <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500" title={unscoredCategoryExplanation(impact.category)}>
         Doesn&rsquo;t affect score
       </span>
     );
@@ -23,12 +24,14 @@ export function ScoreImpactBadge({ impact }: { impact: ScoreImpact | null | unde
 
   const delta = impact.overallScoreDelta ?? 0;
   const label = delta > 0 ? `+${delta.toFixed(2)} if fixed` : delta < 0 ? `${delta.toFixed(2)} if fixed` : "No score change";
+  const categoryRange = `${impact.category}: ${impact.categoryScoreBefore?.toFixed(2)} → ${impact.categoryScoreAfter?.toFixed(2)}`;
+  const title =
+    delta === 0
+      ? `${categoryRange} (already at that level from other findings in this category - fixing this one specifically doesn't move it)`
+      : categoryRange;
 
   return (
-    <span
-      className="font-mono text-[10px] font-bold uppercase tracking-widest text-neon-cyan"
-      title={`${impact.category}: ${impact.categoryScoreBefore?.toFixed(2)} → ${impact.categoryScoreAfter?.toFixed(2)}`}
-    >
+    <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-neon-cyan" title={title}>
       {label}
     </span>
   );

@@ -1,4 +1,5 @@
 import { SCORE_CATEGORIES, type ScoreCategory } from "../lib/types";
+import { CATEGORY_WEIGHTS, UNSCORED_CATEGORY_REASON } from "../lib/scoring";
 
 const CATEGORY_LABELS: Record<ScoreCategory, string> = {
   EXPOSURE: "Exposure",
@@ -26,8 +27,12 @@ export function CategoryBreakdown({ categoryScores }: { categoryScores: Record<S
         const score = categoryScores?.[category];
         return (
           <div key={category} className="flex items-center gap-3">
-            <span className="w-40 shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400">
+            <span
+              className="w-40 shrink-0 font-mono text-xs uppercase tracking-widest text-slate-400"
+              title={`${Math.round(CATEGORY_WEIGHTS[category] * 100)}% of the overall score`}
+            >
               {CATEGORY_LABELS[category]}
+              <span className="ml-1 text-slate-600">{Math.round(CATEGORY_WEIGHTS[category] * 100)}%</span>
             </span>
             <div className="h-2 flex-1 overflow-hidden rounded-full bg-void">
               {score !== undefined && (
@@ -40,6 +45,14 @@ export function CategoryBreakdown({ categoryScores }: { categoryScores: Record<S
           </div>
         );
       })}
+      <p
+        className="mt-1 border-t border-neon-cyan/10 pt-3 font-mono text-[10px] leading-relaxed text-slate-500"
+        title={Object.entries(UNSCORED_CATEGORY_REASON)
+          .map(([cat, reason]) => `${cat}: ${reason}`)
+          .join("\n")}
+      >
+        Findings tagged BRAND, WHOIS, BREACH, or COMPOUND are tracked but never factored in above - hover for why.
+      </p>
     </div>
   );
 }

@@ -287,7 +287,9 @@ export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
  * formula, so it correctly accounts for the diminishing-returns discount shifting
  * across the findings that remain). affectsScore is false - and every other field
  * null - for a finding in a category outside the fixed scoring weight table (WHOIS,
- * WEB_APP): those can never move the score, so there's nothing to report.
+ * BREACH, BRAND, COMPOUND - see CATEGORY_WEIGHTS in lib/scoring.ts, mirroring
+ * ScoringEngine.CATEGORY_WEIGHTS on the backend): those can never move the score, so
+ * there's nothing to report.
  * scoreImpact itself is null when the endpoint didn't compute one at all (e.g. a
  * historical run-diff view, or a status=RESOLVED findings query).
  */
