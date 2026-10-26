@@ -17,20 +17,20 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
  * how much each individual call can store, so one registration can't itself be an unbounded-size
  * write (e.g. megabytes of text as a single "name").
  *
- * <p>Also grants {@link #MCP_READ_SCOPE} to any client whose requested scope set is empty. RFC
- * 7591 requires a Dynamic Client Registration request to omit {@code scope} entirely and leaves
- * the authorization server to decide what to grant (confirmed live: Spring's own
- * DEFAULT_SCOPE_VALIDATOR rejects a registration that DOES specify one, with "scope must not be
- * set during Dynamic Client Registration"). A functional review found nothing in this app ever
- * did the other half of that: a DCR-registered client was left with a permanently empty scope
- * set, and the resource-server chain requires {@code SCOPE_mcp.read} (see McpSecurityConfig) - so
- * every self-registered MCP client, the officially-supported way a real client like Claude
- * Desktop connects, could complete the entire OAuth dance and still never successfully call a
- * single tool, always landing on invalid_scope the moment it asked for mcp.read at /oauth2/
- * authorize. mcp.read is this AS's only issuable scope (see McpSecurityConfig's own comment), so
- * granting it here is exactly the RFC's "server decides" step, not a broadening of what any
- * client can get - a client that arrives with a non-empty scope set (a manually pre-registered
- * one, if this app ever adds that path) is left alone.
+ * <p>Also grants {@link #MCP_READ_SCOPE} to any client whose requested scope set is empty. A
+ * functional review found nothing in this app ever did the other half of that: a DCR-registered
+ * client that (reasonably) omits {@code scope} entirely - RFC 7591 leaves the authorization
+ * server to decide what to grant in that case - was left with a permanently empty scope set, and
+ * the resource-server chain requires {@code SCOPE_mcp.read} (see McpSecurityConfig) - so every
+ * self-registered MCP client, the officially-supported way a real client like Claude Desktop
+ * connects, could complete the entire OAuth dance and still never successfully call a single
+ * tool, always landing on invalid_scope the moment it asked for mcp.read at /oauth2/authorize.
+ * mcp.read is this AS's only issuable scope (see McpSecurityConfig's own comment), so granting it
+ * here is exactly the RFC's "server decides" step, not a broadening of what any client can get -
+ * a client that arrives with a non-empty scope set is left alone. (A client that instead requests
+ * {@code mcp.read} explicitly at DCR, e.g. because it read scopes_supported off the
+ * protected-resource metadata, is also left alone here - see McpSecurityConfig's
+ * dynamicClientRegistrationValidator for why that's no longer rejected before it gets this far.)
  *
  * <p>Also forces {@code requireProofKey(true)} (mandatory PKCE) on every client. A security
  * review found DCR is reachable unauthenticated (rate-limited, see DcrRateLimiter, but not

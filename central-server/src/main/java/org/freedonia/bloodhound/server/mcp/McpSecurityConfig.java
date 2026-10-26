@@ -7,6 +7,8 @@ import org.freedonia.bloodhound.server.orgs.OrganizationRepository;
 import org.freedonia.bloodhound.server.orgs.UserRepository;
 import org.springaicommunity.mcp.security.authorizationserver.config.McpAuthorizationServerConfigurer;
 import org.springaicommunity.mcp.security.server.config.McpServerOAuth2Configurer;
+import java.util.List;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,7 +16,13 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.core.Ordered;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientRegistrationAuthenticationContext;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientRegistrationAuthenticationToken;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientRegistrationAuthenticationValidator;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -121,6 +129,24 @@ public class McpSecurityConfig {
                 .with(
                         McpAuthorizationServerConfigurer.mcpAuthorizationServer()
                                 .dynamicClientRegistration(true)
+                                // Spring's built-in DEFAULT_SCOPE_VALIDATOR hard-rejects (invalid_scope)
+                                // ANY non-empty scope in a DCR request, full stop - its RFC 7591 reading
+                                // is that the server alone decides scope, so a client shouldn't ask.
+                                // That was fine while nothing ever told clients what scope existed, but
+                                // once the protectedResourceMetadata customizer above started advertising
+                                // scopes_supported=["mcp.read"] (see that comment), a spec-following MCP
+                                // client reads it and dutifully echoes "mcp.read" back at registration -
+                                // confirmed live: DCR started failing with exactly the default validator's
+                                // "Invalid Client Registration: scope"/invalid_scope, the moment a real
+                                // client picked up the new metadata. Swapping only the scope half (keeping
+                                // Spring's own redirect_uri/jwk_set_uri checks) to allow the one scope this
+                                // AS ever issues - still rejecting anything else, same as before - fixes
+                                // that without reopening DCR to arbitrary attacker-chosen scope names.
+                                .dynamicClientRegistrationValidator(
+                                        OAuth2ClientRegistrationAuthenticationValidator.DEFAULT_REDIRECT_URI_VALIDATOR
+                                                .andThen(OAuth2ClientRegistrationAuthenticationValidator
+                                                        .DEFAULT_JWK_SET_URI_VALIDATOR)
+                                                .andThen(McpSecurityConfig::validateDcrScope))
                                 // Branded replacements for Spring's plain default consent page -
                                 // see McpLoginConsentPageController's own javadoc for why this
                                 // stopped being a reasonable scope cut once self-registered
@@ -219,5 +245,28 @@ public class McpSecurityConfig {
         registration.addUrlPatterns("/oauth2/register");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         return registration;
+    }
+
+    /**
+     * Replaces Spring's {@code DEFAULT_SCOPE_VALIDATOR} half of DCR validation - see the
+     * {@code dynamicClientRegistrationValidator} call above for why. Accepts an omitted/empty
+     * scope (ConsentRequiringRegisteredClientRepository then grants {@code mcp.read} itself, per
+     * RFC 7591's "server decides" default) or a request for exactly {@code mcp.read} - this AS's
+     * only issuable scope (see mcpResourceServerFilterChain's own comment) - and rejects anything
+     * else with the same invalid_scope error Spring's own validator would have used, so DCR still
+     * can't be used to register a client under an arbitrary, made-up scope name.
+     */
+    private static final Set<String> SUPPORTED_DCR_SCOPES = Set.of("mcp.read");
+
+    private static void validateDcrScope(OAuth2ClientRegistrationAuthenticationContext context) {
+        OAuth2ClientRegistrationAuthenticationToken authentication =
+                (OAuth2ClientRegistrationAuthenticationToken) context.getAuthentication();
+        List<String> requestedScopes = authentication.getClientRegistration().getScopes();
+        if (requestedScopes != null && !SUPPORTED_DCR_SCOPES.containsAll(requestedScopes)) {
+            throw new OAuth2AuthenticationException(new OAuth2Error(
+                    OAuth2ErrorCodes.INVALID_SCOPE,
+                    "Invalid Client Registration: scope",
+                    "https://datatracker.ietf.org/doc/html/rfc7591#section-3.2.2"));
+        }
     }
 }
