@@ -9,6 +9,7 @@ dependencyManagement {
         // Spring AI's MCP server support (spring-ai-starter-mcp-server-webmvc below) needs its
         // own BOM alongside Boot's - Spring AI 2.0.x is the branch that pairs with Boot 4.0/4.1.
         mavenBom("org.springframework.ai:spring-ai-bom:2.0.1")
+        mavenBom("org.testcontainers:testcontainers-bom:1.21.4")
     }
 }
 
@@ -50,6 +51,15 @@ dependencies {
     implementation("org.springaicommunity:mcp-authorization-server-spring-boot:0.1.14")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // Real Postgres for McpOAuth2FlowIntegrationTest - the MCP OAuth2 filter chains (DCR scope
+    // validation, login/consent, token issuance, resource-server bearer auth) can't be exercised
+    // by a mocked unit test: every bug fixed this round (missing scopes_supported, DCR's default
+    // scope validator rejecting mcp.read) was invisible to the existing mocked suite and only
+    // found by driving real HTTP requests through the actual filter chain. Flyway's migrations
+    // use Postgres-specific syntax (gen_random_uuid(), etc.), so an in-memory DB (H2) won't do.
+    testImplementation("org.springframework.boot:spring-boot-testcontainers")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.testcontainers:postgresql")
 }
 
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
