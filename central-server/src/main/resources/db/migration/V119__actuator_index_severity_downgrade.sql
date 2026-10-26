@@ -1,0 +1,13 @@
+-- EXPOSURE_ACTUATOR_INDEX was bumped from MEDIUM to HIGH in V37 alongside
+-- EXPOSURE_ACTUATOR_THREADDUMP/EXPOSURE_ACTUATOR_LOGGERS, as one of three endpoints that
+-- "disclose real internal state". That reasoning holds for threaddump/loggers, which stay HIGH,
+-- but not for the bare actuator index: per ExposedPathDecisionLogic's own decide() method, this
+-- rule only ever fires when none of the sensitive subpath rules fired - it specifically means
+-- "the endpoint map is visible, nothing it points to actually disclosed anything", a same-tier
+-- concern to EXPOSURE_ACTUATOR_HEALTH/EXPOSURE_ACTUATOR_INFO (service/version fingerprinting, an
+-- uptime oracle), not the real state disclosure threaddump/loggers represent. Re-graded to LOW to
+-- match the worker's own RuleMeta severity for this rule_id (see
+-- ExposedPathDecisionLogic.COPY) - these must stay in sync since a finding's actual severity
+-- comes from the worker at scan time, not from this column (which is display-only, for the Rules
+-- admin page); leaving it mismatched would make that page lie about what a new finding will show.
+UPDATE rules_catalog SET default_severity = 'LOW', weight = 0.4 WHERE rule_id = 'EXPOSURE_ACTUATOR_INDEX';

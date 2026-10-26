@@ -127,13 +127,57 @@ class TyposquatDecisionLogicTest {
         assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("BRAND_TYPOSQUAT_MX_CONFIGURED");
     }
 
+    /**
+     * A security review found every live-site CRITICAL it spot-checked where the visual-similarity
+     * comparison was weak or unavailable turned out to be an unrelated, coincidentally-named real
+     * business or a parked page, not impersonation - "hosts a live page" alone, with no visual-clone
+     * evidence, is downgraded to HIGH. No comparison available at all (screenshotter failure on the
+     * real target, or the candidate's own screenshot not yet taken) is treated the same as a weak
+     * match: there's no signal either way to justify CRITICAL.
+     */
     @Test
-    void liveScreenshotCaptured_addsHostingLiveSiteEscalation() {
+    void liveScreenshotCaptured_noSimilarityComparisonAvailable_isHighNotCritical() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
                 "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, null, false)));
 
         assertThat(findings).extracting(RawFinding::ruleId)
                 .containsExactlyInAnyOrder("TYPOSQUAT_DOMAIN_REGISTERED", "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE");
+        RawFinding escalation = findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(escalation.severity()).isEqualTo(Severity.HIGH);
+    }
+
+    @Test
+    void liveScreenshotCaptured_lowVisualSimilarity_isHighNotCritical() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 15, false)));
+
+        RawFinding escalation = findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(escalation.severity()).isEqualTo(Severity.HIGH);
+    }
+
+    @Test
+    void liveScreenshotCaptured_highVisualSimilarity_isCritical() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 92, false)));
+
+        RawFinding escalation = findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(escalation.severity()).isEqualTo(Severity.CRITICAL);
+    }
+
+    @Test
+    void liveScreenshotCaptured_exactlyAtThreshold_isCritical() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 80, false)));
+
         RawFinding escalation = findings.stream()
                 .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))
                 .findFirst()

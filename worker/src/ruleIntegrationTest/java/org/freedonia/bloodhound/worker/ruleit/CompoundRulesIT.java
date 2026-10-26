@@ -86,6 +86,7 @@ class CompoundRulesIT {
                 "OPEN",
                 null,
                 now,
-                now);
+                now,
+                null);
     }
 }

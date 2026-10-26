@@ -660,7 +660,16 @@ public final class ExposedPathDecisionLogic {
             Map.entry("EXPOSURE_ACTUATOR_LOGGERS", new RuleMeta(Severity.HIGH,
                     "Spring Boot Actuator loggers endpoint exposed",
                     "The /actuator/loggers endpoint is publicly reachable.")),
-            Map.entry("EXPOSURE_ACTUATOR_INDEX", new RuleMeta(Severity.HIGH,
+            // LOW, not HIGH: this rule only ever fires when NONE of the sensitive subpaths above
+            // fired (see decide()'s !anyActuatorSubpathFired gate) - it's specifically the "just
+            // the endpoint map is visible, nothing it points to actually disclosed anything"
+            // case. A security review found this bundled into the same HIGH re-grade as
+            // THREADDUMP/LOGGERS in V37 without that distinction: those two disclose real
+            // internal state on their own, this one is a same-tier concern to the HEALTH/INFO
+            // endpoints below (near-universally intentional, service/version fingerprinting and
+            // an uptime oracle at most) - and its own description text already only promises
+            // "lists management sub-endpoints", nothing more.
+            Map.entry("EXPOSURE_ACTUATOR_INDEX", new RuleMeta(Severity.LOW,
                     "Spring Boot Actuator index exposed",
                     "The base /actuator endpoint is publicly reachable and lists management sub-endpoints.")),
             Map.entry("EXPOSURE_ACTUATOR_HEALTH", new RuleMeta(Severity.INFO,

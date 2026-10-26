@@ -89,9 +89,20 @@ public final class TyposquatDecisionLogic {
             // failure on the real site suppresses this finding for every candidate in the batch,
             // not just a missed comparison score. Best-effort, not a guarantee.
             if (candidate.screenshotPng() != null) {
+                // CRITICAL only when the visual-similarity comparison itself says this looks like
+                // a clone (same >= 80 threshold the description text above already treats as "a
+                // strong additional signal") - a security review found every live-site CRITICAL it
+                // spot-checked where the comparison was weak or unavailable turned out to be an
+                // unrelated, coincidentally-named real business or a parked/for-sale page, not
+                // impersonation. "Hosts a live, renderable page" alone is real signal - a lookalike
+                // domain going from parked to actively serving content is worth knowing about - just
+                // not CRITICAL-alarm-worthy on its own without the visual-clone evidence to back it.
+                Severity liveSiteSeverity = candidate.visualSimilarityPercent() != null && candidate.visualSimilarityPercent() >= 80
+                        ? Severity.CRITICAL
+                        : Severity.HIGH;
                 findings.add(new RawFinding(
                         "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE",
-                        Severity.CRITICAL,
+                        liveSiteSeverity,
                         Category.BRAND,
                         "Lookalike domain is hosting a live website: " + candidate.domain(),
                         "This registered lookalike domain (a " + humanType + " variant of this target's own) is "
