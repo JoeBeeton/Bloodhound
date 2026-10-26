@@ -15,6 +15,11 @@ spring:
         # STREAMABLE, not SSE: the current MCP spec's standard transport - SSE is deprecated.
         protocol: STREAMABLE
 
+logging:
+  level:
+    org.springframework.security: DEBUG
+    org.springframework.security.oauth2: TRACE
+
 server:
   port: 8080
   # Caddy sets X-Forwarded-Proto: https on every request it proxies in (see Caddyfile), but
