@@ -99,7 +99,18 @@ public class SubdomainEnumModule implements ScanModule {
         Map<String, String> cnames = dnsResolver.resolveCnames(discovered);
         Map<String, DanglingCnameChecker.Result> cnameChecks = cnameChecker.checkAll(cnames);
         Map<String, CloudBucketChecker.Result> bucketChecks = bucketChecker.checkAll(cnames);
-        Map<String, List<String>> nameservers = dnsResolver.resolveNameServers(discovered);
+        // Never NS-check a hostname we already know has a CNAME: a name with a CNAME record
+        // cannot carry any other RRset at that same owner name per RFC 1035 S3.6.2, so it
+        // structurally cannot also have independent NS delegation. Skipping these before the
+        // lookup matters because dnsjava's Lookup (used by resolveNameServers) transparently
+        // follows CNAME chains when asked for NS records - querying NS for a CNAME'd hostname
+        // silently returns the CNAME target's own zone's nameservers instead, misattributed to
+        // this hostname. That previously meant a subdomain CNAME'd to some third party's
+        // resource (itself hosted on, say, Route53) got treated as if it were NS-delegated to
+        // that provider and its zone deprovisioned - a confirmed-takeover false positive with no
+        // real delegation behind it at all.
+        List<String> nsEligibleHosts = excludeCnamedHosts(discovered, cnames);
+        Map<String, List<String>> nameservers = dnsResolver.resolveNameServers(nsEligibleHosts);
         Map<String, NsTakeoverChecker.Result> nsTakeoverChecks = nsTakeoverChecker.checkAll(nameservers);
 
         List<Map<String, Object>> subdomainEntries = new ArrayList<>();
@@ -133,5 +144,15 @@ public class SubdomainEnumModule implements ScanModule {
         }
 
         return new ModuleResult(List.of(), Map.of("subdomains", subdomainEntries, "totalDiscovered", merged.size()));
+    }
+
+    /**
+     * Pure filter, split out purely so it's unit-testable without a real DNS resolver: a
+     * hostname with a resolved CNAME is excluded from NS-delegation takeover checking, since a
+     * name with a CNAME record cannot also carry an NS RRset at that same owner name (RFC 1035
+     * S3.6.2) - any such hostname is therefore not a candidate for real NS delegation at all.
+     */
+    static List<String> excludeCnamedHosts(List<String> discovered, Map<String, String> cnames) {
+        return discovered.stream().filter(hostname -> !cnames.containsKey(hostname)).toList();
     }
 }
