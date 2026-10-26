@@ -56,7 +56,7 @@ class FindingControllerTest {
     private Finding finding(UUID id, String status) {
         return new Finding(
                 id, "bh-test-1", UUID.randomUUID(), targetId, "HTTP", "RULE_X", "HIGH", "EXPOSURE", "title", "desc", null,
-                "asset", UUID.randomUUID(), status, null, Instant.now(), Instant.now());
+                "asset", UUID.randomUUID(), status, null, Instant.now(), Instant.now(), null);
     }
 
     private void stubCommonListDeps() {
@@ -426,10 +426,10 @@ class FindingControllerTest {
 
     @Test
     void dismissFinding_viewerRole_forbidden_neverMutates() {
-        assertThatThrownBy(() -> controller.dismissFinding(UUID.randomUUID(), principal))
+        assertThatThrownBy(() -> controller.dismissFinding(UUID.randomUUID(), null, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
-        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any());
+        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any(), any());
     }
 
     @Test
@@ -437,8 +437,8 @@ class FindingControllerTest {
         UUID findingId = UUID.randomUUID();
         when(findingRepository.findById(findingId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.dismissFinding(findingId, analyst)).isInstanceOf(ResponseStatusException.class);
-        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any());
+        assertThatThrownBy(() -> controller.dismissFinding(findingId, null, analyst)).isInstanceOf(ResponseStatusException.class);
+        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any(), any());
     }
 
     @Test
@@ -447,8 +447,8 @@ class FindingControllerTest {
         when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId)));
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.dismissFinding(findingId, analyst)).isInstanceOf(ResponseStatusException.class);
-        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any());
+        assertThatThrownBy(() -> controller.dismissFinding(findingId, null, analyst)).isInstanceOf(ResponseStatusException.class);
+        verify(findingRepository, org.mockito.Mockito.never()).dismiss(any(), any());
     }
 
     @Test
@@ -456,14 +456,31 @@ class FindingControllerTest {
         UUID findingId = UUID.randomUUID();
         when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId)));
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(findingRepository.dismiss(findingId)).thenReturn(1);
+        when(findingRepository.dismiss(findingId, null)).thenReturn(1);
 
-        ResponseEntity<?> response = controller.dismissFinding(findingId, analyst);
+        ResponseEntity<?> response = controller.dismissFinding(findingId, null, analyst);
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
         verify(auditLogRepository).record(
                 eq(orgId), eq(analyst.userId()), eq(analyst.email()), eq("FINDING_DISMISSED"), eq("FINDING"),
                 eq(findingId.toString()), any());
+    }
+
+    @Test
+    void dismissFinding_withReason_passedThroughToRepositoryAndAuditLog() {
+        UUID findingId = UUID.randomUUID();
+        when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId)));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.dismiss(findingId, "false positive, third-party CDN")).thenReturn(1);
+
+        ResponseEntity<?> response =
+                controller.dismissFinding(findingId, new FindingController.StatusChangeRequest("false positive, third-party CDN"), analyst);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(findingRepository).dismiss(findingId, "false positive, third-party CDN");
+        verify(auditLogRepository).record(
+                eq(orgId), eq(analyst.userId()), eq(analyst.email()), eq("FINDING_DISMISSED"), eq("FINDING"),
+                eq(findingId.toString()), org.mockito.ArgumentMatchers.contains("false positive, third-party CDN"));
     }
 
     @Test
@@ -476,13 +493,51 @@ class FindingControllerTest {
         UUID findingId = UUID.randomUUID();
         when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId, "RESOLVED")));
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(findingRepository.dismiss(findingId)).thenReturn(0);
+        when(findingRepository.dismiss(findingId, null)).thenReturn(0);
 
-        ResponseEntity<?> response = controller.dismissFinding(findingId, analyst);
+        ResponseEntity<?> response = controller.dismissFinding(findingId, null, analyst);
 
         assertThat(response.getStatusCode().value()).isEqualTo(409);
         assertThat(((FindingController.ErrorMessageResponse) response.getBody()).message()).contains("open finding");
         verify(auditLogRepository, org.mockito.Mockito.never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void acceptRiskFinding_openFinding_succeeds_recordsAudit() {
+        UUID findingId = UUID.randomUUID();
+        when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId)));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.acceptRisk(findingId, "risk accepted, compensating control in place")).thenReturn(1);
+
+        ResponseEntity<?> response = controller.acceptRiskFinding(
+                findingId, new FindingController.StatusChangeRequest("risk accepted, compensating control in place"), analyst);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(auditLogRepository).record(
+                eq(orgId), eq(analyst.userId()), eq(analyst.email()), eq("FINDING_ACCEPTED_RISK"), eq("FINDING"),
+                eq(findingId.toString()), org.mockito.ArgumentMatchers.contains("risk accepted, compensating control in place"));
+    }
+
+    @Test
+    void acceptRiskFinding_notActuallyOpen_conflictWithARealMessage_neverRecordsAudit() {
+        UUID findingId = UUID.randomUUID();
+        when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId, "DISMISSED")));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.acceptRisk(findingId, null)).thenReturn(0);
+
+        ResponseEntity<?> response = controller.acceptRiskFinding(findingId, null, analyst);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(((FindingController.ErrorMessageResponse) response.getBody()).message()).contains("open finding");
+        verify(auditLogRepository, org.mockito.Mockito.never()).record(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void acceptRiskFinding_viewerRole_forbidden_neverMutates() {
+        assertThatThrownBy(() -> controller.acceptRiskFinding(UUID.randomUUID(), null, principal))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(findingRepository, org.mockito.Mockito.never()).acceptRisk(any(), any());
     }
 
     @Test
@@ -501,6 +556,19 @@ class FindingControllerTest {
     }
 
     @Test
+    void reopenFinding_acceptedRiskFinding_succeeds() {
+        // reopen() now accepts either sticky status - see FindingRepository#reopen's own javadoc.
+        UUID findingId = UUID.randomUUID();
+        when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId, "ACCEPTED_RISK")));
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(findingRepository.reopen(findingId)).thenReturn(1);
+
+        ResponseEntity<?> response = controller.reopenFinding(findingId, analyst);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+    }
+
+    @Test
     void reopenFinding_notActuallyDismissed_conflictWithARealMessage() {
         UUID findingId = UUID.randomUUID();
         when(findingRepository.findById(findingId)).thenReturn(Optional.of(finding(findingId, "OPEN")));
@@ -510,6 +578,6 @@ class FindingControllerTest {
         ResponseEntity<?> response = controller.reopenFinding(findingId, analyst);
 
         assertThat(response.getStatusCode().value()).isEqualTo(409);
-        assertThat(((FindingController.ErrorMessageResponse) response.getBody()).message()).contains("dismissed finding");
+        assertThat(((FindingController.ErrorMessageResponse) response.getBody()).message()).contains("dismissed");
     }
 }

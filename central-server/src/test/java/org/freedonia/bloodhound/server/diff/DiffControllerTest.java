@@ -135,6 +135,6 @@ class DiffControllerTest {
     private Finding finding() {
         return new Finding(
                 UUID.randomUUID(), "bh-test-1", UUID.randomUUID(), targetId, "HTTP", "RULE_X", "HIGH", "EXPOSURE", "title", "desc",
-                null, "asset", UUID.randomUUID(), "OPEN", null, Instant.now(), Instant.now());
+                null, "asset", UUID.randomUUID(), "OPEN", null, Instant.now(), Instant.now(), null);
     }
 }

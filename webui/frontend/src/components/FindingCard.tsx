@@ -75,9 +75,25 @@ export function FindingCard({
           {finding.status === "DISMISSED" && (
             <span
               className="rounded border border-slate-600 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400"
-              title="Manually dismissed - open the finding to reopen it"
+              title={
+                finding.statusReason
+                  ? `Manually dismissed: ${finding.statusReason} - open the finding to reopen it`
+                  : "Manually dismissed - open the finding to reopen it"
+              }
             >
               Dismissed
+            </span>
+          )}
+          {finding.status === "ACCEPTED_RISK" && (
+            <span
+              className="rounded border border-neon-amber/40 px-1 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-neon-amber/80"
+              title={
+                finding.statusReason
+                  ? `Risk accepted: ${finding.statusReason} - open the finding to reopen it`
+                  : "Risk accepted - open the finding to reopen it"
+              }
+            >
+              Accepted Risk
             </span>
           )}
           {isTier2Finding(finding.moduleType) && (

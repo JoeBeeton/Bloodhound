@@ -44,7 +44,8 @@ class Tier1OnlyScoringTest {
                 "OPEN",
                 null,
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                null);
     }
 
     private static ScoreResult tier1Only(List<Finding> openFindings) {

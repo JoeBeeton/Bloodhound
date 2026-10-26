@@ -122,7 +122,7 @@ class McpReadToolsTest {
         Finding finding = new Finding(
                 UUID.randomUUID(), "bh-example.com-1", UUID.randomUUID(), targetId, "HTTP_HEADERS", "RULE_1",
                 "HIGH", "MISCONFIG", "Missing header", "desc", "{}", "example.com", UUID.randomUUID(), "OPEN",
-                null, Instant.now(), Instant.now());
+                null, Instant.now(), Instant.now(), null);
         FindingDetail detail = new FindingDetail(finding, Instant.now(), "fix it");
         when(findingRepository.findByTargetDetailed(targetId, null, null, null, null, null, 200, 0))
                 .thenReturn(List.of(detail));
@@ -139,7 +139,7 @@ class McpReadToolsTest {
         Finding finding = new Finding(
                 UUID.randomUUID(), "bh-example.com-2", UUID.randomUUID(), targetId, "TLS_CHECK", "RULE_2",
                 "CRITICAL", "TLS", "Expired cert", "desc", "{}", "example.com", UUID.randomUUID(), "OPEN",
-                null, Instant.now(), Instant.now());
+                null, Instant.now(), Instant.now(), null);
         OrgFinding orgFinding = new OrgFinding(finding, "example.com", Instant.now(), null);
         when(findingRepository.findOpenByOrganization(orgId, List.of(), 50)).thenReturn(List.of(orgFinding));
 

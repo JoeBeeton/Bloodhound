@@ -29,7 +29,8 @@ class CompoundRiskEngineTest {
                 "OPEN",
                 null,
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                null);
     }
 
     @Test

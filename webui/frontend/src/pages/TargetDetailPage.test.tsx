@@ -217,8 +217,13 @@ describe("triggerBulkDismiss", () => {
 
     const outcomes = await triggerBulkDismiss(["f1", "f2"]);
 
-    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", { method: "POST" });
-    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f2/dismiss", { method: "POST" });
+    const dismissCall = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: null }),
+    };
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", dismissCall);
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f2/dismiss", dismissCall);
     expect(outcomes).toEqual([
       { findingId: "f1", ok: true },
       { findingId: "f2", ok: true },

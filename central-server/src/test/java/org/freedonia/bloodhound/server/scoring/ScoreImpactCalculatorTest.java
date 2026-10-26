@@ -32,7 +32,8 @@ class ScoreImpactCalculatorTest {
                 "OPEN",
                 null,
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                null);
     }
 
     @Test

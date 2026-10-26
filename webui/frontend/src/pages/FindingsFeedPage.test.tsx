@@ -46,6 +46,7 @@ function finding(overrides: Partial<OrgFinding> = {}): OrgFinding {
     evidence: {},
     affectedAsset: "example.com",
     status: "OPEN",
+    statusReason: null,
     resolvedAt: null,
     createdAt: new Date().toISOString(),
     firstSeenAt: new Date().toISOString(),

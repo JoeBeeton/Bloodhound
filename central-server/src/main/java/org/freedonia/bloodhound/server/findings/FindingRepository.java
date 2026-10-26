@@ -37,7 +37,8 @@ public class FindingRepository {
             rs.getString("status"),
             rs.getTimestamp("resolved_at") != null ? rs.getTimestamp("resolved_at").toInstant() : null,
             rs.getTimestamp("created_at").toInstant(),
-            rs.getTimestamp("updated_at").toInstant());
+            rs.getTimestamp("updated_at").toInstant(),
+            rs.getString("status_reason"));
 
     private static final RowMapper<OpenFindingKey> KEY_MAPPER = (rs, rowNum) -> new OpenFindingKey(
             UUID.fromString(rs.getString("id")), rs.getString("rule_id"), rs.getString("affected_asset"));
@@ -155,15 +156,42 @@ public class FindingRepository {
      * override on an otherwise-open finding specifically, not a general-purpose status field.
      * Returns the row count so the controller can tell "nothing happened because it wasn't OPEN"
      * apart from "the id doesn't exist" (already handled by the controller's own findById check
-     * before this is ever called).
+     * before this is ever called). {@code reason} (nullable - see V118's own comment) is the
+     * analyst's free-text note for why, e.g. "false positive, third-party CDN".
      */
-    public int dismiss(UUID id) {
-        return jdbc.update("UPDATE findings SET status = 'DISMISSED', updated_at = now() WHERE id = ? AND status = 'OPEN'", id);
+    public int dismiss(UUID id, String reason) {
+        return jdbc.update(
+                "UPDATE findings SET status = 'DISMISSED', status_reason = ?, updated_at = now() WHERE id = ? AND status = 'OPEN'",
+                reason,
+                id);
     }
 
-    /** The only way a DISMISSED finding ever leaves that state - see dismiss()'s own comment. Only transitions from DISMISSED, back to OPEN (not RESOLVED - a dismissed finding was, by definition, still actually open when it was dismissed). */
+    /**
+     * The other sticky human override alongside {@link #dismiss} - same "only transitions from
+     * OPEN, never reopened by FindingReconciler" treatment (findOpenKeys only ever sees
+     * status='OPEN' rows), but for a finding that's real and acknowledged rather than a false
+     * positive: the distinction a reviewer otherwise has no way to record other than losing it
+     * in the same DISMISSED bucket as "this isn't actually an issue".
+     */
+    public int acceptRisk(UUID id, String reason) {
+        return jdbc.update(
+                "UPDATE findings SET status = 'ACCEPTED_RISK', status_reason = ?, updated_at = now() WHERE id = ? AND status = 'OPEN'",
+                reason,
+                id);
+    }
+
+    /**
+     * The only way a DISMISSED or ACCEPTED_RISK finding ever leaves that state - see dismiss()'s
+     * own comment. Only transitions back to OPEN (not RESOLVED - a dismissed/accepted-risk
+     * finding was, by definition, still actually open when that status was set). Clears
+     * status_reason: a reopened finding is active again, and the prior "why this was set aside"
+     * note would be stale and misleading left in place.
+     */
     public int reopen(UUID id) {
-        return jdbc.update("UPDATE findings SET status = 'OPEN', updated_at = now() WHERE id = ? AND status = 'DISMISSED'", id);
+        return jdbc.update(
+                "UPDATE findings SET status = 'OPEN', status_reason = NULL, updated_at = now() "
+                        + "WHERE id = ? AND status IN ('DISMISSED', 'ACCEPTED_RISK')",
+                id);
     }
 
     private static final RowMapper<Finding> SCORING_ROW_MAPPER = (rs, rowNum) -> new Finding(
@@ -181,6 +209,7 @@ public class FindingRepository {
             rs.getString("affected_asset"),
             null,
             "OPEN",
+            null,
             null,
             null,
             null);

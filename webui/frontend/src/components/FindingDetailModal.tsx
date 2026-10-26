@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { apiFetch, readErrorMessage } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
 import { Modal } from "./Modal";
@@ -9,14 +10,30 @@ import type { Finding, OrgFinding, Severity } from "../lib/types";
  * A product review found FindingReconciler's automatic OPEN->RESOLVED transition (fires only
  * once a scan no longer detects an issue) was the only way a finding's status ever changed - a
  * false positive or an accepted-risk finding just sat as OPEN indefinitely, with no way for an
- * analyst to say "reviewed, doesn't need action". Dismiss is a sticky override, honored by
- * FindingReconciler forever until a human explicitly reopens it (see
- * V48__findings_dismissed_status.sql's own comment).
+ * analyst to say "reviewed, doesn't need action". Dismiss and Accept Risk are both sticky
+ * overrides, honored by FindingReconciler forever until a human explicitly reopens one (see
+ * V48__findings_dismissed_status.sql's own comment) - the distinction between them is "not
+ * actually an issue" (Dismiss) versus "real, but we're knowingly not acting on it" (Accept
+ * Risk), each optionally carrying a free-text reason (see V118__finding_status_reason.sql) so
+ * that judgment call isn't lost the moment the button is clicked.
  */
-/** Exported for TargetDetailPage's own bulk-dismiss action - same endpoint, fired N times in parallel there (see its own triggerBulkDismiss, mirroring the page's existing triggerBulkScan/triggerBulkRemove pattern) rather than needing a dedicated bulk backend endpoint. */
-export async function dismissFinding(id: string): Promise<void> {
-  const res = await apiFetch(`/api/v1/findings/${id}/dismiss`, { method: "POST" });
+/** Exported for TargetDetailPage's own bulk-dismiss action - same endpoint, fired N times in parallel there (see its own triggerBulkDismiss, mirroring the page's existing triggerBulkScan/triggerBulkRemove pattern) rather than needing a dedicated bulk backend endpoint. No reason on the bulk path - there's no per-finding text input in that flow. */
+export async function dismissFinding(id: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/findings/${id}/dismiss`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: reason || null }),
+  });
   if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to dismiss finding."));
+}
+
+async function acceptRiskFinding(id: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/findings/${id}/accept-risk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: reason || null }),
+  });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Failed to accept risk for finding."));
 }
 
 async function reopenFinding(id: string): Promise<void> {
@@ -66,6 +83,7 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
   const { user } = useAuth();
   const canDismiss = user?.role === "ADMIN" || user?.role === "ANALYST";
   const queryClient = useQueryClient();
+  const [reason, setReason] = useState("");
 
   // Findings are shown from 5+ different pages (target detail, subdomain detail, dashboard,
   // the org-wide Findings page, scan detail) each with their own query key prefix - a broad
@@ -78,13 +96,21 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
   }
 
   const dismissMutation = useMutation({
-    mutationFn: () => dismissFinding(finding.id),
+    mutationFn: () => dismissFinding(finding.id, reason),
     onSuccess: () => {
       invalidateAnyFindingsQuery();
       onClose(); // the finding prop is a snapshot passed in by the caller - it won't reflect the
       // new status on its own, and this modal has no live subscription of its own to refresh it in
       // place, so closing (onto the now-invalidated, refetching list behind it) is the simplest
       // way to avoid showing a stale status label.
+    },
+  });
+
+  const acceptRiskMutation = useMutation({
+    mutationFn: () => acceptRiskFinding(finding.id, reason),
+    onSuccess: () => {
+      invalidateAnyFindingsQuery();
+      onClose();
     },
   });
 
@@ -129,15 +155,24 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
         )}
         <ScoreImpactBadge impact={finding.scoreImpact} />
         {canDismiss && finding.status === "OPEN" && (
-          <button
-            onClick={() => dismissMutation.mutate()}
-            disabled={dismissMutation.isPending}
-            className="ml-auto rounded border border-slate-700 px-3 py-1 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:opacity-50"
-          >
-            {dismissMutation.isPending ? "Dismissing…" : "Dismiss"}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => dismissMutation.mutate()}
+              disabled={dismissMutation.isPending || acceptRiskMutation.isPending}
+              className="rounded border border-slate-700 px-3 py-1 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:opacity-50"
+            >
+              {dismissMutation.isPending ? "Dismissing…" : "Dismiss"}
+            </button>
+            <button
+              onClick={() => acceptRiskMutation.mutate()}
+              disabled={dismissMutation.isPending || acceptRiskMutation.isPending}
+              className="rounded border border-slate-700 px-3 py-1 font-mono text-xs uppercase tracking-widest text-slate-300 transition hover:border-neon-amber/50 hover:text-neon-amber disabled:opacity-50"
+            >
+              {acceptRiskMutation.isPending ? "Accepting…" : "Accept Risk"}
+            </button>
+          </div>
         )}
-        {canDismiss && finding.status === "DISMISSED" && (
+        {canDismiss && (finding.status === "DISMISSED" || finding.status === "ACCEPTED_RISK") && (
           <button
             onClick={() => reopenMutation.mutate()}
             disabled={reopenMutation.isPending}
@@ -147,9 +182,31 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
           </button>
         )}
       </div>
-      {(dismissMutation.isError || reopenMutation.isError) && (
+      {canDismiss && finding.status === "OPEN" && (
+        <div className="mb-4">
+          <label htmlFor="finding-status-reason" className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+            Reason (optional - shown on the finding if dismissed or risk-accepted)
+          </label>
+          <input
+            id="finding-status-reason"
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. false positive, third-party infrastructure"
+            className="w-full rounded border border-slate-700 bg-void/60 px-2 py-1 font-mono text-xs text-slate-200 placeholder:text-slate-600 focus:border-neon-cyan/50 focus:outline-none"
+          />
+        </div>
+      )}
+      {finding.statusReason && (finding.status === "DISMISSED" || finding.status === "ACCEPTED_RISK") && (
+        <p className="mb-4 font-mono text-xs text-slate-400">
+          <span className="uppercase tracking-widest text-slate-500">Reason: </span>
+          {finding.statusReason}
+        </p>
+      )}
+      {(dismissMutation.isError || acceptRiskMutation.isError || reopenMutation.isError) && (
         <p role="alert" className="mb-4 font-mono text-xs text-severity-critical">
-          {((dismissMutation.error ?? reopenMutation.error) as Error)?.message ?? "Failed to update finding status."}
+          {((dismissMutation.error ?? acceptRiskMutation.error ?? reopenMutation.error) as Error)?.message ??
+            "Failed to update finding status."}
         </p>
       )}
 

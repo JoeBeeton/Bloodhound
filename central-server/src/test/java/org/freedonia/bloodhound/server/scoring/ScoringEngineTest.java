@@ -31,7 +31,8 @@ class ScoringEngineTest {
                 "OPEN",
                 null,
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                null);
     }
 
     @Test

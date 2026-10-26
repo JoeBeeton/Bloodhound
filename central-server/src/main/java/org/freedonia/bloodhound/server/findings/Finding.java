@@ -21,4 +21,8 @@ public record Finding(
         String status,
         Instant resolvedAt,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt,
+        /** Free-text note recorded alongside a DISMISSED/ACCEPTED_RISK transition - see
+         * V118__finding_status_reason.sql. Null for an OPEN/RESOLVED finding, or a dismissed/
+         * accepted-risk one where the caller didn't supply one. */
+        String statusReason) {}

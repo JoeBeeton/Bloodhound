@@ -33,7 +33,7 @@ class ScoreImpactCalculatorDifferentialTest {
         UUID run = UUID.randomUUID();
         return new Finding(
                 UUID.randomUUID(), "bh-test-1", run, UUID.randomUUID(), "SOME_MODULE", ruleId, severity, category, "title",
-                "description", "{}", "asset", run, "OPEN", null, Instant.now(), Instant.now());
+                "description", "{}", "asset", run, "OPEN", null, Instant.now(), Instant.now(), null);
     }
 
     /** The original O(n²) implementation, kept here only as a reference oracle for this test. */

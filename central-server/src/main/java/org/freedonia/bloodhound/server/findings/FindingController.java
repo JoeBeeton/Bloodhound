@@ -29,6 +29,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -339,6 +340,17 @@ public class FindingController {
     public record ErrorMessageResponse(String message) {}
 
     /**
+     * Body for dismiss/accept-risk - {@code reason} is optional free text (e.g. "false positive,
+     * third-party CDN" or "risk accepted, compensating control in place"), recorded on the
+     * finding so it isn't lost the way it previously was (nowhere but a human's memory, or the
+     * audit log's own free-text detail string, which isn't shown anywhere in the findings UI
+     * itself). {@code required = false} on the controller param means an absent body (the
+     * existing bulk-dismiss UI action, and any caller that doesn't care to explain itself) is
+     * still accepted, with reason simply null.
+     */
+    public record StatusChangeRequest(String reason) {}
+
+    /**
      * A product review found FindingReconciler's automatic OPEN-&gt;RESOLVED transition (fires
      * only once a scan no longer detects an issue - see its own javadoc) was the ONLY way a
      * finding's status ever changed: a false positive or an accepted-risk finding just sat as
@@ -348,10 +360,14 @@ public class FindingController {
      * touches one either direction once set.
      */
     @PostMapping("/api/v1/findings/{id}/dismiss")
-    public ResponseEntity<?> dismissFinding(@PathVariable UUID id, @AuthenticationPrincipal JwtPrincipal principal) {
+    public ResponseEntity<?> dismissFinding(
+            @PathVariable UUID id,
+            @RequestBody(required = false) StatusChangeRequest body,
+            @AuthenticationPrincipal JwtPrincipal principal) {
         requireWriteAccess(principal);
         Finding finding = requireOwnedFinding(id, principal);
-        if (findingRepository.dismiss(id) == 0) {
+        String reason = body == null ? null : body.reason();
+        if (findingRepository.dismiss(id, reason) == 0) {
             // Only reachable via a race (another request changed the status between the lookup
             // above and this UPDATE) or a direct API call against an already-non-OPEN finding -
             // reported distinctly from NOT_FOUND so a caller can tell "exists but isn't open"
@@ -366,7 +382,38 @@ public class FindingController {
                 "FINDING_DISMISSED",
                 "FINDING",
                 id.toString(),
-                "ruleId=" + finding.ruleId() + " affectedAsset=" + finding.affectedAsset());
+                "ruleId=" + finding.ruleId() + " affectedAsset=" + finding.affectedAsset()
+                        + (reason == null || reason.isBlank() ? "" : " reason=" + reason));
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * The other sticky human override alongside dismiss - for a finding that's real and
+     * acknowledged (e.g. third-party infrastructure out of this org's control, or a documented
+     * risk tradeoff) rather than a false positive. Same "only from OPEN, never reopened by
+     * FindingReconciler" treatment as dismiss - see FindingRepository#acceptRisk's own javadoc.
+     */
+    @PostMapping("/api/v1/findings/{id}/accept-risk")
+    public ResponseEntity<?> acceptRiskFinding(
+            @PathVariable UUID id,
+            @RequestBody(required = false) StatusChangeRequest body,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        requireWriteAccess(principal);
+        Finding finding = requireOwnedFinding(id, principal);
+        String reason = body == null ? null : body.reason();
+        if (findingRepository.acceptRisk(id, reason) == 0) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorMessageResponse("only an open finding can have its risk accepted"));
+        }
+        auditLogRepository.record(
+                principal.organizationId(),
+                principal.userId(),
+                principal.email(),
+                "FINDING_ACCEPTED_RISK",
+                "FINDING",
+                id.toString(),
+                "ruleId=" + finding.ruleId() + " affectedAsset=" + finding.affectedAsset()
+                        + (reason == null || reason.isBlank() ? "" : " reason=" + reason));
         return ResponseEntity.noContent().build();
     }
 
@@ -376,7 +423,7 @@ public class FindingController {
         Finding finding = requireOwnedFinding(id, principal);
         if (findingRepository.reopen(id) == 0) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(new ErrorMessageResponse("only a dismissed finding can be reopened"));
+                    .body(new ErrorMessageResponse("only a dismissed or accepted-risk finding can be reopened"));
         }
         auditLogRepository.record(
                 principal.organizationId(),

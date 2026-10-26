@@ -38,6 +38,7 @@ function finding(overrides: Partial<Finding> = {}): Finding {
     resolvedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
+    statusReason: null,
     firstSeenAt: "2026-01-01T00:00:00Z",
     lastSeenAt: "2026-01-01T00:00:00Z",
     remediationAdvice: null,
@@ -100,10 +101,11 @@ describe("FindingDetailModal - dismiss/reopen", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows Dismiss for an OPEN finding when the caller has write access", () => {
+  it("shows Dismiss and Accept Risk for an OPEN finding when the caller has write access", () => {
     renderModal(finding({ status: "OPEN" }));
 
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept Risk" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reopen" })).not.toBeInTheDocument();
   });
 
@@ -114,28 +116,78 @@ describe("FindingDetailModal - dismiss/reopen", () => {
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
   });
 
+  it("shows Reopen for an ACCEPTED_RISK finding", () => {
+    renderModal(finding({ status: "ACCEPTED_RISK" }));
+
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept Risk" })).not.toBeInTheDocument();
+  });
+
   it("shows neither action for a RESOLVED finding", () => {
     renderModal(finding({ status: "RESOLVED" }));
 
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept Risk" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reopen" })).not.toBeInTheDocument();
   });
 
-  it("hides Dismiss for a VIEWER, even on an open finding", () => {
+  it("hides Dismiss and Accept Risk for a VIEWER, even on an open finding", () => {
     mockRole = "VIEWER";
     renderModal(finding({ status: "OPEN" }));
 
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Accept Risk" })).not.toBeInTheDocument();
   });
 
-  it("clicking Dismiss calls the dismiss endpoint and closes the modal on success", async () => {
+  it("clicking Dismiss with no reason typed sends a null reason and closes the modal on success", async () => {
     const user = userEvent.setup();
     mockedApiFetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response);
     const { onClose } = renderModal(finding({ status: "OPEN" }));
 
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
 
-    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", { method: "POST" }));
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: null }),
+      }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("typing a reason and clicking Dismiss sends it in the request body", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response);
+    renderModal(finding({ status: "OPEN" }));
+
+    await user.type(screen.getByLabelText(/Reason/i), "false positive, third-party CDN");
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "false positive, third-party CDN" }),
+      }),
+    );
+  });
+
+  it("clicking Accept Risk calls the accept-risk endpoint and closes the modal on success", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => undefined } as Response);
+    const { onClose } = renderModal(finding({ status: "OPEN" }));
+
+    await user.type(screen.getByLabelText(/Reason/i), "risk accepted, compensating control in place");
+    await user.click(screen.getByRole("button", { name: "Accept Risk" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/accept-risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "risk accepted, compensating control in place" }),
+      }),
+    );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
@@ -148,6 +200,12 @@ describe("FindingDetailModal - dismiss/reopen", () => {
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/findings/f1/reopen", { method: "POST" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("shows a dismissed finding's recorded reason", () => {
+    renderModal(finding({ status: "DISMISSED", statusReason: "false positive, third-party CDN" }));
+
+    expect(screen.getByText("false positive, third-party CDN")).toBeInTheDocument();
   });
 
   it("a 409 (e.g. a race) shows the server's real message and does not close the modal", async () => {

@@ -316,6 +316,8 @@ export interface Finding {
   affectedAsset: string;
   firstDetectedScanRunId: string;
   status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK" | "DISMISSED";
+  /** Free-text note recorded alongside a DISMISSED/ACCEPTED_RISK transition - see V118__finding_status_reason.sql. Null otherwise, or when the caller didn't supply one. */
+  statusReason: string | null;
   resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -369,6 +371,7 @@ export interface OrgFinding {
   evidence: Record<string, unknown>;
   affectedAsset: string;
   status: "OPEN" | "RESOLVED" | "ACCEPTED_RISK" | "DISMISSED";
+  statusReason: string | null;
   resolvedAt: string | null;
   createdAt: string;
   firstSeenAt: string | null;
