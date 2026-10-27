@@ -239,7 +239,7 @@ public class TargetController {
         if (!"AUTHORIZED".equals(target.authorizationStatus())) {
             return null;
         }
-        int subdomainCount = subdomainRepository.countByTarget(target.id(), null, null);
+        int subdomainCount = subdomainRepository.countByTarget(target.id(), null);
         int fanoutHostCount = 1 + Math.min(subdomainCount, ScanRunService.tier2SubdomainCap());
 
         List<JobProgress> syntheticJobs = new ArrayList<>();
