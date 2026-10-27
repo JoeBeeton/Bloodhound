@@ -63,7 +63,15 @@ public class DnsZoneFetcher {
         }
     }
 
-    public List<NsCheckResult> fetch(String hostname) {
+    /**
+     * @param includeActiveExploitProbes false to limit this call to the lame-delegation check
+     *     only (a single direct SOA query) - used by Tier 1's {@code DnsPostureModule}, which must
+     *     never actually attempt a zone transfer or an open-resolver recursion query against a
+     *     COMPETITOR/UNAUTHORIZED target's nameservers, not merely suppress the resulting finding.
+     *     {@code DnsZoneExploitModule} (Tier 2, authorization-gated) passes true to run the full
+     *     AXFR + open-resolver probes alongside it.
+     */
+    public List<NsCheckResult> fetch(String hostname, boolean includeActiveExploitProbes) {
         List<String> nsHostnames = queryNsHostnames(hostname);
         List<NsCheckResult> results = new ArrayList<>();
         for (String ns : nsHostnames) {
@@ -94,6 +102,10 @@ public class DnsZoneFetcher {
                 continue;
             }
             boolean answersAuthoritatively = respondsAuthoritatively(hostname, nsIp);
+            if (!includeActiveExploitProbes) {
+                results.add(new NsCheckResult(ns, false, 0, answersAuthoritatively, true, false));
+                continue;
+            }
             AxfrAttempt axfr = attemptAxfr(hostname, nsIp);
             boolean openResolver = isOpenResolver(nsIp);
             results.add(new NsCheckResult(

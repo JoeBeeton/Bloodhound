@@ -16,25 +16,28 @@ import org.springframework.stereotype.Component;
 
 /**
  * Aggregates every configured SubdomainSource (crt.sh + subfinder as of
- * Milestone 6b, katana's js-crawl mode added afterward - see KatanaCliSource),
- * resolves current IPs, CNAME targets, and NS delegation for
- * what it finds, runs dangling-CNAME/takeover confirmation plus
- * cloud-storage-bucket public-listing confirmation (see CloudBucketChecker -
- * same CNAME data, a different check: "unclaimed" vs "claimed but publicly
- * readable") plus NS-delegation takeover confirmation (see NsTakeoverChecker
- * - a third, more severe variant: a subdomain delegated as its own DNS zone,
- * not just CNAME'd to a resource), and hands the full raw list to
+ * Milestone 6b, katana's js-crawl mode added afterward - see KatanaCliSource)
+ * and resolves current IPs for what it finds, handing the full raw list to
  * central-server via ModuleResult.rawMetadata() rather than emitting
  * "new subdomain" findings itself - "is this hostname new" is a
  * database-backed question only central-server can answer (see
  * SubdomainIngestionService), so this module stays a stateless
  * fetch-and-aggregate step, matching the fetch/parse testability split used
- * by the other Tier 1 modules. Dangling-CNAME, bucket-listing, and
- * NS-takeover confirmation, by contrast, need no cross-run state - each is a
- * pure function of this run's live DNS + HTTP data - so they're computed
- * here and reported directly per-hostname.
+ * by the other Tier 1 modules.
  *
- * A source failing entirely (e.g. crt.sh's documented flakiness, or
+ * <p>Deliberately does NOT run dangling-CNAME, cloud-storage-bucket
+ * public-listing, or NS-delegation takeover confirmation (DanglingCnameChecker/
+ * CloudBucketChecker/NsTakeoverChecker) any more - a security/legal review
+ * found all three make an active HTTP GET or direct-to-nameserver DNS query
+ * against infrastructure a COMPETITOR/UNAUTHORIZED target's own subdomain or
+ * cloud resources point at, a materially different risk to run
+ * unconditionally than this module's own passive discovery + IP resolution.
+ * See {@code SubdomainTakeoverCheckModule} (Tier 2, authorization-gated, one
+ * job per already-discovered host) for where those three checkers moved -
+ * {@link #excludeCnamedHosts} stays here as a small, well-tested pure
+ * utility that module now calls into.
+ *
+ * <p>A source failing entirely (e.g. crt.sh's documented flakiness, or
  * subfinder's binary being unavailable) does not fail the module as long as
  * at least one other source produced results; the module only fails if
  * every configured source failed.
@@ -46,16 +49,10 @@ public class SubdomainEnumModule implements ScanModule {
 
     private final List<SubdomainSource> sources;
     private final SubdomainDnsResolver dnsResolver;
-    private final DanglingCnameChecker cnameChecker;
-    private final CloudBucketChecker bucketChecker;
-    private final NsTakeoverChecker nsTakeoverChecker;
 
     public SubdomainEnumModule(List<SubdomainSource> sources) {
         this.sources = sources;
         this.dnsResolver = new SubdomainDnsResolver();
-        this.cnameChecker = new DanglingCnameChecker();
-        this.bucketChecker = new CloudBucketChecker();
-        this.nsTakeoverChecker = new NsTakeoverChecker();
     }
 
     @Override
@@ -96,22 +93,6 @@ public class SubdomainEnumModule implements ScanModule {
         List<String> discovered = merged.keySet().stream().sorted().toList();
 
         Map<String, List<String>> resolvedIps = dnsResolver.resolveAll(discovered);
-        Map<String, String> cnames = dnsResolver.resolveCnames(discovered);
-        Map<String, DanglingCnameChecker.Result> cnameChecks = cnameChecker.checkAll(cnames);
-        Map<String, CloudBucketChecker.Result> bucketChecks = bucketChecker.checkAll(cnames);
-        // Never NS-check a hostname we already know has a CNAME: a name with a CNAME record
-        // cannot carry any other RRset at that same owner name per RFC 1035 S3.6.2, so it
-        // structurally cannot also have independent NS delegation. Skipping these before the
-        // lookup matters because dnsjava's Lookup (used by resolveNameServers) transparently
-        // follows CNAME chains when asked for NS records - querying NS for a CNAME'd hostname
-        // silently returns the CNAME target's own zone's nameservers instead, misattributed to
-        // this hostname. That previously meant a subdomain CNAME'd to some third party's
-        // resource (itself hosted on, say, Route53) got treated as if it were NS-delegated to
-        // that provider and its zone deprovisioned - a confirmed-takeover false positive with no
-        // real delegation behind it at all.
-        List<String> nsEligibleHosts = excludeCnamedHosts(discovered, cnames);
-        Map<String, List<String>> nameservers = dnsResolver.resolveNameServers(nsEligibleHosts);
-        Map<String, NsTakeoverChecker.Result> nsTakeoverChecks = nsTakeoverChecker.checkAll(nameservers);
 
         List<Map<String, Object>> subdomainEntries = new ArrayList<>();
         for (String hostname : discovered) {
@@ -119,27 +100,6 @@ public class SubdomainEnumModule implements ScanModule {
             entry.put("hostname", hostname);
             entry.put("ipAddresses", resolvedIps.getOrDefault(hostname, List.of()));
             entry.put("source", String.join(",", merged.get(hostname)));
-
-            DanglingCnameChecker.Result cnameCheck = cnameChecks.get(hostname);
-            if (cnameCheck != null) {
-                entry.put("cnameTarget", cnameCheck.cnameTarget());
-                entry.put("danglingConfirmed", cnameCheck.confirmedDangling());
-                entry.put("danglingService", cnameCheck.matchedService());
-            }
-
-            CloudBucketChecker.Result bucketCheck = bucketChecks.get(hostname);
-            if (bucketCheck != null) {
-                entry.put("bucketProvider", bucketCheck.provider().name());
-                entry.put("bucketCheckUrl", bucketCheck.checkUrl());
-                entry.put("bucketPubliclyListable", bucketCheck.publiclyListable());
-            }
-
-            NsTakeoverChecker.Result nsTakeoverCheck = nsTakeoverChecks.get(hostname);
-            if (nsTakeoverCheck != null && nsTakeoverCheck.confirmedTakeover()) {
-                entry.put("nsTakeoverConfirmed", true);
-                entry.put("nsTakeoverProvider", nsTakeoverCheck.provider());
-                entry.put("nsTakeoverNameserver", nsTakeoverCheck.nameserver());
-            }
             subdomainEntries.add(entry);
         }
 

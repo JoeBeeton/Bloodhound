@@ -82,8 +82,9 @@ class ScanRunServiceTest {
 
         service.createDeepScan(targetId, triggeredByUserId);
 
-        // 4 host-fanout module types x 3 hosts (root + 2 subdomains) = 12 jobs.
-        for (String moduleType : List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS")) {
+        // 5 host-fanout module types x 3 hosts (root + 2 subdomains) = 15 jobs.
+        for (String moduleType : List.of(
+                "PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS", "SUBDOMAIN_TAKEOVER_CHECK")) {
             verify(scanJobRepository, times(3)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
         }
     }
@@ -128,13 +129,41 @@ class ScanRunServiceTest {
     }
 
     @Test
+    void dnsZoneExploit_dispatchesExactlyOnce_regardlessOfSubdomainCount() {
+        stub(List.of("api.acme.com", "www.acme.com", "shop.acme.com"));
+
+        service.createDeepScan(targetId, triggeredByUserId);
+
+        // Target-scoped like BUCKET_BRUTE_FORCE, not fanned out per host - a domain's
+        // nameservers are a domain-wide concern, not a per-subdomain one.
+        verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq("DNS_ZONE_EXPLOIT"), any(String.class));
+    }
+
+    @Test
+    void dnsZoneExploitPayload_isEmpty_notBucketBruteForcesCooldownOrCursorData() {
+        stub(List.of());
+        when(bucketBruteForceCursorRepository.currentPosition(targetId)).thenReturn(4350);
+
+        service.createDeepScan(targetId, triggeredByUserId);
+
+        // targetScopedPayload is shared across every TIER2_TARGET_SCOPED_MODULE_TYPES entry -
+        // this locks in that only BUCKET_BRUTE_FORCE actually gets its cooldown/cursor data, not
+        // every module type in that list.
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(scanJobRepository).insert(eq(runId), eq(targetId), eq("DNS_ZONE_EXPLOIT"), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue()).isEqualTo("{}");
+    }
+
+    @Test
     void bucketBruteForce_withNoSubdomainsKnownYet_stillDispatchesOnce() {
         stub(List.of());
 
         service.createDeepScan(targetId, triggeredByUserId);
 
         verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq("BUCKET_BRUTE_FORCE"), any(String.class));
-        for (String moduleType : List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN")) {
+        verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq("DNS_ZONE_EXPLOIT"), any(String.class));
+        for (String moduleType : List.of(
+                "PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "SUBDOMAIN_TAKEOVER_CHECK")) {
             verify(scanJobRepository, times(1)).insert(eq(runId), eq(targetId), eq(moduleType), any(String.class));
         }
     }

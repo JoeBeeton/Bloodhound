@@ -13,26 +13,26 @@ import org.springframework.stereotype.Service;
 /**
  * The one module-type-specific branch in result ingestion: a SUBDOMAIN_ENUM
  * job's rawMetadata carries the worker's full discovered-hostname list (with
- * resolved IPs, source provenance, and dangling-CNAME check results), not
- * findings - the module itself is stateless (fetch + dedupe + live
- * CNAME-takeover confirmation only) and has no idea what's "new" for this
+ * resolved IPs and source provenance), not findings - the module itself is
+ * stateless (fetch + dedupe only) and has no idea what's "new" for this
  * target, so that comparison happens here against the subdomains table,
- * which this service also upserts. "New" findings are synthesized as
+ * which this service also upserts. "New"/"stale" findings are synthesized as
  * ordinary FindingPayloads and merged into the module's (normally empty)
  * reported-findings list before the standard FindingReconciler
  * dedup/resolution path runs on them - so a SUBDOMAIN_NEW_UNEXPECTED finding
  * that isn't reproduced next run (because the hostname now has a
  * last_resolved_at, so is no longer newly live) resolves itself
- * automatically, matching its Info/one-time-notification intent. SUBDOMAIN_DANGLING_CNAME findings work
- * the same way but their "still true" condition is different: the worker
- * re-confirms takeover-eligibility live on every scan (unlike "new", which
- * is a one-time database fact), so a dangling finding only keeps
- * reappearing - and only stays OPEN - for as long as it keeps being
- * reconfirmed run over run. EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING and
- * SUBDOMAIN_NS_DELEGATION_TAKEOVER both follow the same re-confirmed-live
- * pattern as SUBDOMAIN_DANGLING_CNAME, for the same reason - all three come
- * from a live check the worker redoes every run, not a one-time database
- * fact.
+ * automatically, matching its Info/one-time-notification intent.
+ *
+ * <p>Dangling-CNAME, cloud-storage-bucket public-listing, and NS-delegation
+ * takeover confirmation used to be synthesized here too, from flags
+ * SUBDOMAIN_ENUM's rawMetadata carried - but those three come from an
+ * active HTTP GET or direct-to-nameserver DNS probe, not passive discovery,
+ * so they moved to {@code SubdomainTakeoverCheckModule} (Tier 2,
+ * authorization-gated), which now emits SUBDOMAIN_DANGLING_CNAME/
+ * EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING/SUBDOMAIN_NS_DELEGATION_TAKEOVER as
+ * plain RawFindings directly - no synthesis branch needed here for them any
+ * more.
  */
 @Service
 public class SubdomainIngestionService {
@@ -67,12 +67,11 @@ public class SubdomainIngestionService {
             }
             List<String> ipAddresses = extractIpAddresses(entry.get("ipAddresses"));
             String source = entry.get("source") == null ? "UNKNOWN" : String.valueOf(entry.get("source"));
-            boolean danglingConfirmed = Boolean.TRUE.equals(entry.get("danglingConfirmed"));
-            String cnameTarget = entry.get("cnameTarget") == null ? null : String.valueOf(entry.get("cnameTarget"));
-            String danglingService = entry.get("danglingService") == null ? null : String.valueOf(entry.get("danglingService"));
 
-            subdomainRepository.upsert(
-                    targetId, hostname, source, ipAddresses, danglingConfirmed ? cnameTarget : null, !resolverOutage);
+            // Always null now: SUBDOMAIN_ENUM's rawMetadata no longer carries dangling-CNAME
+            // data (see this class's own javadoc) - SubdomainTakeoverCheckModule confirms that
+            // live, Tier 2 only, straight into a finding, not back into this column.
+            subdomainRepository.upsert(targetId, hostname, source, ipAddresses, null, !resolverOutage);
 
             if (!resolverOutage && everResolved.contains(hostname) && ipAddresses.isEmpty()) {
                 // A hostname that HAS resolved on a past run (last_resolved_at - see V54; not
@@ -109,49 +108,6 @@ public class SubdomainIngestionService {
                                 + "enumeration (certificate transparency and/or passive OSINT sources).",
                         hostname,
                         Map.of("ipAddresses", ipAddresses, "source", source)));
-            }
-
-            if (danglingConfirmed) {
-                combined.add(new FindingPayload(
-                        "SUBDOMAIN_DANGLING_CNAME",
-                        "CRITICAL",
-                        "SUBDOMAIN_HYGIENE",
-                        "Dangling CNAME - possible subdomain takeover",
-                        "This subdomain's CNAME points to a " + danglingService + " resource that responded as "
-                                + "unclaimed, allowing an attacker to claim it and serve content from this subdomain.",
-                        hostname,
-                        Map.of("cnameTarget", cnameTarget, "service", danglingService)));
-            }
-
-            boolean bucketPubliclyListable = Boolean.TRUE.equals(entry.get("bucketPubliclyListable"));
-            if (bucketPubliclyListable) {
-                String bucketProvider = String.valueOf(entry.get("bucketProvider"));
-                String bucketCheckUrl = String.valueOf(entry.get("bucketCheckUrl"));
-                combined.add(new FindingPayload(
-                        "EXPOSURE_CLOUD_BUCKET_PUBLIC_LISTING",
-                        "CRITICAL",
-                        "EXPOSURE",
-                        "Publicly listable cloud storage bucket",
-                        "This subdomain's CNAME points directly at a " + bucketProvider + " storage bucket that "
-                                + "allows anyone to list its full contents without authentication.",
-                        hostname,
-                        Map.of("provider", bucketProvider, "checkUrl", bucketCheckUrl)));
-            }
-
-            boolean nsTakeoverConfirmed = Boolean.TRUE.equals(entry.get("nsTakeoverConfirmed"));
-            if (nsTakeoverConfirmed) {
-                String nsProvider = String.valueOf(entry.get("nsTakeoverProvider"));
-                String nsHostname = String.valueOf(entry.get("nsTakeoverNameserver"));
-                combined.add(new FindingPayload(
-                        "SUBDOMAIN_NS_DELEGATION_TAKEOVER",
-                        "CRITICAL",
-                        "SUBDOMAIN_HYGIENE",
-                        "Dangling NS delegation - possible subdomain takeover",
-                        "This subdomain is delegated to " + nsProvider + " nameserver " + nsHostname
-                                + ", which does not answer authoritatively for it - the corresponding hosted zone "
-                                + "appears to be deprovisioned or never created, and anyone who notices can claim it.",
-                        hostname,
-                        Map.of("provider", nsProvider, "nameserver", nsHostname)));
             }
         }
         return combined;

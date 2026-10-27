@@ -103,21 +103,29 @@ public class ScanRunService {
      * ZAP_ACTIVE_SCAN, and NUCLEI_SCAN all scan known subdomains, not just
      * the apex, per the same rationale as {@link #SUBDOMAIN_FANOUT_MODULE_TYPES}. EXPOSURE_CHECKS
      * joined this list after a security review found it was never actually passive - see the
-     * comment on {@link #TIER1_MODULE_TYPES}.
+     * comment on {@link #TIER1_MODULE_TYPES}. SUBDOMAIN_TAKEOVER_CHECK joined for the same
+     * reason: a later security/legal review found SUBDOMAIN_ENUM's dangling-CNAME/cloud-bucket/
+     * NS-takeover confirmation checks make an active HTTP GET or direct-to-nameserver DNS query
+     * against whatever a subdomain's CNAME or NS records point at, not plain passive discovery -
+     * see SubdomainTakeoverCheckModule's own javadoc.
      */
-    private static final List<String> TIER2_MODULE_TYPES =
-            List.of("PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS");
+    private static final List<String> TIER2_MODULE_TYPES = List.of(
+            "PORT_SCAN_DEEP", "ZAP_ACTIVE_SCAN", "NUCLEI_SCAN", "EXPOSURE_CHECKS", "SUBDOMAIN_TAKEOVER_CHECK");
 
     /**
-     * Tier 2 module types that are properties of the target's *brand*, not of any one host -
-     * dispatched once per target (payload carries an exclusion list, see below), never fanned
-     * out across {@link #TIER2_SUBDOMAIN_CAP} hosts the way {@link #TIER2_MODULE_TYPES} is.
-     * A guessed bucket name isn't tied to any particular subdomain, so running the identical
+     * Tier 2 module types that are properties of the target's *brand* or of its DNS zone as a
+     * whole, not of any one host - dispatched once per target, never fanned out across
+     * {@link #TIER2_SUBDOMAIN_CAP} hosts the way {@link #TIER2_MODULE_TYPES} is. BUCKET_BRUTE_FORCE:
+     * a guessed bucket name isn't tied to any particular subdomain, so running the identical
      * candidate list once per host (up to 16 times) would just repeat the same requests for no
      * benefit - the same "domain-wide, not per-host" reasoning that excludes DNS_POSTURE/WHOIS
-     * from {@link #SUBDOMAIN_FANOUT_MODULE_TYPES} above.
+     * from {@link #SUBDOMAIN_FANOUT_MODULE_TYPES} above. DNS_ZONE_EXPLOIT joined for the same
+     * domain-wide reasoning as DNS_POSTURE itself: a domain's nameservers aren't a per-host
+     * concern either - see DnsZoneExploitModule's own javadoc for why its AXFR/open-resolver
+     * checks moved out of Tier 1's DNS_POSTURE into here.
      */
-    private static final List<String> TIER2_TARGET_SCOPED_MODULE_TYPES = List.of("BUCKET_BRUTE_FORCE");
+    private static final List<String> TIER2_TARGET_SCOPED_MODULE_TYPES =
+            List.of("BUCKET_BRUTE_FORCE", "DNS_ZONE_EXPLOIT");
 
     /**
      * Single source of truth for "which module types count as a deep scan" - lets other classes
@@ -333,8 +341,8 @@ public class ScanRunService {
         hosts.addAll(fanout.selectedHostnames());
         TIER2_MODULE_TYPES.forEach(moduleType ->
                 hosts.forEach(host -> scanJobRepository.insert(run.id(), targetId, moduleType, hostPayload(host))));
-        TIER2_TARGET_SCOPED_MODULE_TYPES.forEach(
-                moduleType -> scanJobRepository.insert(run.id(), targetId, moduleType, targetScopedPayload(targetId)));
+        TIER2_TARGET_SCOPED_MODULE_TYPES.forEach(moduleType ->
+                scanJobRepository.insert(run.id(), targetId, moduleType, targetScopedPayload(moduleType, targetId)));
         subdomainRepository.markScanned(targetId, fanout.selectedHostnames());
         notifyScanStarted(run);
         return run;
@@ -350,15 +358,22 @@ public class ScanRunService {
     }
 
     /**
-     * The payload for a {@link #TIER2_TARGET_SCOPED_MODULE_TYPES} job - no host at all (the
-     * module reads {@code context.hostname()} directly, the target's own root). Carries two
-     * independent pieces of "don't redo work you already did" state: an exclusion list of
+     * The payload for a {@link #TIER2_TARGET_SCOPED_MODULE_TYPES} job - no host at all (every
+     * module in that list reads {@code context.hostname()} directly, the target's own root).
+     * BUCKET_BRUTE_FORCE is the one module type here that needs real payload data: two
+     * independent pieces of "don't redo work you already did" state - an exclusion list of
      * "candidateName|provider" keys already checked within {@link
      * #BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN} (see BucketBruteForceCheckRepository), and where this
      * target's sweep through BucketNameGenerator's large wordlist left off last time (see
      * BucketBruteForceCursorRepository/{@link #BUCKET_BRUTE_FORCE_LARGE_WORDLIST_BATCH_SIZE}).
+     * Every other target-scoped module type (DNS_ZONE_EXPLOIT) gets a plain empty payload -
+     * building BUCKET_BRUTE_FORCE's own cooldown/cursor lookups for a module that has no use for
+     * them would just be wasted DB queries.
      */
-    private String targetScopedPayload(UUID targetId) {
+    private String targetScopedPayload(String moduleType, UUID targetId) {
+        if (!"BUCKET_BRUTE_FORCE".equals(moduleType)) {
+            return "{}";
+        }
         Set<String> excludeKeys = bucketBruteForceCheckRepository.findRecentlyCheckedKeys(
                 targetId, Instant.now().minus(BUCKET_BRUTE_FORCE_RECHECK_COOLDOWN));
         int largeWordlistOffset = bucketBruteForceCursorRepository.currentPosition(targetId);
