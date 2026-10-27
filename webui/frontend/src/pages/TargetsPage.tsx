@@ -910,6 +910,7 @@ function TargetRow({
                 </button>
               </span>
             )}
+            {target.targetType === "OWN" && <Tier2EstimateLabel target={target} />}
             <button
               onClick={onRemove}
               className="rounded border border-slate-700 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-slate-400 transition hover:border-severity-critical/50 hover:text-severity-critical"
@@ -976,14 +977,45 @@ function formatEstimatedDuration(seconds: number): string {
  * server-side - see TargetSummary.nextScanAt), plus a heuristic duration estimate from real
  * historical per-module-type averages (TargetSummary.estimatedScanDurationSeconds) - absent
  * when there isn't enough scan history yet for any Tier 1 module type.
+ *
+ * Explicitly labeled "Tier 1" - ScanAutoScheduler only ever queues a Tier 1 scan automatically
+ * (see its own javadoc: Tier 2/deep scans are a deliberate, authorization-gated manual action,
+ * never auto-repeated), so this is the estimate for every target's *next automatic* scan
+ * regardless of whether its last scan happened to be a manual Deep one - without the label this
+ * read as a Deep-scan ETA for a target like that, which it never is.
  */
 function NextScanLabel({ target }: { target: Target }) {
   return (
     <span>
       Next scan: {new Date(target.nextScanAt).toLocaleString(undefined, LAST_SCAN_DATE_FORMAT)}
       {target.estimatedScanDurationSeconds != null && (
-        <span className="text-slate-500"> (~{formatEstimatedDuration(target.estimatedScanDurationSeconds)})</span>
+        <span className="text-slate-500">
+          {" "}
+          (Tier 1, ~{formatEstimatedDuration(target.estimatedScanDurationSeconds)})
+        </span>
       )}
+    </span>
+  );
+}
+
+/**
+ * A separate heuristic duration estimate for this target's next *manually-triggered* Tier 2
+ * (deep) scan - only ever present (see TargetSummary.estimatedTier2ScanDurationSeconds) when the
+ * target is currently AUTHORIZED, the one state {@link #deepScanNow} will actually run a deep
+ * scan for. Shown beside the Deep scan button rather than folded into NextScanLabel above, since
+ * a deep scan isn't on any schedule - there's no "next" time for it, only "how long would it take
+ * if run right now."
+ */
+function Tier2EstimateLabel({ target }: { target: Target }) {
+  if (target.authorizationStatus !== "AUTHORIZED" || target.estimatedTier2ScanDurationSeconds == null) {
+    return null;
+  }
+  return (
+    <span
+      className="font-mono text-xs text-slate-500"
+      title="Heuristic estimate for a Tier 2 deep scan, from this target's own and the org's historical per-module durations, accounting for subdomain fan-out and the shared ZAP concurrency cap."
+    >
+      Tier 2, ~{formatEstimatedDuration(target.estimatedTier2ScanDurationSeconds)}
     </span>
   );
 }

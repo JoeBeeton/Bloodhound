@@ -172,6 +172,30 @@ public class ScanRunService {
      */
     private static final int TIER2_SUBDOMAIN_CAP = 15;
 
+    /**
+     * Exposes {@link #TIER2_SUBDOMAIN_CAP} so TargetController can reproduce
+     * {@link #createDeepScan}'s exact host count (apex + up to this many subdomains) when
+     * estimating a not-yet-run deep scan's duration, without duplicating the constant.
+     */
+    public static int tier2SubdomainCap() {
+        return TIER2_SUBDOMAIN_CAP;
+    }
+
+    /**
+     * Tier 2 module types that fan out per-host (one job per selected host) - see
+     * {@link #createDeepScan}. Distinct from {@link #allTier2ModuleTypes()}, which also includes
+     * the target-scoped {@link #TIER2_TARGET_SCOPED_MODULE_TYPES}: a duration estimate needs to
+     * know which types to multiply by host count and which run exactly once.
+     */
+    public static List<String> tier2FanoutModuleTypes() {
+        return TIER2_MODULE_TYPES;
+    }
+
+    /** The complement of {@link #tier2FanoutModuleTypes()} within {@link #allTier2ModuleTypes()} - dispatched once per target, never multiplied by host count. */
+    public static List<String> tier2TargetScopedModuleTypes() {
+        return TIER2_TARGET_SCOPED_MODULE_TYPES;
+    }
+
     private final ScanRunRepository scanRunRepository;
     private final ScanJobRepository scanJobRepository;
     private final ScoreSnapshotService scoreSnapshotService;

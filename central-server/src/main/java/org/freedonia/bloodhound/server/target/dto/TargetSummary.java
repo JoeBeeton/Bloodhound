@@ -39,7 +39,18 @@ public record TargetSummary(
          * "full average, nothing elapsed yet"). Null when there isn't enough history yet for any
          * Tier 1 module type (e.g. a fresh deployment), not a fabricated guess.
          */
-        Long estimatedScanDurationSeconds) {
+        Long estimatedScanDurationSeconds,
+        /**
+         * Same idea as {@link #estimatedScanDurationSeconds}, but for this target's next Tier 2
+         * (deep) scan - null for a target that isn't currently AUTHORIZED (deep scans require
+         * authorization and are never auto-scheduled, so estimating one for a target that can't
+         * actually run it would be misleading), and also null when there isn't enough history yet
+         * for any Tier 2 module type. Unlike the Tier 1 estimate, this one accounts for per-host
+         * fan-out and the ZAP_ACTIVE_SCAN global concurrency cap - see TargetController's own
+         * estimateTier2ScanDurationSeconds for why a simple max-of-averages would be badly wrong
+         * here.
+         */
+        Long estimatedTier2ScanDurationSeconds) {
 
     /** No scan has ever completed for this target yet - score/grade are absent, not zero. */
     public static TargetSummary from(Target target) {
@@ -57,7 +68,7 @@ public record TargetSummary(
 
     public static TargetSummary from(
             Target target, ScoreSnapshot latestScore, Instant lastScanAt, Boolean lastScanWasDeep, WafStatus wafStatus) {
-        return from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus, null);
+        return from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus, null, null);
     }
 
     public static TargetSummary from(
@@ -66,7 +77,8 @@ public record TargetSummary(
             Instant lastScanAt,
             Boolean lastScanWasDeep,
             WafStatus wafStatus,
-            Long estimatedScanDurationSeconds) {
+            Long estimatedScanDurationSeconds,
+            Long estimatedTier2ScanDurationSeconds) {
         return new TargetSummary(
                 target.id(),
                 target.hostname(),
@@ -85,6 +97,7 @@ public record TargetSummary(
                 target.notes(),
                 wafStatus != null ? wafStatus.vendor() : null,
                 wafStatus != null && wafStatus.scanned(),
-                estimatedScanDurationSeconds);
+                estimatedScanDurationSeconds,
+                estimatedTier2ScanDurationSeconds);
     }
 }

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +15,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
@@ -22,8 +25,10 @@ import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.subdomain.SubdomainRepository;
 import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
+import org.freedonia.bloodhound.server.target.dto.TargetSummary;
 import org.freedonia.bloodhound.server.target.dto.UpdateTargetRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -46,10 +51,12 @@ class TargetControllerTest {
     // own random UUID below), so this never accumulates state across tests.
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter = new TargetBulkCreateRateLimiter();
     private final FindingRepository findingRepository = mock(FindingRepository.class);
+    private final SubdomainRepository subdomainRepository = mock(SubdomainRepository.class);
 
     {
         when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
         when(scanJobAttemptRepository.averageSecondsByModuleType(anyInt())).thenReturn(Map.of());
+        when(scanJobAttemptRepository.averageSecondsByModuleType(any(), anyInt())).thenReturn(Map.of());
     }
 
     private TargetController controller(int maxTargetsPerOrg) {
@@ -64,6 +71,7 @@ class TargetControllerTest {
                 auditLogRepository,
                 targetBulkCreateRateLimiter,
                 findingRepository,
+                subdomainRepository,
                 maxTargetsPerOrg);
     }
 
@@ -72,6 +80,55 @@ class TargetControllerTest {
 
     private Target target(UUID id, String hostname) {
         return new Target(id, orgId, hostname, "OWN", "UNAUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
+    }
+
+    private Target authorizedTarget(UUID id, String hostname) {
+        return new Target(id, orgId, hostname, "OWN", "AUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
+    }
+
+    @Test
+    void list_omitsTier2EstimateForAnUnauthorizedTarget() {
+        TargetController controller = controller(100);
+        UUID id = UUID.randomUUID();
+        Target t = target(id, "example.com");
+        when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of(t));
+        when(scoreSnapshotRepository.findLatestForTargets(List.of(id))).thenReturn(Map.of());
+        when(scanRunRepository.findMostRecentByTarget(id)).thenReturn(Optional.empty());
+
+        List<TargetSummary> result = controller.list(null, false, admin);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).estimatedTier2ScanDurationSeconds()).isNull();
+        // Deep scans are never possible for a target that isn't AUTHORIZED - estimating one would
+        // be misleading, so this short-circuits before even looking at subdomain fan-out.
+        verify(subdomainRepository, never()).countByTarget(any(), any(), any());
+    }
+
+    @Test
+    void list_tier2EstimateAccountsForSubdomainFanoutAndTheZapConcurrencyCap() {
+        TargetController controller = controller(100);
+        UUID id = UUID.randomUUID();
+        Target t = authorizedTarget(id, "example.com");
+        when(targetRepository.findByOrganization(orgId, null, false)).thenReturn(List.of(t));
+        when(scoreSnapshotRepository.findLatestForTargets(List.of(id))).thenReturn(Map.of());
+        when(scanRunRepository.findMostRecentByTarget(id)).thenReturn(Optional.empty());
+
+        // More subdomains than ScanRunService's own TIER2_SUBDOMAIN_CAP (15) - the fan-out host
+        // count should clamp there, same as createDeepScan's own selection does, giving
+        // 1 (apex) + 15 (capped) = 16 ZAP_ACTIVE_SCAN jobs this hypothetical run would add.
+        when(subdomainRepository.countByTarget(eq(id), isNull(), isNull())).thenReturn(20);
+        when(scanJobAttemptRepository.averageSecondsByModuleType(anyInt())).thenReturn(Map.of("ZAP_ACTIVE_SCAN", 60.0));
+        when(scanJobRepository.zapMaxConcurrentScans()).thenReturn(1);
+        // 4 ZAP_ACTIVE_SCAN jobs already queued system-wide from some other org/target's run.
+        when(scanJobRepository.countPendingOrInProgress("ZAP_ACTIVE_SCAN")).thenReturn(4);
+
+        List<TargetSummary> result = controller.list(null, false, admin);
+
+        // (4 already-queued + 16 of this run's own) * 60s average / 1 concurrent slot = 1200s -
+        // the queue-drain model ScanEtaEstimator uses for an in-progress run, applied here to a
+        // run that hasn't started yet. A naive max-of-averages model would have reported 60s.
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).estimatedTier2ScanDurationSeconds()).isEqualTo(1200L);
     }
 
     @Test

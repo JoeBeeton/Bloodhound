@@ -95,4 +95,32 @@ public class ScanJobAttemptRepository {
         }, sampleSize);
         return result;
     }
+
+    /**
+     * Same as {@link #averageSecondsByModuleType}, scoped to one target - a module's duration
+     * (SUBDOMAIN_ENUM especially) genuinely varies by target, e.g. with subdomain count, so a
+     * per-target history gives a tighter estimate than the org-wide one when this target has run
+     * that module type before. Callers fall back to the org-wide average for any module type this
+     * target hasn't got {@code sampleSize} successful completions of yet.
+     */
+    public java.util.Map<String, Double> averageSecondsByModuleType(UUID targetId, int sampleSize) {
+        String sql =
+                """
+                SELECT module_type, AVG(EXTRACT(EPOCH FROM (a.ended_at - a.started_at))) AS avg_seconds
+                FROM (
+                    SELECT sja.*, sj.module_type,
+                           ROW_NUMBER() OVER (PARTITION BY sj.module_type ORDER BY sja.ended_at DESC) AS rn
+                    FROM scan_job_attempts sja
+                    JOIN scan_jobs sj ON sj.id = sja.scan_job_id
+                    WHERE sja.outcome = 'SUCCESS' AND sja.ended_at IS NOT NULL AND sj.target_id = ?
+                ) a
+                WHERE a.rn <= ?
+                GROUP BY module_type
+                """;
+        java.util.Map<String, Double> result = new java.util.HashMap<>();
+        jdbc.query(sql, rs -> {
+            result.put(rs.getString("module_type"), rs.getDouble("avg_seconds"));
+        }, targetId, sampleSize);
+        return result;
+    }
 }

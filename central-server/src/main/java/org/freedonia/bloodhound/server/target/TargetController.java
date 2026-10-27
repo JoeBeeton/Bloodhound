@@ -11,6 +11,8 @@ import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.findings.FindingRepository;
+import org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator;
+import org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator.JobProgress;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobAttemptRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRun;
@@ -18,6 +20,7 @@ import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshot;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.subdomain.SubdomainRepository;
 import org.freedonia.bloodhound.server.target.TargetBulkCreateRateLimiter.TargetBulkCreateRateLimitedException;
 import org.freedonia.bloodhound.server.target.dto.BulkCreateTargetsRequest;
 import org.freedonia.bloodhound.server.target.dto.CreateTargetRequest;
@@ -57,6 +60,7 @@ public class TargetController {
     private final AuditLogRepository auditLogRepository;
     private final TargetBulkCreateRateLimiter targetBulkCreateRateLimiter;
     private final FindingRepository findingRepository;
+    private final SubdomainRepository subdomainRepository;
     private final int maxTargetsPerOrg;
 
     public TargetController(
@@ -70,6 +74,7 @@ public class TargetController {
             AuditLogRepository auditLogRepository,
             TargetBulkCreateRateLimiter targetBulkCreateRateLimiter,
             FindingRepository findingRepository,
+            SubdomainRepository subdomainRepository,
             @Value("${bloodhound.targets.max-per-org:100}") int maxTargetsPerOrg) {
         this.targetRepository = targetRepository;
         this.scanRunService = scanRunService;
@@ -81,6 +86,7 @@ public class TargetController {
         this.auditLogRepository = auditLogRepository;
         this.targetBulkCreateRateLimiter = targetBulkCreateRateLimiter;
         this.findingRepository = findingRepository;
+        this.subdomainRepository = subdomainRepository;
         this.maxTargetsPerOrg = maxTargetsPerOrg;
     }
 
@@ -100,8 +106,16 @@ public class TargetController {
         // One shared historical-average lookup for every target in this response, not one per
         // target - same reasoning as ScansController's identical call for its own ETA.
         Map<String, Double> avgSecondsByModuleType = scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE);
+        // Same reasoning for the ZAP_ACTIVE_SCAN concurrency-cap queue depth - one global slot
+        // shared across every org/target's scan_run, not something to look up per target - see
+        // ScansController#active for the identical pattern and ScanEtaEstimator's own javadoc on
+        // why the queue-depth model is needed at all for this module type.
+        Map<String, Integer> concurrencyCaps = Map.of("ZAP_ACTIVE_SCAN", scanJobRepository.zapMaxConcurrentScans());
+        Map<String, Integer> systemWideRemaining = new java.util.HashMap<>();
+        concurrencyCaps.keySet().forEach(
+                moduleType -> systemWideRemaining.put(moduleType, scanJobRepository.countPendingOrInProgress(moduleType)));
         return targets.stream()
-                .map(t -> composeSummary(t, latestScoreByTarget.get(t.id()), avgSecondsByModuleType))
+                .map(t -> composeSummary(t, latestScoreByTarget.get(t.id()), avgSecondsByModuleType, concurrencyCaps, systemWideRemaining))
                 .toList();
     }
 
@@ -120,12 +134,25 @@ public class TargetController {
 
     /** Same as {@link #composeSummary(Target)}, but takes an already-fetched score - see {@link #list} for why. */
     private TargetSummary composeSummary(Target target, ScoreSnapshot latestScore) {
-        return composeSummary(target, latestScore, scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE));
+        Map<String, Integer> concurrencyCaps = Map.of("ZAP_ACTIVE_SCAN", scanJobRepository.zapMaxConcurrentScans());
+        Map<String, Integer> systemWideRemaining = new java.util.HashMap<>();
+        concurrencyCaps.keySet().forEach(
+                moduleType -> systemWideRemaining.put(moduleType, scanJobRepository.countPendingOrInProgress(moduleType)));
+        return composeSummary(
+                target,
+                latestScore,
+                scanJobAttemptRepository.averageSecondsByModuleType(ETA_SAMPLE_SIZE),
+                concurrencyCaps,
+                systemWideRemaining);
     }
 
-    /** Same as {@link #composeSummary(Target, ScoreSnapshot)}, but takes an already-fetched average-duration map - see {@link #list} for why. */
+    /** Same as {@link #composeSummary(Target, ScoreSnapshot)}, but takes already-fetched shared lookups - see {@link #list} for why. */
     private TargetSummary composeSummary(
-            Target target, ScoreSnapshot latestScore, Map<String, Double> avgSecondsByModuleType) {
+            Target target,
+            ScoreSnapshot latestScore,
+            Map<String, Double> orgAvgSecondsByModuleType,
+            Map<String, Integer> concurrencyCapByModuleType,
+            Map<String, Integer> systemWideRemainingByModuleType) {
         var lastScan = scanRunRepository.findMostRecentByTarget(target.id()).orElse(null);
         Instant lastScanAt = null;
         Boolean lastScanWasDeep = null;
@@ -137,8 +164,29 @@ public class TargetController {
         // Only the apex hostname's own entry is needed here - see SubdomainController for the
         // identical per-host lookup driving the map's subdomain-level WAF badges.
         var wafStatus = findingRepository.findWafStatusByTarget(target.id()).get(target.hostname());
-        Long estimatedScanDurationSeconds = estimateTier1ScanDurationSeconds(avgSecondsByModuleType);
-        return TargetSummary.from(target, latestScore, lastScanAt, lastScanWasDeep, wafStatus, estimatedScanDurationSeconds);
+        // Per-target history first (a module's duration, SUBDOMAIN_ENUM especially, genuinely
+        // varies by target - see ScanJobAttemptRepository#averageSecondsByModuleType(UUID, int)),
+        // falling back to the org-wide map for any module type this target hasn't got enough of
+        // its own completions for yet. Without this fallback every target would show the same
+        // number only once it had accrued its own full history, which defeats the point.
+        Map<String, Double> targetAvgSecondsByModuleType =
+                scanJobAttemptRepository.averageSecondsByModuleType(target.id(), ETA_SAMPLE_SIZE);
+        Long estimatedScanDurationSeconds =
+                estimateTier1ScanDurationSeconds(targetAvgSecondsByModuleType, orgAvgSecondsByModuleType);
+        Long estimatedTier2ScanDurationSeconds = estimateTier2ScanDurationSeconds(
+                target,
+                targetAvgSecondsByModuleType,
+                orgAvgSecondsByModuleType,
+                concurrencyCapByModuleType,
+                systemWideRemainingByModuleType);
+        return TargetSummary.from(
+                target,
+                latestScore,
+                lastScanAt,
+                lastScanWasDeep,
+                wafStatus,
+                estimatedScanDurationSeconds,
+                estimatedTier2ScanDurationSeconds);
     }
 
     /**
@@ -146,13 +194,17 @@ public class TargetController {
      * {@link org.freedonia.bloodhound.server.jobqueue.ScanEtaEstimator} already uses for an
      * in-progress run's uncapped module types) - so the whole run's duration is approximated as
      * the slowest individual module type's own historical average, not their sum. Null when none
-     * of {@link ScanRunService#allTier1ModuleTypes()} has any historical data yet, rather than a
-     * fabricated guess.
+     * of {@link ScanRunService#allTier1ModuleTypes()} has any historical data yet (in either map),
+     * rather than a fabricated guess.
      */
-    private static Long estimateTier1ScanDurationSeconds(Map<String, Double> avgSecondsByModuleType) {
+    private static Long estimateTier1ScanDurationSeconds(
+            Map<String, Double> targetAvgSecondsByModuleType, Map<String, Double> orgAvgSecondsByModuleType) {
         Long max = null;
         for (String moduleType : ScanRunService.allTier1ModuleTypes()) {
-            Double avg = avgSecondsByModuleType.get(moduleType);
+            Double avg = targetAvgSecondsByModuleType.get(moduleType);
+            if (avg == null) {
+                avg = orgAvgSecondsByModuleType.get(moduleType);
+            }
             if (avg == null) {
                 continue;
             }
@@ -162,6 +214,70 @@ public class TargetController {
             }
         }
         return max;
+    }
+
+    /**
+     * A not-yet-started Tier 2 (deep) scan's duration, only for a target whose
+     * authorization_status is AUTHORIZED - the only state {@link #deepScanNow} will actually run
+     * one for; null for every other target, since estimating a scan that can't be launched would
+     * be misleading, not helpful. Reuses {@link ScanEtaEstimator} directly rather than the simpler
+     * max-of-averages model {@link #estimateTier1ScanDurationSeconds} uses: unlike Tier 1, Tier 2's
+     * fan-out module types run once per selected host (see ScanRunService#createDeepScan), and
+     * ZAP_ACTIVE_SCAN specifically shares one global concurrency-capped slot across every org's
+     * scan runs - ignoring either of those was confirmed (see ScanEtaEstimator's own javadoc) to
+     * under-estimate a real deep scan by an order of magnitude. Synthesizes one PENDING,
+     * not-yet-claimed job per (fan-out module type, selected host) pair plus one per target-scoped
+     * module type, mirroring createDeepScan's own job counts exactly, then asks the same estimator
+     * an in-progress run's remaining time uses what a run starting from zero would take.
+     */
+    private Long estimateTier2ScanDurationSeconds(
+            Target target,
+            Map<String, Double> targetAvgSecondsByModuleType,
+            Map<String, Double> orgAvgSecondsByModuleType,
+            Map<String, Integer> concurrencyCapByModuleType,
+            Map<String, Integer> systemWideRemainingByModuleType) {
+        if (!"AUTHORIZED".equals(target.authorizationStatus())) {
+            return null;
+        }
+        int subdomainCount = subdomainRepository.countByTarget(target.id(), null, null);
+        int fanoutHostCount = 1 + Math.min(subdomainCount, ScanRunService.tier2SubdomainCap());
+
+        List<JobProgress> syntheticJobs = new ArrayList<>();
+        for (String moduleType : ScanRunService.tier2FanoutModuleTypes()) {
+            for (int i = 0; i < fanoutHostCount; i++) {
+                syntheticJobs.add(new JobProgress(moduleType, "PENDING", null));
+            }
+        }
+        for (String moduleType : ScanRunService.tier2TargetScopedModuleTypes()) {
+            syntheticJobs.add(new JobProgress(moduleType, "PENDING", null));
+        }
+
+        // This hypothetical run's own capped-module jobs don't exist in scan_jobs yet, so the real
+        // current system-wide queue depth (necessarily counting only already-inserted jobs from
+        // OTHER runs) doesn't include them. Add them in explicitly - otherwise a target whose own
+        // future deep scan would add, say, 16 ZAP_ACTIVE_SCAN jobs behind the current global queue
+        // would be estimated as if it only had to wait for everyone else's jobs, understating its
+        // own (often dominant) contribution to the very queue it's about to join.
+        Map<String, Integer> adjustedSystemWideRemainingByModuleType =
+                new java.util.HashMap<>(systemWideRemainingByModuleType);
+        for (String moduleType : concurrencyCapByModuleType.keySet()) {
+            long ownJobCount =
+                    syntheticJobs.stream().filter(job -> moduleType.equals(job.moduleType())).count();
+            adjustedSystemWideRemainingByModuleType.merge(moduleType, (int) ownJobCount, Integer::sum);
+        }
+
+        // Target history wins over the org-wide fallback for any module type both maps have an
+        // entry for - same preference order as estimateTier1ScanDurationSeconds above.
+        Map<String, Double> mergedAvgSecondsByModuleType = new java.util.HashMap<>(orgAvgSecondsByModuleType);
+        mergedAvgSecondsByModuleType.putAll(targetAvgSecondsByModuleType);
+
+        return ScanEtaEstimator.estimate(
+                        syntheticJobs,
+                        mergedAvgSecondsByModuleType,
+                        adjustedSystemWideRemainingByModuleType,
+                        concurrencyCapByModuleType,
+                        Instant.now())
+                .etaSeconds();
     }
 
     @PostMapping

@@ -19,6 +19,7 @@ import org.freedonia.bloodhound.server.jobqueue.ScanJobRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunRepository;
 import org.freedonia.bloodhound.server.jobqueue.ScanRunService;
 import org.freedonia.bloodhound.server.scoring.ScoreSnapshotRepository;
+import org.freedonia.bloodhound.server.subdomain.SubdomainRepository;
 import org.freedonia.bloodhound.server.target.dto.TargetSummary;
 import org.freedonia.bloodhound.server.target.dto.UpdateTargetRequest;
 import org.junit.jupiter.api.Test;
@@ -42,14 +43,17 @@ class TargetControllerUpdateTest {
     private final TargetAuthorizationRepository targetAuthorizationRepository = mock(TargetAuthorizationRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final FindingRepository findingRepository = mock(FindingRepository.class);
+    private final SubdomainRepository subdomainRepository = mock(SubdomainRepository.class);
     private final TargetController controller = new TargetController(
             targetRepository, scanRunService, scoreSnapshotRepository, scanRunRepository, scanJobRepository,
             scanJobAttemptRepository, targetAuthorizationRepository, auditLogRepository,
-            new TargetBulkCreateRateLimiter(), findingRepository, 100);
+            new TargetBulkCreateRateLimiter(), findingRepository, subdomainRepository, 100);
 
     {
         when(findingRepository.findWafStatusByTarget(any())).thenReturn(Map.of());
         when(scanJobAttemptRepository.averageSecondsByModuleType(org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(Map.of());
+        when(scanJobAttemptRepository.averageSecondsByModuleType(any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(Map.of());
     }
 

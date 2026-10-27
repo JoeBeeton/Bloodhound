@@ -31,6 +31,7 @@ function target(overrides: Partial<Target> = {}): Target {
     wafVendor: null,
     wafScanned: false,
     estimatedScanDurationSeconds: null,
+    estimatedTier2ScanDurationSeconds: null,
     ...overrides,
   };
 }

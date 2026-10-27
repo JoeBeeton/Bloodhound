@@ -40,6 +40,7 @@ function target(overrides: Partial<Target> = {}): Target {
     wafVendor: null,
     wafScanned: false,
     estimatedScanDurationSeconds: null,
+    estimatedTier2ScanDurationSeconds: null,
     ...overrides,
   };
 }
@@ -245,7 +246,41 @@ describe("TargetsPage - next scan label", () => {
     await screen.findByText("scheduled.example.com", {}, { timeout: 5000 });
 
     expect(screen.getByText(/next scan:/i)).toBeInTheDocument();
-    expect(screen.getByText(/\(~2m 5s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/\(Tier 1, ~2m 5s\)/)).toBeInTheDocument();
+  });
+
+  it("shows a separate Tier 2 estimate beside the Deep scan button for an authorized target", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        target({
+          hostname: "deep.example.com",
+          authorizationStatus: "AUTHORIZED",
+          estimatedTier2ScanDurationSeconds: 905,
+        }),
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("deep.example.com", {}, { timeout: 5000 });
+
+    expect(screen.getByText(/Tier 2, ~15m 5s/)).toBeInTheDocument();
+  });
+
+  it("omits the Tier 2 estimate for a target that isn't authorized", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse([
+        target({
+          hostname: "unauthorized.example.com",
+          authorizationStatus: "UNAUTHORIZED",
+          estimatedTier2ScanDurationSeconds: null,
+        }),
+      ]),
+    );
+
+    renderPage();
+    await screen.findByText("unauthorized.example.com", {}, { timeout: 5000 });
+
+    expect(screen.queryByText(/Tier 2,/)).not.toBeInTheDocument();
   });
 
   it("omits the duration estimate when there isn't enough scan history yet", async () => {
