@@ -21,6 +21,11 @@ class DeepPortScanDecisionLogicTest {
         return new PortDetail(id, null, null, null, Map.of(), family);
     }
 
+    private static PortDetail smbPort(int id, boolean confirmed) {
+        Map<String, String> scriptOutputs = confirmed ? Map.of("smb-rpc-confirmed", "true") : Map.of();
+        return new PortDetail(id, "microsoft-ds", "Samba", "4.15.0", scriptOutputs, "IPv4");
+    }
+
     private static PortDetail portWithScript(int id, String scriptId, String output) {
         return new PortDetail(id, "ftp", "vsftpd", "3.0.3", Map.of(scriptId, output), "IPv4");
     }
@@ -55,9 +60,8 @@ class DeepPortScanDecisionLogicTest {
     }
 
     @Test
-    void smbPort445_flaggedAsSmbNetbiosExposed_notGenericAdminService() {
-        List<RawFinding> findings =
-                DeepPortScanDecisionLogic.decide("example.com", List.of(port(445, "microsoft-ds", "Samba", "4.15.0")));
+    void smbPort445_confirmed_flaggedAsSmbNetbiosExposed_notGenericAdminService() {
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide("example.com", List.of(smbPort(445, true)));
         RawFinding finding = findings.stream()
                 .filter(f -> f.ruleId().equals("NETWORK_SMB_NETBIOS_EXPOSED"))
                 .findFirst()
@@ -65,7 +69,27 @@ class DeepPortScanDecisionLogicTest {
         assertThat(finding.severity().name()).isEqualTo("CRITICAL");
         assertThat(finding.affectedAsset()).isEqualTo("example.com:445");
         assertThat(finding.description()).contains("Samba 4.15.0");
+        assertThat(finding.evidence()).containsEntry("protocolConfirmed", true);
         assertThat(findings).extracting(RawFinding::ruleId).doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
+    }
+
+    @Test
+    void smbPort445_unconfirmedProtocol_flaggedMediumUnconfirmed_notCritical() {
+        // The deep-scan-layer equivalent of the live false positive this covers: naabu's bare TCP
+        // connect, with zgrab2's generic banner probe never getting a positive ID (SMB/RPC don't
+        // send an unprompted banner) and SmbRpcConfirmationProbe getting no valid reply either,
+        // used to still be enough on its own for a CRITICAL finding.
+        List<RawFinding> findings = DeepPortScanDecisionLogic.decide("example.com", List.of(smbPort(445, false)));
+        RawFinding finding = findings.stream()
+                .filter(f -> f.ruleId().equals("NETWORK_SMB_NETBIOS_PORT_OPEN_UNCONFIRMED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(finding.severity().name()).isEqualTo("MEDIUM");
+        assertThat(finding.affectedAsset()).isEqualTo("example.com:445");
+        assertThat(finding.evidence()).containsEntry("protocolConfirmed", false);
+        assertThat(findings)
+                .extracting(RawFinding::ruleId)
+                .doesNotContain("NETWORK_SMB_NETBIOS_EXPOSED", "PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
     }
 
     @Test

@@ -185,6 +185,12 @@ public class DeepPortScanModule implements ScanModule {
             } catch (ScanModuleException e) {
                 log.debug("SSH algorithm check for {}:{} failed: {}", ip, port, e.getMessage());
             }
+        } else if (SmbRpcConfirmationProbe.CONFIRMABLE_PORTS.contains(port)) {
+            // zgrab2's generic banner probe above never gets a positive ID here - SMB/RPC don't
+            // send an unprompted banner - so without this, DeepPortScanDecisionLogic would raise
+            // NETWORK_SMB_NETBIOS_EXPOSED (CRITICAL) from the bare open port alone, same gap
+            // PortScanDecisionLogic's own SMB_NETBIOS_RPC_PORTS doc covers for the Tier 1 light scan.
+            scriptOutputs.put("smb-rpc-confirmed", String.valueOf(SmbRpcConfirmationProbe.confirm(address, port)));
         }
 
         return new PortDetail(port, serviceName, serviceProduct, serviceVersion, scriptOutputs, family);

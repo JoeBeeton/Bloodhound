@@ -92,23 +92,48 @@ public final class DeepPortScanDecisionLogic {
             if (PortScanDecisionLogic.ADMIN_DB_PORTS.contains(portId)) {
                 if (!promiscuous && PortScanDecisionLogic.SMB_NETBIOS_RPC_PORTS.contains(portId)) {
                     // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for
-                    // this exact port - required so central-server's (target_id, rule_id,
-                    // affected_asset) dedup recognizes a port already flagged by a light scan and
-                    // a deep scan as the same finding, same reasoning as this file's own class
-                    // javadoc already applies to the other two rule_ids.
-                    findings.add(new RawFinding(
-                            "NETWORK_SMB_NETBIOS_EXPOSED",
-                            Severity.CRITICAL,
-                            Category.NETWORK,
-                            "Windows file-sharing/RPC service reachable from the internet",
-                            "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
-                                    + "found open and reachable from the internet (deep scan identified it as "
-                                    + representative.serviceSummary() + "). These protocols were never designed for "
-                                    + "internet exposure and have a long history of wormable, pre-authentication "
-                                    + "remote code execution vulnerabilities (e.g. MS17-010/EternalBlue, exploited "
-                                    + "by WannaCry and NotPetya).",
-                            hostname + ":" + portId,
-                            evidence));
+                    // this exact port when confirmed - required so central-server's (target_id,
+                    // rule_id, affected_asset) dedup recognizes a port already flagged by a light
+                    // scan and a deep scan as the same finding, same reasoning as this file's own
+                    // class javadoc already applies to the other two rule_ids. "Confirmed" means a
+                    // DeepPortScanModule-run SmbRpcConfirmationProbe actually got a valid SMB
+                    // negotiate/DCE-RPC bind reply - zgrab2's own generic banner probe above never
+                    // gets a positive ID for SMB/RPC (neither sends an unprompted banner), so
+                    // without this a bare open port on 135/445 would still read as CRITICAL from
+                    // nothing more than naabu's TCP connect, same gap PortScanDecisionLogic's own
+                    // SMB_NETBIOS_RPC_PORTS doc covers for the Tier 1 light scan.
+                    boolean confirmed = details.stream()
+                            .anyMatch(d -> "true".equals(d.scriptOutputs().get("smb-rpc-confirmed")));
+                    evidence.put("protocolConfirmed", confirmed);
+                    if (confirmed) {
+                        findings.add(new RawFinding(
+                                "NETWORK_SMB_NETBIOS_EXPOSED",
+                                Severity.CRITICAL,
+                                Category.NETWORK,
+                                "Windows file-sharing/RPC service reachable from the internet",
+                                "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
+                                        + "found open and reachable from the internet (deep scan identified it as "
+                                        + representative.serviceSummary() + "), and a follow-up SMB negotiate/DCE-RPC "
+                                        + "bind probe confirmed a real protocol response. These protocols were never "
+                                        + "designed for internet exposure and have a long history of wormable, "
+                                        + "pre-authentication remote code execution vulnerabilities (e.g. "
+                                        + "MS17-010/EternalBlue, exploited by WannaCry and NotPetya).",
+                                hostname + ":" + portId,
+                                evidence));
+                    } else {
+                        findings.add(new RawFinding(
+                                "NETWORK_SMB_NETBIOS_PORT_OPEN_UNCONFIRMED",
+                                Severity.MEDIUM,
+                                Category.NETWORK,
+                                "Port used by SMB/NetBIOS/RPC accepted a connection, but the protocol itself didn't respond",
+                                "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) "
+                                        + "accepted a plain TCP connection (deep scan identified it as "
+                                        + representative.serviceSummary() + "), but a follow-up SMB negotiate/DCE-RPC "
+                                        + "bind probe got no valid protocol reply - see NETWORK_SMB_NETBIOS_EXPOSED's "
+                                        + "own notes on why that's not yet strong enough evidence for a Critical rating.",
+                                hostname + ":" + portId,
+                                evidence));
+                    }
                 } else if (!promiscuous && PortScanDecisionLogic.MEMCACHED_PORTS.contains(portId)) {
                     // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for
                     // this exact port - see NETWORK_SMB_NETBIOS_EXPOSED's own comment above for

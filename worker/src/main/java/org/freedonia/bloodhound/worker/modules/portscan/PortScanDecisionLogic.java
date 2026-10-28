@@ -71,6 +71,21 @@ public final class PortScanDecisionLogic {
      * execution vulnerabilities (MS17-010/EternalBlue, exploited by WannaCry and NotPetya -
      * arguably the most damaging self-propagating malware outbreaks on record, both enabled by
      * internet-facing SMB).
+     *
+     * <p>Found live: a host that accepted a bare TCP connect on 135 and 445 exactly once, then
+     * refused both on every one of five later re-tests (two protocols, two address families).
+     * {@code TcpConnectPortScanner} only ever does a plain TCP connect - no retry, no payload -
+     * so a single successful handshake alone was being reported as CRITICAL "EternalBlue-class"
+     * exposure with nothing to actually back that beyond the TCP SYN/ACK itself; a transient
+     * listener or a stateful firewall/load balancer accepting every port produces exactly that
+     * signal. {@link SmbRpcConfirmationProbe} sends the one additional message a real client
+     * sends before any authentication (an SMB2 NEGOTIATE on 445, a DCE/RPC BIND on 135) and
+     * {@link #decide} only keeps this port's finding at CRITICAL ({@code NETWORK_SMB_NETBIOS_EXPOSED})
+     * when that probe got a valid protocol reply back; a bare-connect-only hit is reported
+     * separately, at MEDIUM, as {@code NETWORK_SMB_NETBIOS_PORT_OPEN_UNCONFIRMED} - deliberately
+     * a different rule_id, not a severity change on the same one, since FindingReconciler never
+     * upgrades an already-OPEN finding's severity on a later, stronger detection (see
+     * DeepPortScanDecisionLogic's own class javadoc).
      */
     static final Set<Integer> SMB_NETBIOS_RPC_PORTS = Set.of(135, 139, 445);
 
@@ -146,7 +161,8 @@ public final class PortScanDecisionLogic {
      * via IPv6 shows {@code addressFamilies: ["IPv6"]}, the exact
      * previously-invisible-to-this-scanner case this exists to surface.
      */
-    public static List<RawFinding> decide(String hostname, Map<String, List<Integer>> openPortsByFamily) {
+    public static List<RawFinding> decide(
+            String hostname, Map<String, List<Integer>> openPortsByFamily, Set<Integer> protocolConfirmedPorts) {
         Map<Integer, List<String>> familiesByPort = new TreeMap<>();
         openPortsByFamily.forEach((family, ports) -> {
             for (Integer port : ports) {
@@ -181,19 +197,42 @@ public final class PortScanDecisionLogic {
             // per-port ones rather than reporting both.
             if (ADMIN_DB_PORTS.contains(port)) {
                 if (!promiscuous && SMB_NETBIOS_RPC_PORTS.contains(port)) {
-                    findings.add(new RawFinding(
-                            "NETWORK_SMB_NETBIOS_EXPOSED",
-                            Severity.CRITICAL,
-                            Category.NETWORK,
-                            "Windows file-sharing/RPC service reachable from the internet",
-                            "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
-                                    + "found open and reachable from the internet. These protocols were never "
-                                    + "designed for internet exposure and have a long history of wormable, "
-                                    + "pre-authentication remote code execution vulnerabilities (e.g. "
-                                    + "MS17-010/EternalBlue, exploited by WannaCry and NotPetya) - internet-facing "
-                                    + "SMB is one of the most consistently dangerous network exposures a host can have.",
-                            hostname + ":" + port,
-                            evidence));
+                    boolean confirmed = protocolConfirmedPorts.contains(port);
+                    evidence.put("protocolConfirmed", confirmed);
+                    if (confirmed) {
+                        findings.add(new RawFinding(
+                                "NETWORK_SMB_NETBIOS_EXPOSED",
+                                Severity.CRITICAL,
+                                Category.NETWORK,
+                                "Windows file-sharing/RPC service reachable from the internet",
+                                "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) was "
+                                        + "found open and reachable from the internet, and a follow-up SMB "
+                                        + "negotiate/DCE-RPC bind probe confirmed a real protocol response - not "
+                                        + "just a bare TCP handshake. These protocols were never designed for "
+                                        + "internet exposure and have a long history of wormable, "
+                                        + "pre-authentication remote code execution vulnerabilities (e.g. "
+                                        + "MS17-010/EternalBlue, exploited by WannaCry and NotPetya) - internet-facing "
+                                        + "SMB is one of the most consistently dangerous network exposures a host can have.",
+                                hostname + ":" + port,
+                                evidence));
+                    } else {
+                        findings.add(new RawFinding(
+                                "NETWORK_SMB_NETBIOS_PORT_OPEN_UNCONFIRMED",
+                                Severity.MEDIUM,
+                                Category.NETWORK,
+                                "Port used by SMB/NetBIOS/RPC accepted a connection, but the protocol itself didn't respond",
+                                "A port used by SMB, NetBIOS, or the Windows RPC endpoint mapper (445/139/135) "
+                                        + "accepted a plain TCP connection, but a follow-up SMB negotiate/DCE-RPC "
+                                        + "bind probe (port 139 is never probed this way) got no valid protocol "
+                                        + "reply. This is often a transient listener, a stateful firewall or load "
+                                        + "balancer accepting the TCP handshake with nothing real behind it, or a "
+                                        + "brief window where a genuine service was starting or stopping - not yet "
+                                        + "strong enough evidence of a continuously-exposed Windows service to "
+                                        + "warrant a Critical rating on its own. A re-scan that gets a real "
+                                        + "protocol reply raises a separate, Critical finding.",
+                                hostname + ":" + port,
+                                evidence));
+                    }
                 } else if (!promiscuous && MEMCACHED_PORTS.contains(port)) {
                     findings.add(new RawFinding(
                             "NETWORK_MEMCACHED_EXPOSED",

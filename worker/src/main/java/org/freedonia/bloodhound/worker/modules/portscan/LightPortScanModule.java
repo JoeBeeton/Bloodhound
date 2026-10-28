@@ -53,6 +53,7 @@ public class LightPortScanModule implements ScanModule {
     }
 
     private List<RawFinding> scanOneHost(String hostname) throws ScanModuleException {
-        return PortScanDecisionLogic.decide(hostname, scanner.scan(hostname));
+        TcpConnectPortScanner.ScanResult result = scanner.scan(hostname);
+        return PortScanDecisionLogic.decide(hostname, result.openPortsByFamily(), result.protocolConfirmedPorts());
     }
 }

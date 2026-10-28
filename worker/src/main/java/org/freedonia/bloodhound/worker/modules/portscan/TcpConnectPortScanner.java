@@ -4,9 +4,11 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -42,13 +44,32 @@ public class TcpConnectPortScanner {
     private static final int POOL_SIZE = 20;
     private static final long HARD_TIMEOUT_SECONDS = 60;
 
-    /** Keys are "IPv4"/"IPv6" - see {@link PortScanDecisionLogic#decide}, which consumes this shape directly. */
-    public Map<String, List<Integer>> scan(String hostname) throws ScanModuleException {
-        Map<String, List<Integer>> result = new LinkedHashMap<>();
+    /**
+     * {@code openPortsByFamily} keys are "IPv4"/"IPv6" - see {@link PortScanDecisionLogic#decide},
+     * which consumes that shape directly. {@code protocolConfirmedPorts} is the subset of {@link
+     * PortScanDecisionLogic#SMB_NETBIOS_RPC_PORTS} (135/445 only - see {@link
+     * SmbRpcConfirmationProbe}'s own doc on why 139 is never confirmed) that, in addition to
+     * accepting a bare TCP connect, actually answered an SMB2 negotiate or DCE/RPC bind probe on
+     * at least one address family - see SmbRpcConfirmationProbe for why that distinction exists.
+     */
+    public record ScanResult(Map<String, List<Integer>> openPortsByFamily, Set<Integer> protocolConfirmedPorts) {}
+
+    public ScanResult scan(String hostname) throws ScanModuleException {
+        Map<String, List<Integer>> openPortsByFamily = new LinkedHashMap<>();
+        Set<Integer> protocolConfirmedPorts = new HashSet<>();
         for (Map.Entry<String, InetAddress> entry : DualStackResolver.resolveOnePerFamily(hostname).entrySet()) {
-            result.put(entry.getKey(), scanAddress(entry.getValue()));
+            InetAddress address = entry.getValue();
+            List<Integer> openPorts = scanAddress(address);
+            openPortsByFamily.put(entry.getKey(), openPorts);
+            for (int port : openPorts) {
+                if (SmbRpcConfirmationProbe.CONFIRMABLE_PORTS.contains(port)
+                        && !protocolConfirmedPorts.contains(port)
+                        && SmbRpcConfirmationProbe.confirm(address, port)) {
+                    protocolConfirmedPorts.add(port);
+                }
+            }
         }
-        return result;
+        return new ScanResult(openPortsByFamily, protocolConfirmedPorts);
     }
 
     private List<Integer> scanAddress(InetAddress address) {
