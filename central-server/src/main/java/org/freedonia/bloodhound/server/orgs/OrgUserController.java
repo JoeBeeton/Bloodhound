@@ -1,6 +1,7 @@
 package org.freedonia.bloodhound.server.orgs;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -8,10 +9,12 @@ import jakarta.validation.Valid;
 import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.auth.PasswordResetTokenRepository;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.notification.EmailSender;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
+import org.freedonia.bloodhound.server.orgs.dto.InviteSentResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.UserSummary;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +44,8 @@ import org.springframework.web.server.ResponseStatusException;
 public class OrgUserController {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    /** How long an invite's "set your password" link stays valid - much longer than forgot-password's own default 1-hour TTL (PasswordResetTokenRepository), since nobody's actively waiting on this one right after requesting it. */
+    private static final Duration INVITE_LINK_TTL = Duration.ofDays(7);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -48,6 +53,7 @@ public class OrgUserController {
     private final ApiKeyRepository apiKeyRepository;
     private final AuditLogRepository auditLogRepository;
     private final EmailSender emailSender;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final String appBaseUrl;
 
     public OrgUserController(
@@ -57,6 +63,7 @@ public class OrgUserController {
             ApiKeyRepository apiKeyRepository,
             AuditLogRepository auditLogRepository,
             EmailSender emailSender,
+            PasswordResetTokenRepository passwordResetTokenRepository,
             @Value("${bloodhound.notifications.app-base-url}") String appBaseUrl) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -64,6 +71,7 @@ public class OrgUserController {
         this.apiKeyRepository = apiKeyRepository;
         this.auditLogRepository = auditLogRepository;
         this.emailSender = emailSender;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.appBaseUrl = appBaseUrl;
     }
 
@@ -76,21 +84,34 @@ public class OrgUserController {
     }
 
     /**
-     * Creates a local user with a randomly-generated temporary password, returned once in the
-     * response body (see CreateUserResponse) - the admin stays able to relay it out-of-band
-     * regardless of whether the email below actually arrives. The new user should change it via
-     * PATCH /api/v1/users/me/password on first login.
+     * Creates a local user with no password the admin ever sees - unlike #resetPassword below,
+     * there's no temporary password to relay out-of-band here at all, deliberately: a product/
+     * security review found handing an admin a password to copy and send to someone else (even
+     * "securely") is a weaker pattern than the new user picking their own, the moment real
+     * email-sending infra existed to make that practical (see EmailSender). The row still needs
+     * *some* password_hash (LOCAL identity_source expects a real one - see V1__init.sql's own
+     * comment), so one is generated and encoded exactly as before, just never returned or emailed
+     * anywhere - it's unknown and unguessable, a pure placeholder until the invite link below is
+     * used. That link reuses the identical password_reset_tokens mechanism and
+     * POST /api/v1/auth/reset-password endpoint self-serve "forgot password" already uses
+     * (AuthController) - "set a new password for this user_id" is the same operation either way,
+     * just with a much longer TTL here (INVITE_LINK_TTL) since nobody's actively waiting on it the
+     * way a forgot-password requester is.
      */
     @PostMapping
-    public ResponseEntity<CreateUserResponse> create(
+    public ResponseEntity<InviteSentResponse> create(
             @PathVariable UUID orgId,
             @Valid @RequestBody CreateUserRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
         requireSameOrg(orgId, principal);
-        String temporaryPassword = generateTemporaryPassword();
+        String unusablePlaceholderPassword = generateTemporaryPassword();
         try {
             User created = userRepository.insertLocalUser(
-                    orgId, request.email(), request.displayName(), request.role(), passwordEncoder.encode(temporaryPassword));
+                    orgId,
+                    request.email(),
+                    request.displayName(),
+                    request.role(),
+                    passwordEncoder.encode(unusablePlaceholderPassword));
             auditLogRepository.record(
                     orgId,
                     principal.userId(),
@@ -99,31 +120,36 @@ public class OrgUserController {
                     "USER",
                     created.id().toString(),
                     "email=" + created.email() + " role=" + created.role());
+            String token = passwordResetTokenRepository.create(created.id(), INVITE_LINK_TTL);
             // Best-effort - see EmailSender's own javadoc for why a slow/failed send never blocks
-            // or fails this request. The temporary password above is the fallback if it doesn't
-            // arrive, not a backup path we fall into deliberately.
+            // or fails this request. Unlike #resetPassword below, there is no fallback if this
+            // doesn't arrive - an admin who needs to recover from that re-runs this endpoint (or a
+            // future resend action) rather than falling back to a password they'd have to relay.
             emailSender.send(
                     created.email(),
                     "You've been added to Bloodhound",
                     "An account was created for you in Bloodhound.\n\n"
-                            + "Email: " + created.email() + "\n"
-                            + "Temporary password: " + temporaryPassword + "\n\n"
-                            + "Sign in at " + appBaseUrl + "/login - you'll be asked to change this password.");
-            return ResponseEntity.status(HttpStatus.CREATED).body(CreateUserResponse.of(created, temporaryPassword));
+                            + "Set your password here: " + appBaseUrl + "/reset-password?token=" + token + "\n\n"
+                            + "This link expires in 7 days.");
+            return ResponseEntity.status(HttpStatus.CREATED).body(InviteSentResponse.of(created));
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "a user with that email already exists in this organization");
         }
     }
 
     /**
-     * The only recourse for a LOCAL user who forgot their password - there's no self-serve
-     * "forgot password" flow, since (as with user creation, see #create) there's no
-     * email-sending infrastructure in this project to deliver a reset link to. Rejects SAML
-     * users: they have no password_hash to reset (auth happens entirely at the IdP), so this
-     * would silently do nothing useful for them. Revokes every existing session for the user,
-     * the same as a self-service password change already does (see
-     * UserSelfController#changePassword) - if the account was reset because it was compromised,
-     * this is also what cuts off whoever was already logged in as them.
+     * The admin-initiated recourse for a LOCAL user who forgot their password - distinct from the
+     * self-serve AuthController#forgotPassword, which the account holder can use themselves
+     * without an admin at all. Unlike #create above, this one deliberately still hands back a
+     * real, usable temporary password (see CreateUserResponse) rather than an invite-style link:
+     * an admin resetting someone else's password is already acting on their behalf (often because
+     * that person can't get in and asked for help), so there's no "let them set their own" step
+     * to defer to the way a brand-new invite has. Rejects SAML users: they have no password_hash
+     * to reset (auth happens entirely at the IdP), so this would silently do nothing useful for
+     * them. Revokes every existing session for the user, the same as a self-service password
+     * change already does (see UserSelfController#changePassword) - if the account was reset
+     * because it was compromised, this is also what cuts off whoever was already logged in as
+     * them.
      */
     @PostMapping("/{id}/reset-password")
     public CreateUserResponse resetPassword(

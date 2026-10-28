@@ -14,10 +14,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Repository;
 
 /**
- * Short-lived, single-use token behind self-serve "forgot password" (see AuthController). Same
- * shape and same race-safety reasoning as {@code auth.sso.SsoHandoffCodeRepository} - only the
- * TTL differs (an hour, not 60 seconds: this one is emailed to a human to act on, not exchanged
- * by a browser mid-redirect).
+ * Short-lived, single-use token behind self-serve "forgot password" and the invite flow's
+ * "set your password" link (see AuthController and OrgUserController#create respectively) - same
+ * shape and same race-safety reasoning as {@code auth.sso.SsoHandoffCodeRepository}, consumed
+ * through the identical {@link #consume} either way since "set a new password for this user_id"
+ * is exactly the same operation regardless of which flow asked for it. Only the TTL differs by
+ * caller: forgot-password defaults to an hour (see {@link #create(UUID)}), while an invite link
+ * needs to survive someone not checking their email right away, so OrgUserController passes a
+ * much longer one explicitly via {@link #create(UUID, Duration)}.
  */
 @Repository
 public class PasswordResetTokenRepository {
@@ -25,7 +29,7 @@ public class PasswordResetTokenRepository {
     private static final Logger log = LoggerFactory.getLogger(PasswordResetTokenRepository.class);
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-    private static final Duration TTL = Duration.ofHours(1);
+    private static final Duration DEFAULT_TTL = Duration.ofHours(1);
 
     private final JdbcTemplate jdbc;
 
@@ -34,6 +38,10 @@ public class PasswordResetTokenRepository {
     }
 
     public String create(UUID userId) {
+        return create(userId, DEFAULT_TTL);
+    }
+
+    public String create(UUID userId, Duration ttl) {
         byte[] randomBytes = new byte[32];
         SECURE_RANDOM.nextBytes(randomBytes);
         String code = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
@@ -41,7 +49,7 @@ public class PasswordResetTokenRepository {
                 "INSERT INTO password_reset_tokens (code, user_id, expires_at) VALUES (?, ?, ?)",
                 code,
                 userId,
-                Timestamp.from(Instant.now().plus(TTL)));
+                Timestamp.from(Instant.now().plus(ttl)));
         return code;
     }
 

@@ -17,10 +17,12 @@ import java.util.UUID;
 import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
+import org.freedonia.bloodhound.server.auth.PasswordResetTokenRepository;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
 import org.freedonia.bloodhound.server.notification.EmailSender;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
+import org.freedonia.bloodhound.server.orgs.dto.InviteSentResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.UserSummary;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ class OrgUserControllerTest {
     private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final EmailSender emailSender = mock(EmailSender.class);
+    private final PasswordResetTokenRepository passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
     private final OrgUserController controller = new OrgUserController(
             userRepository,
             passwordEncoder,
@@ -44,6 +47,7 @@ class OrgUserControllerTest {
             apiKeyRepository,
             auditLogRepository,
             emailSender,
+            passwordResetTokenRepository,
             "http://localhost:8090");
 
     private final UUID orgId = UUID.randomUUID();
@@ -92,20 +96,27 @@ class OrgUserControllerTest {
     }
 
     @Test
-    void create_success_returnsTemporaryPasswordExactlyOnce() {
+    void create_success_sendsInviteLink_neverAPassword() {
         when(passwordEncoder.encode(any())).thenReturn("hashed");
         User created = user(UUID.randomUUID(), orgId, "VIEWER", "ACTIVE");
         when(userRepository.insertLocalUser(eq(orgId), eq("new@example.com"), eq("New Person"), eq("VIEWER"), any()))
                 .thenReturn(created);
+        when(passwordResetTokenRepository.create(eq(created.id()), any())).thenReturn("invite-token-123");
 
-        ResponseEntity<CreateUserResponse> response =
+        ResponseEntity<InviteSentResponse> response =
                 controller.create(orgId, new CreateUserRequest("new@example.com", "New Person", "VIEWER"), admin);
 
         assertThat(response.getStatusCode().value()).isEqualTo(201);
-        assertThat(response.getBody().temporaryPassword()).isNotBlank();
         assertThat(response.getBody().user().id()).isEqualTo(created.id());
         verify(auditLogRepository)
                 .record(eq(orgId), eq(admin.userId()), eq(admin.email()), eq("USER_CREATED"), eq("USER"), eq(created.id().toString()), any());
+        // The actual point of this test: a security review's whole reason for this change was
+        // that an admin-relayed temporary password is a weaker pattern than the new user setting
+        // their own - so the email must carry the invite link/token, never a password string, and
+        // the response body must have no password-shaped field at all for this to leak through.
+        verify(emailSender)
+                .send(eq(created.email()), any(), org.mockito.ArgumentMatchers.contains("invite-token-123"));
+        verify(emailSender, never()).send(any(), any(), org.mockito.ArgumentMatchers.contains("hashed"));
     }
 
     @Test

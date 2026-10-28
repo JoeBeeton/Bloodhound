@@ -7,7 +7,7 @@ import { Modal } from "../components/Modal";
 import { Shell } from "../components/Shell";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/useAuth";
-import type { AdminUser, CreateUserResponse, UserRole, UserStatus } from "../lib/types";
+import type { AdminUser, CreateUserResponse, InviteSentResponse, UserRole, UserStatus } from "../lib/types";
 import { usePageTitle } from "../lib/usePageTitle";
 
 const ROLES: UserRole[] = ["ADMIN", "ANALYST", "VIEWER"];
@@ -36,7 +36,7 @@ async function updateUser(
 async function createUser(
   orgId: string,
   input: { email: string; displayName: string; role: UserRole },
-): Promise<CreateUserResponse> {
+): Promise<InviteSentResponse> {
   const res = await apiFetch(`/api/v1/orgs/${orgId}/users`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -79,11 +79,11 @@ export function AdminUsersPage() {
   const orgId = currentUser?.organizationId ?? "";
   const queryClient = useQueryClient();
   const [showAddUser, setShowAddUser] = useState(false);
-  // Shown-once temporary password from either flow (new user, or an admin resetting an existing
-  // one) - both hand back the identical CreateUserResponse shape, so one reveal modal covers both.
-  const [passwordReveal, setPasswordReveal] = useState<{ response: CreateUserResponse; mode: "created" | "reset" } | null>(
-    null,
-  );
+  // New-user creation and admin-triggered reset now hand back genuinely different shapes
+  // (InviteSentResponse has no password at all - see its own doc comment) - two separate modals,
+  // not the one shared "passwordReveal" this used to be.
+  const [inviteSent, setInviteSent] = useState<InviteSentResponse | null>(null);
+  const [passwordReveal, setPasswordReveal] = useState<CreateUserResponse | null>(null);
   const [confirmingResetFor, setConfirmingResetFor] = useState<AdminUser | null>(null);
 
   const usersQuery = useQuery({ queryKey: ["admin-users", orgId], queryFn: () => fetchUsers(orgId), enabled: !!orgId });
@@ -98,7 +98,7 @@ export function AdminUsersPage() {
     mutationFn: (userId: string) => resetPassword(orgId, userId),
     onSuccess: (response) => {
       setConfirmingResetFor(null);
-      setPasswordReveal({ response, mode: "reset" });
+      setPasswordReveal(response);
       queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] });
     },
   });
@@ -220,7 +220,7 @@ export function AdminUsersPage() {
           onClose={() => setShowAddUser(false)}
           onCreated={(created) => {
             setShowAddUser(false);
-            setPasswordReveal({ response: created, mode: "created" });
+            setInviteSent(created);
             queryClient.invalidateQueries({ queryKey: ["admin-users", orgId] });
           }}
         />
@@ -256,23 +256,41 @@ export function AdminUsersPage() {
         </Modal>
       )}
 
+      {inviteSent && (
+        <Modal title="Invite sent" onClose={() => setInviteSent(null)}>
+          <p className="mb-4 text-sm text-slate-300">
+            An email with a link to set their password has been sent to{" "}
+            <span className="font-mono text-neon-cyan">{inviteSent.user.email}</span>. The link expires in 7 days.
+            There's no temporary password to relay — {inviteSent.user.displayName} picks their own when they click it.
+          </p>
+          <button
+            onClick={() => setInviteSent(null)}
+            className="w-full rounded border border-neon-cyan/40 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-neon-cyan transition hover:bg-neon-cyan/10"
+          >
+            Done
+          </button>
+        </Modal>
+      )}
+
       {passwordReveal && (
-        <Modal title={passwordReveal.mode === "created" ? "User created" : "Password reset"} onClose={() => setPasswordReveal(null)}>
+        <Modal title="Password reset" onClose={() => setPasswordReveal(null)}>
           <p className="mb-3 text-sm text-slate-300">
-            <span className="font-mono text-neon-cyan">{passwordReveal.response.user.email}</span>{" "}
-            {passwordReveal.mode === "created"
-              ? "can now log in with the temporary password below."
-              : "has been signed out everywhere and can log back in with the temporary password below."}
+            <span className="font-mono text-neon-cyan">{passwordReveal.user.email}</span>{" "}
+            has been signed out everywhere and can log back in with the temporary password below.
           </p>
           <div className="mb-1 flex items-center gap-2 rounded border border-neon-amber/40 bg-void/60 px-3 py-2">
             <code className="flex-1 select-all break-all font-mono text-sm text-neon-amber">
-              {passwordReveal.response.temporaryPassword}
+              {passwordReveal.temporaryPassword}
             </code>
-            <CopyButton value={passwordReveal.response.temporaryPassword} />
+            <CopyButton value={passwordReveal.temporaryPassword} />
           </div>
+          <p className="mb-2 font-mono text-xs text-slate-400">
+            An email with this password has also been sent to{" "}
+            <span className="text-slate-200">{passwordReveal.user.email}</span>.
+          </p>
           <p className="mb-4 font-mono text-xs text-severity-critical">
-            This password is shown once and cannot be retrieved again. Relay it to{" "}
-            {passwordReveal.response.user.displayName} securely — they should change it after logging in.
+            This password is shown once and cannot be retrieved again. If that email doesn't arrive, relay it to{" "}
+            {passwordReveal.user.displayName} securely — they should change it after logging in.
           </p>
           <button
             onClick={() => setPasswordReveal(null)}
@@ -317,7 +335,7 @@ function AddUserModal({
 }: {
   orgId: string;
   onClose: () => void;
-  onCreated: (created: CreateUserResponse) => void;
+  onCreated: (created: InviteSentResponse) => void;
 }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");

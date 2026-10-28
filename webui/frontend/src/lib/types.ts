@@ -442,10 +442,15 @@ export interface AdminUser {
 export type UserRole = "ADMIN" | "ANALYST" | "VIEWER";
 export type UserStatus = "ACTIVE" | "DISABLED";
 
-/** POST /api/v1/orgs/{orgId}/users response - the temporary password is shown exactly once. */
+/** POST /api/v1/orgs/{orgId}/users/{id}/reset-password response - the temporary password is shown exactly once. */
 export interface CreateUserResponse {
   user: AdminUser;
   temporaryPassword: string;
+}
+
+/** POST /api/v1/orgs/{orgId}/users response - no password field at all: the new user sets their own via the emailed invite link, so there's nothing for an admin to relay. */
+export interface InviteSentResponse {
+  user: AdminUser;
 }
 
 /** GET /api/v1/rules-catalog - every check Bloodhound runs, doubling as in-product documentation. */
