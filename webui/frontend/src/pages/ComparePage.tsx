@@ -123,28 +123,36 @@ export function ComparePage() {
     ? (urlRange as RangeFilter)
     : "all";
 
-  // Absent from the URL entirely: default-select OWN targets. An explicit (even empty)
-  // targetIds param always wins, so a deliberately-cleared selection stays cleared on reload
-  // rather than snapping back to the default.
+  // Absent from the URL entirely: default-select every portfolio (see effectiveSelectedPortfolios
+  // just below) and every OWN target that ISN'T already one of their members - a portfolio's own
+  // blended line already represents its members, so defaulting both on at once would double them
+  // up in the same chart/table for no reason. An explicit (even empty) targetIds param always
+  // wins, so a deliberately-cleared selection stays cleared on reload rather than snapping back to
+  // the default.
+  const portfolioMemberIds = useMemo(
+    () =>
+      new Set((portfoliosQuery.data ?? []).flatMap((p) => p.memberTargetIds)),
+    [portfoliosQuery.data],
+  );
   const effectiveSelected = useMemo(() => {
     if (urlTargetIds !== null)
       return new Set(urlTargetIds.split(",").filter(Boolean));
     const ownIds = (targetsQuery.data ?? [])
-      .filter((t) => t.targetType === "OWN")
+      .filter((t) => t.targetType === "OWN" && !portfolioMemberIds.has(t.id))
       .map((t) => t.id);
     return new Set(ownIds);
-  }, [urlTargetIds, targetsQuery.data]);
+  }, [urlTargetIds, targetsQuery.data, portfolioMemberIds]);
 
-  // No default selection, unlike targets' "default to OWN" above - a portfolio is something the
-  // user deliberately created and picks explicitly, there's no equivalent "obvious default" for it.
+  // Defaults to every portfolio that exists, unlike the pre-portfolio-support version of this
+  // page (which had no obvious default for it) - a portfolio is something the user deliberately
+  // created specifically to be watched, so it should show up without having to be clicked on every
+  // single visit, the same way a newly-added OWN target already does for the targets list above.
   const urlPortfolioIds = searchParams.get("portfolioIds");
-  const effectiveSelectedPortfolios = useMemo(
-    () =>
-      new Set(
-        urlPortfolioIds ? urlPortfolioIds.split(",").filter(Boolean) : [],
-      ),
-    [urlPortfolioIds],
-  );
+  const effectiveSelectedPortfolios = useMemo(() => {
+    if (urlPortfolioIds !== null)
+      return new Set(urlPortfolioIds.split(",").filter(Boolean));
+    return new Set((portfoliosQuery.data ?? []).map((p) => p.id));
+  }, [urlPortfolioIds, portfoliosQuery.data]);
 
   const targetIds = [...effectiveSelected];
   const portfolioIds = [...effectiveSelectedPortfolios];

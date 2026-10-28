@@ -30,6 +30,10 @@ function target(id: string, hostname: string, targetType: "OWN" | "COMPETITOR" =
   return { id, hostname, targetType, ownershipStatus: "UNAUTHORIZED", scanCadenceSeconds: 3600, isActive: true, notes: null };
 }
 
+function portfolio(id: string, name: string, memberTargetIds: string[]) {
+  return { id, name, createdAt: "2026-01-01T00:00:00Z", blendedScore: 80, blendedGrade: "B", memberCount: memberTargetIds.length, unscoredMemberCount: 0, memberTargetIds };
+}
+
 let capturedUrl = "";
 
 function renderAt(path: string) {
@@ -128,6 +132,26 @@ describe("ComparePage URL-persisted selection", () => {
 
     await waitFor(() => expect(capturedUrl).toContain("mode=full"));
     expect(screen.getByTestId("chart")).toHaveAttribute("data-mode", "full");
+  });
+
+  it("a portfolio defaults to selected, and its own members default to unselected", async () => {
+    // A portfolio's blended line already represents its members - defaulting both the portfolio
+    // AND its members on at once would double them up in the same chart/table for no reason.
+    mockedApiFetch.mockImplementation(async (url) => {
+      const u = url.toString();
+      if (u.includes("/api/v1/compare")) return jsonResponse([]);
+      if (u.includes("/api/v1/portfolios")) return jsonResponse([portfolio("p1", "Main portfolio", ["t1"])]);
+      return jsonResponse([target("t1", "own.example.com", "OWN"), target("t2", "second.example.com", "OWN")]);
+    });
+
+    renderAt("/compare");
+
+    await screen.findByText("own.example.com");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Main portfolio" })).toHaveAttribute("aria-pressed", "true"));
+    // t1 is a member of the default-selected portfolio - excluded from the targets default.
+    expect(screen.getByRole("button", { name: /own\.example\.com/ })).toHaveAttribute("aria-pressed", "false");
+    // t2 belongs to no portfolio - keeps the ordinary OWN-targets default.
+    expect(screen.getByRole("button", { name: /second\.example\.com/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("Fair comparison is the default and does not add a mode param to the URL", async () => {

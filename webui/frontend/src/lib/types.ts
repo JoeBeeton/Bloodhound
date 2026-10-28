@@ -84,6 +84,8 @@ export interface Portfolio {
   blendedGrade: Grade | null;
   memberCount: number;
   unscoredMemberCount: number;
+  /** Used by ComparePage to default-exclude these targets from its own selection - a portfolio's blended line already represents them. */
+  memberTargetIds: string[];
 }
 
 export interface PortfolioDetail {
