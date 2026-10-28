@@ -3,9 +3,11 @@ package org.freedonia.bloodhound.webui.auth;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import org.freedonia.bloodhound.webui.auth.dto.ClientAuthResponse;
+import org.freedonia.bloodhound.webui.auth.dto.ForgotPasswordRequest;
 import org.freedonia.bloodhound.webui.auth.dto.LoginRequest;
 import org.freedonia.bloodhound.webui.auth.dto.LogoutOtherSessionsRequest;
 import org.freedonia.bloodhound.webui.auth.dto.RefreshTokenRequest;
+import org.freedonia.bloodhound.webui.auth.dto.ResetPasswordRequest;
 import org.freedonia.bloodhound.webui.auth.dto.SsoExchangeRequest;
 import org.freedonia.bloodhound.webui.auth.dto.UpstreamAuthResponse;
 import org.slf4j.Logger;
@@ -154,6 +156,60 @@ public class AuthProxyController {
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie(servletRequest).toString())
                 .build();
+    }
+
+    /**
+     * No cookie handling, unlike every method above - neither call establishes a session. Just a
+     * plain forward to central-server's own public, rate-limited endpoint (see AuthController),
+     * which is itself the only thing deciding whether an email actually goes out.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@RequestBody ForgotPasswordRequest request) {
+        try {
+            centralServerClient
+                    .post()
+                    .uri("/api/v1/auth/forgot-password")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .toBodilessEntity();
+            return ResponseEntity.accepted().build();
+        } catch (HttpClientErrorException e) {
+            // Same Retry-After forwarding reasoning as #login's own catch block above.
+            ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.status(e.getStatusCode());
+            String retryAfter = e.getResponseHeaders() != null
+                    ? e.getResponseHeaders().getFirst(HttpHeaders.RETRY_AFTER)
+                    : null;
+            if (retryAfter != null) {
+                responseBuilder = responseBuilder.header(HttpHeaders.RETRY_AFTER, retryAfter);
+            }
+            return responseBuilder.build();
+        }
+    }
+
+    /**
+     * Unlike every other proxy method here, the caller (ResetPasswordPage) needs the actual
+     * message central-server sent back on failure - an invalid/expired token, or a rejected weak
+     * password (see AuthController.ErrorMessageResponse) - so the body is forwarded verbatim on
+     * error instead of dropped the way #login/#ssoExchange/#refresh's own bare .build() calls do,
+     * since none of those three have a response body worth keeping on failure.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<byte[]> resetPassword(@RequestBody ResetPasswordRequest request) {
+        try {
+            centralServerClient
+                    .post()
+                    .uri("/api/v1/auth/reset-password")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .toBodilessEntity();
+            return ResponseEntity.noContent().build();
+        } catch (HttpClientErrorException e) {
+            return ResponseEntity.status(e.getStatusCode())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(e.getResponseBodyAsByteArray());
+        }
     }
 
     /**

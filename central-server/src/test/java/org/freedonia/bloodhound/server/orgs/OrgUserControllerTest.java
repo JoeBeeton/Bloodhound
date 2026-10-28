@@ -18,6 +18,7 @@ import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
+import org.freedonia.bloodhound.server.notification.EmailSender;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
@@ -35,8 +36,15 @@ class OrgUserControllerTest {
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final ApiKeyRepository apiKeyRepository = mock(ApiKeyRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final EmailSender emailSender = mock(EmailSender.class);
     private final OrgUserController controller = new OrgUserController(
-            userRepository, passwordEncoder, refreshTokenRepository, apiKeyRepository, auditLogRepository);
+            userRepository,
+            passwordEncoder,
+            refreshTokenRepository,
+            apiKeyRepository,
+            auditLogRepository,
+            emailSender,
+            "http://localhost:8090");
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID otherOrgId = UUID.randomUUID();

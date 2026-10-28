@@ -14,6 +14,15 @@ spring:
         name: bloodhound-mcp-server
         # STREAMABLE, not SSE: the current MCP spec's standard transport - SSE is deprecated.
         protocol: STREAMABLE
+  # The postfix service (docker-compose.yml) only listens on 587 (submission), not 25 - see its
+  # own comment there. No auth/TLS: central-server reaches it over app_net only, and postfix's
+  # default mynetworks (which includes app_net's 172.16.0.0/12-range subnet) already trusts
+  # anything on that internal network without SASL - the same "no host port, no internet
+  # reachability" containment SlackIntegrationController's own webhook validation can't offer,
+  # since there's no equivalent of "must be a genuine hooks.slack.com URL" for an email address.
+  mail:
+    host: ${MAIL_HOST:postfix}
+    port: ${MAIL_PORT:587}
 
 server:
   port: 8080
@@ -84,6 +93,10 @@ bloodhound:
     # genuinely different addresses: sp-base-url is central-server's own address
     # (SAML's ACS endpoint lives there), this is webui's (what a human actually opens).
     app-base-url: ${NOTIFICATIONS_APP_BASE_URL:http://localhost:8090}
+    # The envelope/header From address for invite and password-reset email (EmailSender) - must
+    # be one of postfix's own ALLOWED_SENDER_DOMAINS (docker-compose.yml) or delivery is refused
+    # at the relay, not just unauthenticated-looking to the recipient.
+    mail-from-address: ${NOTIFICATIONS_MAIL_FROM_ADDRESS:noreply@bloodhound-asm.com}
   mcp:
     # central-server's own browser/MCP-client-reachable address, same "not the container-network
     # hostname" reasoning as saml.sp-base-url - the OAuth2 issuer value is embedded in every

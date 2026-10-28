@@ -7,9 +7,10 @@
 #   db_net       postgres, central-server only. internal:true - postgres has
 #                no legitimate reason to reach anything else, including the
 #                internet, so it's fully cut off rather than merely unlisted.
-#   app_net      central-server, worker, webui - job-queue/API traffic. Not
-#                internal: central-server and worker both need real internet
-#                egress (CT-log/crt.sh lookups, scanning real external hosts).
+#   app_net      central-server, worker, webui, postfix - job-queue/API traffic plus outbound
+#                email. Not internal: central-server and worker both need real internet egress
+#                (CT-log/crt.sh lookups, scanning real external hosts), and postfix needs it to
+#                deliver direct-to-recipient-MX.
 #   scan_net     worker, zap - ZAP's control-plane network. juice-shop is
 #                deliberately NOT on this network.
 #   screenshot_net  worker, screenshotter only. A security review found
@@ -122,6 +123,15 @@ services:
       BLOODHOUND_SCHEDULER_INTERVAL_MS: ${BLOODHOUND_SCHEDULER_INTERVAL_MS:-300000}
       SAML_SP_BASE_URL: ${SAML_SP_BASE_URL:-http://localhost:8080}
       SAML_WEBUI_CALLBACK_URL: ${SAML_WEBUI_CALLBACK_URL:-http://localhost:8090/sso/callback}
+      # Was never wired through here at all - application.yml's own ${NOTIFICATIONS_APP_BASE_URL:
+      # http://localhost:8090} default silently applied in every environment, including prod,
+      # since nothing in this file ever set the env var it reads. Harmless for Slack's "View in
+      # Bloodhound" link (easy to not notice a dead link in a message you can already see came
+      # from Bloodhound), but a real problem for the invite/password-reset emails this env var's
+      # link now also builds (EmailSender, via AuthController/OrgUserController) - a locked-out
+      # user clicking a reset link that points at their own machine's localhost has no path back
+      # in at all. Set the real NOTIFICATIONS_APP_BASE_URL in prod's .env (https://bloodhound-asm.com).
+      NOTIFICATIONS_APP_BASE_URL: ${NOTIFICATIONS_APP_BASE_URL:-http://localhost:8090}
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-5000}
       WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-90000}
     # Published to the host for direct API/swagger access and local debugging - a real browser
@@ -150,6 +160,40 @@ services:
         limits:
           memory: 1G
           cpus: "1.0"
+
+  # Outbound-only mail relay for invite/password-reset email (notification.EmailSender) - sends
+  # direct-to-recipient-MX itself rather than through a third-party ESP. app_net only, no `ports:`
+  # published to the host: unreachable from the internet (can't become an open relay regardless of
+  # its own relay config) and unreachable by anything except central-server, which is the only
+  # other service on app_net that would ever have a reason to submit mail here. Listens on 587
+  # (submission) only, per the image's own docs - port 25 isn't exposed (ISPs commonly block
+  # outbound 25 from end-user connections, 587 is the documented default) - but this container's
+  # own OUTBOUND connections to recipients' real MX servers still go out on 25, same as any MTA;
+  # confirmed live that 77.42.21.221 (this host's public egress IP) allows outbound 25.
+  # DKIM_AUTOGENERATE: generates its own keypair under /etc/opendkim/keys on first boot if none is
+  # there yet - the postfix_dkim volume is what makes that key (and therefore every DNS TXT record
+  # published for it) survive a container recreation; losing it silently breaks signing and means
+  # re-publishing a new DKIM record. POSTFIX_mynetworks is left at the image's own default
+  # (127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16) rather than overridden - app_net's
+  # 172.20.0.0/16 subnet already falls inside 172.16.0.0/12, so central-server is already trusted
+  # to relay without SASL auth purely by virtue of being on this network.
+  postfix:
+    image: boky/postfix:5.1.0
+    environment:
+      ALLOWED_SENDER_DOMAINS: bloodhound-asm.com
+      DKIM_SELECTOR: mail
+      DKIM_AUTOGENERATE: "1"
+      POSTFIX_myhostname: mail.bloodhound-asm.com
+    volumes:
+      - postfix_dkim:/etc/opendkim/keys
+    restart: unless-stopped
+    networks:
+      - app_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
 
   worker:
     build:
@@ -400,3 +444,4 @@ services:
 
 volumes:
   pgdata:
+  postfix_dkim:

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { BloodhoundMascot } from "../components/BloodhoundMascot";
 import { CenteredState } from "../components/CenteredState";
 import { Shell } from "../components/Shell";
@@ -100,13 +100,10 @@ export function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               className="mb-2 w-full rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-neon-cyan"
             />
-            {/* There's no self-serve reset flow - no email-sending infrastructure exists in this
-                project (see OrgUserController#resetPassword's javadoc), so an admin resetting the
-                account really is the only path back in. A locked-out user had no way to discover
-                that short of already knowing it or contacting support blind - this makes it
-                findable right where they'd be looking. */}
             <p className="mb-6 font-mono text-[11px] text-slate-500">
-              Forgot your password? Ask your organization's admin to reset it for you.
+              <Link to="/forgot-password" className="text-neon-cyan hover:underline">
+                Forgot your password?
+              </Link>
             </p>
 
             {error && <p className="mb-4 font-mono text-xs text-severity-critical">{error}</p>}

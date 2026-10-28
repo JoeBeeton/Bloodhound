@@ -9,10 +9,12 @@ import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.RefreshTokenRepository;
+import org.freedonia.bloodhound.server.notification.EmailSender;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.CreateUserResponse;
 import org.freedonia.bloodhound.server.orgs.dto.UpdateUserRequest;
 import org.freedonia.bloodhound.server.orgs.dto.UserSummary;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -45,18 +47,24 @@ public class OrgUserController {
     private final RefreshTokenRepository refreshTokenRepository;
     private final ApiKeyRepository apiKeyRepository;
     private final AuditLogRepository auditLogRepository;
+    private final EmailSender emailSender;
+    private final String appBaseUrl;
 
     public OrgUserController(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
             ApiKeyRepository apiKeyRepository,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            EmailSender emailSender,
+            @Value("${bloodhound.notifications.app-base-url}") String appBaseUrl) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.auditLogRepository = auditLogRepository;
+        this.emailSender = emailSender;
+        this.appBaseUrl = appBaseUrl;
     }
 
     @GetMapping
@@ -68,11 +76,10 @@ public class OrgUserController {
     }
 
     /**
-     * Creates a local user with a randomly-generated temporary password,
-     * returned once in the response body (see CreateUserResponse) - there's
-     * no email-sending infrastructure in this project, so the admin is
-     * responsible for relaying it out-of-band. The new user should change it
-     * via PATCH /api/v1/users/me/password on first login.
+     * Creates a local user with a randomly-generated temporary password, returned once in the
+     * response body (see CreateUserResponse) - the admin stays able to relay it out-of-band
+     * regardless of whether the email below actually arrives. The new user should change it via
+     * PATCH /api/v1/users/me/password on first login.
      */
     @PostMapping
     public ResponseEntity<CreateUserResponse> create(
@@ -92,6 +99,16 @@ public class OrgUserController {
                     "USER",
                     created.id().toString(),
                     "email=" + created.email() + " role=" + created.role());
+            // Best-effort - see EmailSender's own javadoc for why a slow/failed send never blocks
+            // or fails this request. The temporary password above is the fallback if it doesn't
+            // arrive, not a backup path we fall into deliberately.
+            emailSender.send(
+                    created.email(),
+                    "You've been added to Bloodhound",
+                    "An account was created for you in Bloodhound.\n\n"
+                            + "Email: " + created.email() + "\n"
+                            + "Temporary password: " + temporaryPassword + "\n\n"
+                            + "Sign in at " + appBaseUrl + "/login - you'll be asked to change this password.");
             return ResponseEntity.status(HttpStatus.CREATED).body(CreateUserResponse.of(created, temporaryPassword));
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "a user with that email already exists in this organization");
@@ -131,6 +148,15 @@ public class OrgUserController {
                 "USER",
                 id.toString(),
                 "email=" + target.email());
+        // Best-effort, same reasoning as #create's own send above - the temporary password
+        // returned below is still the fallback if this doesn't arrive.
+        emailSender.send(
+                target.email(),
+                "Your Bloodhound password was reset",
+                "An administrator reset your Bloodhound password.\n\n"
+                        + "Temporary password: " + temporaryPassword + "\n\n"
+                        + "Sign in at " + appBaseUrl + "/login - you'll be asked to change this password.\n\n"
+                        + "If you didn't expect this, contact your organization's admin.");
         return CreateUserResponse.of(userRepository.findById(id).orElseThrow(), temporaryPassword);
     }
 

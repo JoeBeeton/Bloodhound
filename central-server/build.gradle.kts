@@ -22,6 +22,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // Invite/password-reset email (notification.EmailSender) - plain JavaMailSender over SMTP to
+    // the postfix service (see docker-compose.yml), no third-party ESP.
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     // Boot 4's own Flyway starter only pulls in flyway-core - the PostgreSQL-specific database
     // support module is still a separate dependency (confirmed live: without it, Flyway throws
     // "Unsupported Database: PostgreSQL 16.15" at startup), same as it was on Boot 3.

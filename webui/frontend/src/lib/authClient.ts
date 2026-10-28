@@ -57,3 +57,35 @@ export async function ssoExchange(code: string): Promise<AuthState> {
 export async function logout(): Promise<void> {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
 }
+
+/**
+ * Deliberately never throws on anything except a 429 - the backend always responds the same way
+ * regardless of whether the email matched an account (see AuthController#forgotPassword's own
+ * javadoc), and the frontend must not undo that by treating a non-match differently from a match.
+ */
+export async function forgotPassword(email: string): Promise<void> {
+  const res = await fetch("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (res.status === 429) {
+    throw new Error(`Too many requests. Try again in ${formatRetryAfter(res)}.`);
+  }
+}
+
+/** Same body-message-parsing pattern as ChangePasswordModal's own changePassword - the whole point of a 400 here is telling the user specifically why (an expired link, a rejected weak password). */
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  const res = await fetch("/api/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, newPassword }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    if (body && typeof body.message === "string" && body.message.trim() !== "") {
+      throw new Error(body.message);
+    }
+    throw new Error("Something went wrong. Try again.");
+  }
+}
