@@ -53,17 +53,36 @@ public final class ZapAlertMapper {
             putIfPresent(evidence, "param", EvidenceRedaction.redact(alert.param()));
             putIfPresent(evidence, "evidence", EvidenceRedaction.redact(alert.evidence()));
             putIfPresent(evidence, "confidence", alert.confidence());
+            putIfPresent(evidence, "other", alert.other());
 
             findings.add(new RawFinding(
                     "ZAP_ALERT_" + alert.pluginId(),
                     severityFor(alert.risk()),
                     Category.WEB_APP,
                     alert.name() == null ? "ZAP alert (plugin " + alert.pluginId() + ")" : alert.name(),
-                    alert.description() == null ? "" : alert.description(),
+                    describe(alert),
                     alert.url() == null ? "" : alert.url(),
                     evidence));
         }
         return findings;
+    }
+
+    /**
+     * description() alone is the exact same static blurb for every instance of a given plugin
+     * (e.g. plugin 10003's "The identified library appears to be vulnerable.", regardless of
+     * which library or CVE it actually is) - a security/product review found this made the
+     * Vulnerable JS Library finding specifically useless on its own: no library name, no detected
+     * version, no CVE, nothing an analyst could act on without re-running the scan by hand.
+     * {@code other()} is where ZAP (via the retire.js add-on, for this plugin specifically) puts
+     * that per-finding detail - appended here, not substituted, so the generic explanation of
+     * *why this class of thing matters* survives alongside the specific *what was actually found*.
+     */
+    private static String describe(ZapAlert alert) {
+        String description = alert.description() == null ? "" : alert.description();
+        if (alert.other() == null || alert.other().isBlank()) {
+            return description;
+        }
+        return description.isBlank() ? alert.other() : description + "\n\n" + alert.other();
     }
 
     static Severity severityFor(String zapRisk) {

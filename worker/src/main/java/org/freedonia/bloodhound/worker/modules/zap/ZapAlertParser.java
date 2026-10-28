@@ -42,7 +42,8 @@ public final class ZapAlertParser {
                     text(node, "reference"),
                     text(node, "url"),
                     text(node, "param"),
-                    text(node, "evidence")));
+                    text(node, "evidence"),
+                    text(node, "other")));
         }
         return alerts;
     }

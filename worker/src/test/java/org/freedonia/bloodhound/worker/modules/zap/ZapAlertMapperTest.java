@@ -12,7 +12,7 @@ class ZapAlertMapperTest {
 
     private static ZapAlert alert(String pluginId, String risk, String url) {
         return new ZapAlert(
-                pluginId, "Alert " + pluginId, risk, "High", "description", "solution", "reference", url, "", "");
+                pluginId, "Alert " + pluginId, risk, "High", "description", "solution", "reference", url, "", "", "");
     }
 
     @Test
@@ -76,7 +76,8 @@ class ZapAlertMapperTest {
                 "https://owasp.org/xss",
                 "http://juiceshop.local/search?q=%3Cscript%3E",
                 "q",
-                "<script>alert(1)</script>");
+                "<script>alert(1)</script>",
+                null);
 
         List<RawFinding> findings = ZapAlertMapper.map(List.of(alert));
 
@@ -104,7 +105,8 @@ class ZapAlertMapperTest {
                 "https://owasp.org/xss",
                 "http://juiceshop.local/search?q=%3Cscript%3E",
                 "q",
-                "<script>alert(1)</script>");
+                "<script>alert(1)</script>",
+                null);
 
         List<RawFinding> findings = ZapAlertMapper.map(List.of(alert));
 
@@ -128,12 +130,53 @@ class ZapAlertMapperTest {
 
     @Test
     void missingNameFallsBackToPluginIdBasedTitleRatherThanNull() {
-        ZapAlert alert = new ZapAlert("999", null, "Low", null, null, null, null, "http://x/", null, null);
+        ZapAlert alert = new ZapAlert("999", null, "Low", null, null, null, null, "http://x/", null, null, null);
 
         List<RawFinding> findings = ZapAlertMapper.map(List.of(alert));
 
         assertThat(findings.get(0).title()).contains("999");
         assertThat(findings.get(0).description()).isEmpty();
+    }
+
+    /**
+     * The actual point of this fix: plugin 10003's (Vulnerable JS Library) description/solution
+     * are the exact same static blurb regardless of which library or CVE was actually found -
+     * confirmed live on a real finding ("The identified library appears to be vulnerable." / "...
+     * version 17.1.0" in evidence, with no library name or CVE anywhere visible). ZAP's "other"
+     * field is where retire.js puts that specific detail; it must survive into the finding.
+     */
+    @Test
+    void otherInfo_getsAppendedToDescription_whenPresent() {
+        ZapAlert alert = new ZapAlert(
+                "10003",
+                "Vulnerable JS Library",
+                "High",
+                "Medium",
+                "The identified library appears to be vulnerable.",
+                "Upgrade to the latest version of the affected library.",
+                "https://owasp.org/Top10/2021/A06_2021-Vulnerable_and_Outdated_Components/",
+                "https://aa.example.finance/chunk-G732X7F2.js",
+                null,
+                "[\"ng-version\",\"17.1.0\"]",
+                "CVE-2024-21490: Angular, version 17.1.0, is vulnerable to a ReDoS issue. "
+                        + "Upgrade to version 17.3.0 or later.");
+
+        List<RawFinding> findings = ZapAlertMapper.map(List.of(alert));
+
+        assertThat(findings.get(0).description())
+                .contains("The identified library appears to be vulnerable.")
+                .contains("CVE-2024-21490")
+                .contains("Angular, version 17.1.0")
+                .contains("Upgrade to version 17.3.0 or later.");
+        assertThat(findings.get(0).evidence().get("other")).asString().contains("CVE-2024-21490");
+    }
+
+    @Test
+    void otherInfo_absent_descriptionIsJustTheGenericBlurb() {
+        List<RawFinding> findings = ZapAlertMapper.map(List.of(alert("10003", "High", "http://x/")));
+
+        assertThat(findings.get(0).description()).isEqualTo("description");
+        assertThat(findings.get(0).evidence()).doesNotContainKey("other");
     }
 
     /** The ids in ZapNoiseRules were the top ZAP producers in the live findings table and carry no signal. */

@@ -60,6 +60,27 @@ class ZapAlertParserTest {
     }
 
     @Test
+    void parsesOtherField_whereZapPutsPerFindingLibraryAndCveDetail() {
+        String json =
+                """
+                {
+                  "alerts": [
+                    {
+                      "pluginId": "10003",
+                      "name": "Vulnerable JS Library",
+                      "risk": "High",
+                      "other": "CVE-2024-21490: Angular, version 17.1.0, is vulnerable. Upgrade to 17.3.0 or later."
+                    }
+                  ]
+                }
+                """;
+
+        List<ZapAlert> alerts = ZapAlertParser.parse(json);
+
+        assertThat(alerts.get(0).other()).contains("CVE-2024-21490").contains("17.3.0");
+    }
+
+    @Test
     void handlesMultipleAlertsAndMissingOptionalFields() {
         String json =
                 """
