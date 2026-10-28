@@ -5,6 +5,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -73,6 +74,18 @@ public class PortfolioService {
      * {@code tier1OverallScore ?? overallScore} per member first - the exact same fallback
      * CompareTrendChart.tsx already applies per-point to a real target's history, so a portfolio's
      * Fair-comparison/Full-picture toggle behaves identically to an individual target's.
+     *
+     * <p>categoryScores/tier1CategoryScores and findingCounts are genuinely blended too, not left
+     * empty - a security/correctness review found the Categories view's "weakest category" label
+     * crashed outright on a portfolio series (reading a score out of what was always an empty map,
+     * then calling {@code .toFixed} on the resulting {@code undefined}), and the Findings view
+     * silently showed every portfolio as having zero open findings for the same reason. Every
+     * real target's own {@code categoryScores}/{@code findingCounts} always carries a complete set
+     * of keys (ScoringEngine always writes one entry per category/severity, even when zero), so
+     * summing per-key across {@code current.values()} is safe without needing a fixed category/
+     * severity list here. Category scores are weighted-averaged the same way overallScore is,
+     * since they're themselves a score; findingCounts are summed outright, since a portfolio's
+     * real open-finding count is the total across its members, not an average of them.
      */
     public List<ScoreSnapshotSummary> computeBlendedHistory(Portfolio portfolio, Instant from, Instant to) {
         List<Target> members = targetRepository.findByPortfolio(portfolio.id());
@@ -103,26 +116,44 @@ public class PortfolioService {
             List<BigDecimal> fullScores = new ArrayList<>();
             List<BigDecimal> tier1Scores = new ArrayList<>();
             List<Long> weights = new ArrayList<>();
+            Map<String, List<BigDecimal>> categoryScoresByCategory = new LinkedHashMap<>();
+            Map<String, List<BigDecimal>> tier1CategoryScoresByCategory = new LinkedHashMap<>();
+            Map<String, Long> findingCountTotals = new LinkedHashMap<>();
             for (ScoreSnapshot snapshot : current.values()) {
                 fullScores.add(snapshot.overallScore());
                 tier1Scores.add(snapshot.tier1OverallScore() != null ? snapshot.tier1OverallScore() : snapshot.overallScore());
                 weights.add(snapshot.findingCounts().values().stream()
                         .mapToLong(Long::longValue)
                         .sum());
+                snapshot.categoryScores()
+                        .forEach((category, score) ->
+                                categoryScoresByCategory.computeIfAbsent(category, k -> new ArrayList<>()).add(score));
+                Map<String, BigDecimal> tier1Categories =
+                        snapshot.tier1CategoryScores() != null ? snapshot.tier1CategoryScores() : snapshot.categoryScores();
+                tier1Categories.forEach((category, score) -> tier1CategoryScoresByCategory
+                        .computeIfAbsent(category, k -> new ArrayList<>())
+                        .add(score));
+                snapshot.findingCounts().forEach((severity, count) -> findingCountTotals.merge(severity, count, Long::sum));
             }
             BigDecimal blendedFull = weightedAverage(fullScores, weights);
             BigDecimal blendedTier1 = weightedAverage(tier1Scores, weights);
+            Map<String, BigDecimal> blendedCategoryScores = new LinkedHashMap<>();
+            categoryScoresByCategory.forEach(
+                    (category, scores) -> blendedCategoryScores.put(category, weightedAverage(scores, weights)));
+            Map<String, BigDecimal> blendedTier1CategoryScores = new LinkedHashMap<>();
+            tier1CategoryScoresByCategory.forEach(
+                    (category, scores) -> blendedTier1CategoryScores.put(category, weightedAverage(scores, weights)));
             result.add(new ScoreSnapshotSummary(
                     UUID.randomUUID(),
                     null,
                     point,
                     blendedFull,
                     ScoringEngine.gradeFor(blendedFull),
-                    Map.of(),
-                    Map.of(),
+                    blendedCategoryScores,
+                    findingCountTotals,
                     blendedTier1,
                     ScoringEngine.gradeFor(blendedTier1),
-                    Map.of()));
+                    blendedTier1CategoryScores));
         }
         return result;
     }

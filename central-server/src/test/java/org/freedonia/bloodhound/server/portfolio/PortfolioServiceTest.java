@@ -107,6 +107,16 @@ class PortfolioServiceTest {
                 null);
     }
 
+    /** Unlike {@link #snapshot}, carries a real categoryScores/findingCounts breakdown - same shape ScoringEngine always produces for a real target's own snapshot (every category/severity key present, never an empty map). */
+    private ScoreSnapshot snapshotWithBreakdown(
+            Instant computedAt, String score, Map<String, String> categoryScores, Map<String, Long> findingCounts) {
+        Map<String, BigDecimal> categories = new java.util.LinkedHashMap<>();
+        categoryScores.forEach((category, value) -> categories.put(category, new BigDecimal(value)));
+        return new ScoreSnapshot(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), computedAt, new BigDecimal(score), "A",
+                categories, findingCounts, null, null, null);
+    }
+
     @Test
     void computeBlendedHistory_noMembers_returnsEmptyList() {
         Portfolio portfolio = new Portfolio(portfolioId, orgId, "empty", Instant.now());
@@ -160,6 +170,39 @@ class PortfolioServiceTest {
         assertThat(history).hasSize(1);
         assertThat(history.get(0).overallScore()).isEqualByComparingTo("77.00");
         assertThat(history.get(0).tier1OverallScore()).isEqualByComparingTo("77.00");
+    }
+
+    @Test
+    void computeBlendedHistory_blendsCategoryScoresAndSumsFindingCounts_notEmptyMaps() {
+        // A correctness/security review found this previously left categoryScores/findingCounts
+        // as Map.of() on every blended point - crashing the frontend's Categories view outright
+        // (reading a score out of what was always an empty map, then calling .toFixed on the
+        // resulting undefined - see CompareCategoryChart.tsx's own summary computation) and
+        // silently showing every portfolio as having zero open findings in the Findings view.
+        Portfolio portfolio = new Portfolio(portfolioId, orgId, "breakdown", Instant.now());
+        Target a = target("a.example.com");
+        Target b = target("b.example.com");
+        when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a, b));
+        when(scoreSnapshotRepository.findHistory(eq(a.id()), any(), any()))
+                .thenReturn(List.of(snapshotWithBreakdown(
+                        t1, "90", Map.of("TLS", "90", "DNS", "80"), Map.of("HIGH", 1L, "CRITICAL", 0L))));
+        when(scoreSnapshotRepository.findHistory(eq(b.id()), any(), any()))
+                .thenReturn(List.of(snapshotWithBreakdown(
+                        t1, "50", Map.of("TLS", "70", "DNS", "60"), Map.of("HIGH", 3L, "CRITICAL", 1L))));
+
+        List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, t0, t3);
+
+        assertThat(history).hasSize(1);
+        ScoreSnapshotSummary point = history.get(0);
+        // Weights match blendedScore's own weighting - A's total open findings is 1 (1+0), B's is
+        // 4 (3+1). TLS: (90*1 + 70*4) / 5 = 74.00; DNS: (80*1 + 60*4) / 5 = 64.00.
+        assertThat(point.categoryScores().get("TLS")).isEqualByComparingTo("74.00");
+        assertThat(point.categoryScores().get("DNS")).isEqualByComparingTo("64.00");
+        assertThat(point.findingCounts().get("HIGH")).isEqualTo(4L);
+        assertThat(point.findingCounts().get("CRITICAL")).isEqualTo(1L);
+        // Neither member has its own tier1CategoryScores - falls back to categoryScores per
+        // member first, same as tier1OverallScore's own fallback, so this matches the full blend.
+        assertThat(point.tier1CategoryScores().get("TLS")).isEqualByComparingTo("74.00");
     }
 
     @Test
