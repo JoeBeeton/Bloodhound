@@ -17,7 +17,7 @@ import { ScoreTrendChart } from "../components/ScoreTrendChart";
 import { Shell } from "../components/Shell";
 import { apiFetch, totalCountFromResponse } from "../lib/apiClient";
 import { SCHEDULE_OPTIONS } from "../lib/schedule";
-import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Subdomain, Target, TargetType } from "../lib/types";
+import type { Finding, FindingCategory, ScanRunDetail, Severity, ScoreSnapshot, Target, TargetType } from "../lib/types";
 import { useAuth } from "../lib/useAuth";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useUnsavedChangesWarning } from "../lib/useUnsavedChangesWarning";
@@ -170,10 +170,18 @@ async function fetchRun(runId: string): Promise<ScanRunDetail> {
   return res.json();
 }
 
-async function fetchSubdomains(targetId: string): Promise<Subdomain[]> {
-  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains`);
+async function fetchSubdomainCount(targetId: string): Promise<number> {
+  // Only the count is needed here (the full list lives on SubdomainsPage) - limit=1 avoids
+  // pulling a real page of rows just to throw them away. The list endpoint caps its own body at
+  // DEFAULT_LIMIT (200) regardless of what's asked for beyond MAX_LIMIT, and carries the real
+  // total in X-Total-Count specifically so a caller like this one doesn't have to fetch
+  // everything to know how many there are - found live against americanexpress.com (59,192
+  // subdomains): the old `.length` of a 200-row response was displayed as the total everywhere
+  // on this page, instead of reading that header.
+  const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains?limit=1`);
   if (!res.ok) throw new Error("Failed to load subdomains.");
-  return res.json();
+  const items: unknown[] = await res.json();
+  return totalCountFromResponse(res, items.length);
 }
 
 async function fetchScoreHistory(targetId: string): Promise<ScoreSnapshot[]> {
@@ -369,8 +377,11 @@ export function TargetDetailPage() {
     queryKey: ["findings", targetId, filters],
     queryFn: () => fetchFindings(targetId, filters),
   });
-  const subdomainsQuery = useQuery({ queryKey: ["subdomains", targetId], queryFn: () => fetchSubdomains(targetId) });
-  const subdomainCount = subdomainsQuery.data?.length ?? 0;
+  const subdomainsQuery = useQuery({
+    queryKey: ["subdomain-count", targetId],
+    queryFn: () => fetchSubdomainCount(targetId),
+  });
+  const subdomainCount = subdomainsQuery.data ?? 0;
   const scoreHistoryQuery = useQuery({
     queryKey: ["score-history", targetId],
     queryFn: () => fetchScoreHistory(targetId),
@@ -779,7 +790,7 @@ export function TargetDetailPage() {
         <div id="subdomains" className="mt-10 scroll-mt-14 flex items-center justify-between gap-3 rounded-lg border border-neon-cyan/20 bg-panel/60 p-4">
           <div>
             <h2 className="font-mono text-sm uppercase tracking-widest text-slate-400">
-              Subdomains {subdomainsQuery.data ? `(${subdomainsQuery.data.length})` : ""}
+              Subdomains {subdomainsQuery.data !== undefined ? `(${subdomainsQuery.data})` : ""}
             </h2>
             <p className="mt-1 font-mono text-xs text-slate-500">
               Full list with fingerprint data and per-subdomain findings.

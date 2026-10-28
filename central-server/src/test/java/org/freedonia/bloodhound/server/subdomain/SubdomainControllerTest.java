@@ -52,18 +52,18 @@ class SubdomainControllerTest {
     void list_targetInAnotherOrg_notFound() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.list(targetId, null, 200, 0, principal))
+        assertThatThrownBy(() -> controller.list(targetId, null, null, 200, 0, principal))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
     void list_ownedTarget_returnsTotalCountHeader() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), anyInt()))
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), anyInt()))
                 .thenReturn(List.of(subdomain("a.example.com")));
-        when(subdomainRepository.countByTarget(targetId, null)).thenReturn(57107);
+        when(subdomainRepository.countByTarget(targetId, null, null)).thenReturn(57107);
 
-        ResponseEntity<List<SubdomainSummary>> response = controller.list(targetId, null, 200, 0, principal);
+        ResponseEntity<List<SubdomainSummary>> response = controller.list(targetId, null, null, 200, 0, principal);
 
         assertThat(response.getBody()).hasSize(1);
         assertThat(response.getHeaders().getFirst("X-Total-Count")).isEqualTo("57107");
@@ -72,59 +72,74 @@ class SubdomainControllerTest {
     @Test
     void list_limitClampedToMax500() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
 
-        controller.list(targetId, null, 100000, 0, principal);
+        controller.list(targetId, null, null, 100000, 0, principal);
 
-        verify(subdomainRepository).findByTarget(targetId, null, 500, 0);
+        verify(subdomainRepository).findByTarget(targetId, null, null, 500, 0);
     }
 
     @Test
     void list_limitClampedToMin1() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
 
-        controller.list(targetId, null, 0, 0, principal);
+        controller.list(targetId, null, null, 0, 0, principal);
 
-        verify(subdomainRepository).findByTarget(targetId, null, 1, 0);
+        verify(subdomainRepository).findByTarget(targetId, null, null, 1, 0);
     }
 
     @Test
     void list_negativeOffset_clampedToZero() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), anyInt())).thenReturn(List.of());
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
 
-        controller.list(targetId, null, 200, -50, principal);
+        controller.list(targetId, null, null, 200, -50, principal);
 
-        verify(subdomainRepository).findByTarget(targetId, null, 200, 0);
+        verify(subdomainRepository).findByTarget(targetId, null, null, 200, 0);
     }
 
     @Test
     void list_hostnameFilter_passedThroughToRepository() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), eq("admin"), anyInt(), anyInt())).thenReturn(List.of());
-        when(subdomainRepository.countByTarget(targetId, "admin")).thenReturn(0);
+        when(subdomainRepository.findByTarget(eq(targetId), eq("admin"), any(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+        when(subdomainRepository.countByTarget(targetId, "admin", null)).thenReturn(0);
 
-        controller.list(targetId, "admin", 200, 0, principal);
+        controller.list(targetId, "admin", null, 200, 0, principal);
 
-        verify(subdomainRepository).findByTarget(targetId, "admin", 200, 0);
-        verify(subdomainRepository).countByTarget(targetId, "admin");
+        verify(subdomainRepository).findByTarget(targetId, "admin", null, 200, 0);
+        verify(subdomainRepository).countByTarget(targetId, "admin", null);
+    }
+
+    @Test
+    void list_hasIpFilter_passedThroughToRepository() {
+        when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
+        when(subdomainRepository.findByTarget(eq(targetId), any(), eq(true), anyInt(), anyInt()))
+                .thenReturn(List.of());
+        when(subdomainRepository.countByTarget(targetId, null, true)).thenReturn(0);
+
+        controller.list(targetId, null, true, 200, 0, principal);
+
+        verify(subdomainRepository).findByTarget(targetId, null, true, 200, 0);
+        verify(subdomainRepository).countByTarget(targetId, null, true);
     }
 
     @Test
     void export_targetInAnotherOrg_notFound() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.export(targetId, null, principal)).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> controller.export(targetId, null, null, principal))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test
     void export_ownedTarget_returnsCsvWithContentDisposition() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), eq(0)))
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), eq(0)))
                 .thenReturn(List.of(subdomain("a.example.com")));
 
-        ResponseEntity<byte[]> response = controller.export(targetId, null, principal);
+        ResponseEntity<byte[]> response = controller.export(targetId, null, null, principal);
 
         assertThat(response.getHeaders().getContentType().toString()).startsWith("text/csv");
         assertThat(response.getHeaders().getFirst("Content-Disposition")).contains("example.com-subdomains-");
@@ -136,22 +151,28 @@ class SubdomainControllerTest {
         // The point of a separate export endpoint - GET /subdomains is capped at 500 for the
         // paginated UI table, but export must return the target's *entire* subdomain set.
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), any(), anyInt(), eq(0))).thenReturn(List.of());
+        when(subdomainRepository.findByTarget(eq(targetId), any(), any(), anyInt(), eq(0))).thenReturn(List.of());
 
-        controller.export(targetId, null, principal);
+        controller.export(targetId, null, null, principal);
 
         verify(subdomainRepository)
-                .findByTarget(eq(targetId), eq(null), org.mockito.ArgumentMatchers.intThat(limit -> limit > 500), eq(0));
+                .findByTarget(
+                        eq(targetId),
+                        eq(null),
+                        eq(null),
+                        org.mockito.ArgumentMatchers.intThat(limit -> limit > 500),
+                        eq(0));
     }
 
     @Test
     void export_hostnameFilter_passedThroughToRepository() {
         when(targetRepository.findByIdAndOrganization(targetId, orgId)).thenReturn(Optional.of(target()));
-        when(subdomainRepository.findByTarget(eq(targetId), eq("admin"), anyInt(), eq(0))).thenReturn(List.of());
+        when(subdomainRepository.findByTarget(eq(targetId), eq("admin"), any(), anyInt(), eq(0)))
+                .thenReturn(List.of());
 
-        controller.export(targetId, "admin", principal);
+        controller.export(targetId, "admin", null, principal);
 
-        verify(subdomainRepository).findByTarget(eq(targetId), eq("admin"), anyInt(), eq(0));
+        verify(subdomainRepository).findByTarget(eq(targetId), eq("admin"), eq(null), anyInt(), eq(0));
     }
 
     @Test

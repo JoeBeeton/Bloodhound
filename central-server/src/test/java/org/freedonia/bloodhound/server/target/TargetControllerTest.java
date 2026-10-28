@@ -101,7 +101,7 @@ class TargetControllerTest {
         assertThat(result.get(0).estimatedTier2ScanDurationSeconds()).isNull();
         // Deep scans are never possible for a target that isn't AUTHORIZED - estimating one would
         // be misleading, so this short-circuits before even looking at subdomain fan-out.
-        verify(subdomainRepository, never()).countByTarget(any(), any());
+        verify(subdomainRepository, never()).countByTarget(any(), any(), any());
     }
 
     @Test
@@ -116,7 +116,7 @@ class TargetControllerTest {
         // More subdomains than ScanRunService's own TIER2_SUBDOMAIN_CAP (15) - the fan-out host
         // count should clamp there, same as createDeepScan's own selection does, giving
         // 1 (apex) + 15 (capped) = 16 ZAP_ACTIVE_SCAN jobs this hypothetical run would add.
-        when(subdomainRepository.countByTarget(eq(id), isNull())).thenReturn(20);
+        when(subdomainRepository.countByTarget(eq(id), isNull(), isNull())).thenReturn(20);
         when(scanJobAttemptRepository.averageSecondsByModuleType(anyInt())).thenReturn(Map.of("ZAP_ACTIVE_SCAN", 60.0));
         when(scanJobRepository.zapMaxConcurrentScans()).thenReturn(1);
         // 4 ZAP_ACTIVE_SCAN jobs already queued system-wide from some other org/target's run.

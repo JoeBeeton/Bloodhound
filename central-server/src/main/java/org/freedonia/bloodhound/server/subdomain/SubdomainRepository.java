@@ -195,8 +195,17 @@ public class SubdomainRepository {
      * {@link #countByTarget} for the total, used to tell the caller how much
      * more there is beyond this page.
      */
-    /** {@code hostnameContains} is a case-insensitive substring match, null/blank for no filter - lets a target's search box genuinely search its full subdomain set server-side rather than only whatever page happened to be fetched. */
-    public List<Subdomain> findByTarget(UUID targetId, String hostnameContains, int limit, int offset) {
+    /**
+     * {@code hostnameContains} is a case-insensitive substring match, null/blank for no filter -
+     * lets a target's search box genuinely search its full subdomain set server-side rather than
+     * only whatever page happened to be fetched. {@code hasIp} is null for no filter, true for
+     * "has resolved to at least one address," false for "never resolved" (stale/dangling entries)
+     * - current_ip_addresses is written as a JSON array by every source (DnsRecordFetcher et
+     * al.), never a bare JSON null, but the jsonb_typeof guard keeps this correct even if that
+     * ever changes, since jsonb_array_length errors on a non-array JSON value instead of
+     * returning a false-ish result.
+     */
+    public List<Subdomain> findByTarget(UUID targetId, String hostnameContains, Boolean hasIp, int limit, int offset) {
         StringBuilder sql = new StringBuilder("SELECT * FROM subdomains WHERE target_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(targetId);
@@ -204,13 +213,14 @@ public class SubdomainRepository {
             sql.append(" AND hostname ILIKE ?");
             args.add("%" + hostnameContains + "%");
         }
+        appendHasIpClause(sql, hasIp);
         sql.append(" ORDER BY hostname ASC LIMIT ? OFFSET ?");
         args.add(limit);
         args.add(offset);
         return jdbc.query(sql.toString(), rowMapper, args.toArray());
     }
 
-    public int countByTarget(UUID targetId, String hostnameContains) {
+    public int countByTarget(UUID targetId, String hostnameContains, Boolean hasIp) {
         StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM subdomains WHERE target_id = ?");
         List<Object> args = new ArrayList<>();
         args.add(targetId);
@@ -218,8 +228,18 @@ public class SubdomainRepository {
             sql.append(" AND hostname ILIKE ?");
             args.add("%" + hostnameContains + "%");
         }
+        appendHasIpClause(sql, hasIp);
         Integer count = jdbc.queryForObject(sql.toString(), Integer.class, args.toArray());
         return count != null ? count : 0;
+    }
+
+    private static void appendHasIpClause(StringBuilder sql, Boolean hasIp) {
+        if (hasIp == null) {
+            return;
+        }
+        String resolved = "current_ip_addresses IS NOT NULL AND jsonb_typeof(current_ip_addresses) = 'array'"
+                + " AND jsonb_array_length(current_ip_addresses) > 0";
+        sql.append(hasIp ? " AND (" + resolved + ")" : " AND NOT (" + resolved + ")");
     }
 
     /**

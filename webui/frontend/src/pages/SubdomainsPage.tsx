@@ -23,9 +23,19 @@ async function fetchTarget(id: string): Promise<Target> {
   return res.json();
 }
 
-async function fetchSubdomains(targetId: string, hostnameSearch: string): Promise<Page<Subdomain>> {
+/** "all" omits the hasIp param entirely (no filter) - "resolved"/"unresolved" map straight onto the server's true/false. */
+export type HasIpFilter = "all" | "resolved" | "unresolved";
+
+function applyHasIpParam(params: URLSearchParams, hasIpFilter: HasIpFilter): void {
+  if (hasIpFilter !== "all") {
+    params.set("hasIp", String(hasIpFilter === "resolved"));
+  }
+}
+
+async function fetchSubdomains(targetId: string, hostnameSearch: string, hasIpFilter: HasIpFilter): Promise<Page<Subdomain>> {
   const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
   if (hostnameSearch) params.set("hostname", hostnameSearch);
+  applyHasIpParam(params, hasIpFilter);
   const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to load subdomains.");
   const items: Subdomain[] = await res.json();
@@ -35,11 +45,12 @@ async function fetchSubdomains(targetId: string, hostnameSearch: string): Promis
 /**
  * Same "fetch as a blob, drive the download through a synthetic object URL" constraint the
  * findings and audit-log exports already hit - a plain `<a href>` can't carry the bearer token
- * the export endpoint requires. Respects the current hostname filter, same as the fetched list.
+ * the export endpoint requires. Respects the current hostname/hasIp filters, same as the fetched list.
  */
-async function downloadSubdomainsCsv(targetId: string, hostnameSearch: string): Promise<void> {
+async function downloadSubdomainsCsv(targetId: string, hostnameSearch: string, hasIpFilter: HasIpFilter): Promise<void> {
   const params = new URLSearchParams();
   if (hostnameSearch) params.set("hostname", hostnameSearch);
+  applyHasIpParam(params, hasIpFilter);
   const res = await apiFetch(`/api/v1/targets/${targetId}/subdomains/export?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to export subdomains.");
   const blob = await res.blob();
@@ -127,6 +138,7 @@ export function SubdomainsPage() {
   const [newHostname, setNewHostname] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [search, setSearch] = useState("");
+  const [hasIpFilter, setHasIpFilter] = useState<HasIpFilter>("all");
   const [sortByFindings, setSortByFindings] = useState(false);
   // Debounced so typing doesn't fire a request per keystroke - the search now genuinely
   // queries the server (see fetchSubdomains), not just the already-fetched page, so it's
@@ -140,8 +152,8 @@ export function SubdomainsPage() {
   const targetQuery = useQuery({ queryKey: ["target", targetId], queryFn: () => fetchTarget(targetId) });
   usePageTitle(targetQuery.data ? `Subdomains: ${targetQuery.data.hostname}` : null);
   const subdomainsQuery = useQuery({
-    queryKey: ["subdomains", targetId, debouncedSearch],
-    queryFn: () => fetchSubdomains(targetId, debouncedSearch),
+    queryKey: ["subdomains", targetId, debouncedSearch, hasIpFilter],
+    queryFn: () => fetchSubdomains(targetId, debouncedSearch, hasIpFilter),
   });
   const fingerprintsQuery = useQuery({
     queryKey: ["fingerprints", targetId],
@@ -149,7 +161,7 @@ export function SubdomainsPage() {
   });
   const findingsQuery = useQuery({ queryKey: ["findings", targetId], queryFn: () => fetchFindings(targetId) });
   const exportCsvMutation = useMutation({
-    mutationFn: () => downloadSubdomainsCsv(targetId, debouncedSearch),
+    mutationFn: () => downloadSubdomainsCsv(targetId, debouncedSearch, hasIpFilter),
   });
   const addSubdomainMutation = useMutation({
     mutationFn: (hostname: string) => addSubdomain(targetId, hostname),
@@ -285,13 +297,16 @@ export function SubdomainsPage() {
           />
         )}
 
-        {subdomainsQuery.data && subdomainsQuery.data.totalCount === 0 && !search && (
+        {subdomainsQuery.data && subdomainsQuery.data.totalCount === 0 && !search && hasIpFilter === "all" && (
           <p className="font-mono text-sm text-slate-400">
             No subdomains discovered yet — run a scan to enumerate them.
           </p>
         )}
 
-        {subdomainsQuery.data && (subdomainsQuery.data.totalCount > 0 || search) && (
+        {/* hasIpFilter !== "all" counts as an active filter too, same as `search` - without it,
+            filtering down to zero matches would hide this entire block (search box, sort button,
+            the IP filter itself) with no way left on the page to clear the filter back to "all". */}
+        {subdomainsQuery.data && (subdomainsQuery.data.totalCount > 0 || search || hasIpFilter !== "all") && (
           <>
             {(subdomainsTruncated || findingsTruncated) && (
               <p className="mb-3 font-mono text-xs text-neon-amber">
@@ -309,6 +324,30 @@ export function SubdomainsPage() {
                 placeholder="Filter by hostname…"
                 className="w-full flex-1 rounded border border-slate-700 bg-void px-3 py-2 font-mono text-sm text-slate-200 outline-none placeholder:text-muted focus:border-neon-cyan"
               />
+              <div
+                role="group"
+                aria-label="Filter by IP resolution"
+                className="inline-flex shrink-0 rounded border border-slate-700 p-0.5 font-mono text-xs uppercase tracking-widest"
+              >
+                {(
+                  [
+                    ["all", "All"],
+                    ["resolved", "Resolves to IP"],
+                    ["unresolved", "No IP"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    aria-pressed={hasIpFilter === value}
+                    onClick={() => setHasIpFilter(value)}
+                    className={`whitespace-nowrap rounded px-2.5 py-1.5 transition ${
+                      hasIpFilter === value ? "bg-neon-cyan/15 text-neon-cyan" : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={() => setSortByFindings((v) => !v)}
                 className={`shrink-0 whitespace-nowrap rounded border px-3 py-2 font-mono text-xs uppercase tracking-widest transition ${
@@ -374,7 +413,10 @@ export function SubdomainsPage() {
             </div>
             )}
             {filtered.length === 0 && (
-              <p className="mt-4 font-mono text-sm text-slate-400">No subdomains match “{search}”.</p>
+              <p className="mt-4 font-mono text-sm text-slate-400">
+                No subdomains match{search ? ` "${search}"` : ""}
+                {hasIpFilter !== "all" ? ` (${hasIpFilter === "resolved" ? "resolves to IP" : "no IP"})` : ""}.
+              </p>
             )}
           </>
         )}

@@ -62,6 +62,7 @@ public class SubdomainController {
     public ResponseEntity<List<SubdomainSummary>> list(
             @PathVariable UUID id,
             @RequestParam(required = false) String hostname,
+            @RequestParam(required = false) Boolean hasIp,
             @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
             @RequestParam(defaultValue = "0") int offset,
             @AuthenticationPrincipal JwtPrincipal principal) {
@@ -73,13 +74,15 @@ public class SubdomainController {
 
         Map<String, WafStatus> wafStatusByHost = findingRepository.findWafStatusByTarget(id);
         Map<String, List<TlsFindingRow>> tlsFindingsByHost = findingRepository.findTlsFindingsByTarget(id);
-        List<SubdomainSummary> page = subdomainRepository.findByTarget(id, hostname, boundedLimit, boundedOffset).stream()
+        List<SubdomainSummary> page = subdomainRepository
+                .findByTarget(id, hostname, hasIp, boundedLimit, boundedOffset)
+                .stream()
                 .map(s -> SubdomainSummary.from(
                         s,
                         wafStatusByHost.get(s.hostname()),
                         TlsGradeCalculator.calculate(tlsFindingsByHost.get(s.hostname()))))
                 .toList();
-        int totalCount = subdomainRepository.countByTarget(id, hostname);
+        int totalCount = subdomainRepository.countByTarget(id, hostname, hasIp);
 
         return ResponseEntity.ok().header("X-Total-Count", String.valueOf(totalCount)).body(page);
     }
@@ -89,17 +92,20 @@ public class SubdomainController {
      * findings and the audit log both having a CSV export already - the subdomain list is the
      * actual asset inventory this tool exists to produce, and a user handing it off to another
      * tool (a CMDB, a separate scanner's target list) had no way to get it out except manually
-     * copying rows off the paginated table. Respects the same hostname filter as {@link #list}.
+     * copying rows off the paginated table. Respects the same hostname/hasIp filters as {@link #list}.
      */
     @GetMapping(value = "/api/v1/targets/{id}/subdomains/export", produces = "text/csv")
     public ResponseEntity<byte[]> export(
             @PathVariable UUID id,
             @RequestParam(required = false) String hostname,
+            @RequestParam(required = false) Boolean hasIp,
             @AuthenticationPrincipal JwtPrincipal principal) {
         Target target = targetRepository
                 .findByIdAndOrganization(id, principal.organizationId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        List<SubdomainSummary> subdomains = subdomainRepository.findByTarget(id, hostname, MAX_EXPORT_LIMIT, 0).stream()
+        List<SubdomainSummary> subdomains = subdomainRepository
+                .findByTarget(id, hostname, hasIp, MAX_EXPORT_LIMIT, 0)
+                .stream()
                 .map(SubdomainSummary::from)
                 .toList();
         byte[] csv = SubdomainCsvWriter.write(subdomains).getBytes(StandardCharsets.UTF_8);

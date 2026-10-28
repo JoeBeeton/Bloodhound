@@ -149,12 +149,17 @@ public class McpReadTools {
     public List<SubdomainSummary> listSubdomains(
             @McpToolParam(description = "Target id", required = true) UUID targetId,
             @McpToolParam(description = "Case-insensitive hostname substring filter", required = false) String hostnameContains,
+            @McpToolParam(
+                            description =
+                                    "Filter by whether the subdomain has resolved to an IP address: true for resolved only, false for never-resolved/stale only, omitted for no filter",
+                            required = false)
+                    Boolean hasIp,
             @McpToolParam(description = "Max rows to return (default 200, capped at 500)", required = false) Integer limit,
             @McpToolParam(description = "Offset for pagination", required = false) Integer offset) {
         requireOwnedTarget(targetId);
         int boundedLimit = Math.clamp(limit != null ? limit : 200, 1, 500);
         int boundedOffset = offset != null ? Math.max(offset, 0) : 0;
-        return subdomainRepository.findByTarget(targetId, hostnameContains, boundedLimit, boundedOffset).stream()
+        return subdomainRepository.findByTarget(targetId, hostnameContains, hasIp, boundedLimit, boundedOffset).stream()
                 .map(SubdomainSummary::from)
                 .toList();
     }

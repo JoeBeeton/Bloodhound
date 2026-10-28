@@ -197,3 +197,61 @@ describe("SubdomainsPage export", () => {
     expect(await screen.findByText("Failed to export subdomains. Try again.")).toBeInTheDocument();
   });
 });
+
+describe("SubdomainsPage IP resolution filter", () => {
+  it("defaults to \"All\" and sends no hasIp param", async () => {
+    const mockedApiFetch = mockApiRoutes({ subdomains: [subdomain("a.example.com")] });
+
+    renderAt("/targets/t1/subdomains");
+    await screen.findByText("a.example.com");
+
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    const subdomainsCall = mockedApiFetch.mock.calls.find(([url]) => url.toString().includes("/subdomains?"));
+    expect(subdomainsCall?.[0].toString()).not.toContain("hasIp");
+  });
+
+  it("clicking \"Resolves to IP\" re-fetches with hasIp=true and carries it into the CSV export", async () => {
+    const user = userEvent.setup();
+    const mockedApiFetch = mockApiRoutes({ subdomains: [subdomain("a.example.com")] });
+
+    renderAt("/targets/t1/subdomains");
+    await screen.findByText("a.example.com");
+
+    await user.click(screen.getByRole("button", { name: "Resolves to IP" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch.mock.calls.some(([url]) => url.toString().includes("hasIp=true"))).toBe(true),
+    );
+
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/v1/targets/t1/subdomains/export?hasIp=true"),
+    );
+  });
+
+  it("filtering down to zero matches keeps the filter controls visible, not just the empty-state text", async () => {
+    // The actual point of this test: totalCount reflects the FILTERED result, not the target's
+    // real total - without accounting for hasIpFilter in the page's own visibility gate, hitting
+    // zero matches here would hide the filter buttons themselves, leaving no way back to "All".
+    const user = userEvent.setup();
+    const mockedApiFetch = vi.mocked(apiFetch);
+    mockedApiFetch.mockImplementation(async (url) => {
+      const href = url.toString();
+      if (href.includes("/fingerprints")) return jsonResponse([]);
+      if (href.includes("/findings")) return jsonResponse([], { totalCount: 0 });
+      if (href.includes("hasIp=false")) return jsonResponse([], { totalCount: 0 });
+      if (href.includes("/subdomains")) return jsonResponse([subdomain("a.example.com")], { totalCount: 1 });
+      return jsonResponse({ id: "t1", hostname: "example.com" });
+    });
+
+    renderAt("/targets/t1/subdomains");
+    await screen.findByText("a.example.com");
+
+    await user.click(screen.getByRole("button", { name: "No IP" }));
+
+    await screen.findByText(/no subdomains match/i);
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "No IP" })).toHaveAttribute("aria-pressed", "true");
+  });
+});
