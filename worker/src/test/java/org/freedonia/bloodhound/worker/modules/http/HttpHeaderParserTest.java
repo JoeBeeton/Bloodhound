@@ -300,7 +300,11 @@ class HttpHeaderParserTest {
     }
 
     private static FetchResult withTrace(FetchResult.TraceProbe trace) {
-        return new FetchResult(true, allSecureHeaders(), List.of(), null, null, trace);
+        return new FetchResult(true, allSecureHeaders(), List.of(), null, null, trace, null);
+    }
+
+    private static FetchResult withOpenRedirect(FetchResult.OpenRedirectProbe openRedirect) {
+        return new FetchResult(true, allSecureHeaders(), List.of(), null, null, null, openRedirect);
     }
 
     @Test
@@ -328,6 +332,33 @@ class HttpHeaderParserTest {
     void traceProbeFailed_null_notFlagged() {
         FetchResult result = withTrace(null);
         assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
+    }
+
+    @Test
+    void openRedirect_locationCarriesProbeMarker_flaggedMedium() {
+        FetchResult result = withOpenRedirect(
+                new FetchResult.OpenRedirectProbe("redirect", "https://bh-open-redirect-probe.invalid/"));
+        List<RawFinding> findings = HttpHeaderParser.parse("example.com", result);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("HTTP_OPEN_REDIRECT");
+            assertThat(f.severity().name()).isEqualTo("MEDIUM");
+            assertThat(f.evidence()).containsEntry("paramName", "redirect");
+        });
+    }
+
+    @Test
+    void openRedirect_locationIsOffHostButDoesNotCarryTheProbeMarker_notFlagged() {
+        // An off-host 3xx alone isn't enough - a canonical-domain or SSO redirect that fires
+        // regardless of the param's value would false-positive here without the marker check.
+        FetchResult result =
+                withOpenRedirect(new FetchResult.OpenRedirectProbe("redirect", "https://login.example-sso.com/"));
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HTTP_OPEN_REDIRECT");
+    }
+
+    @Test
+    void openRedirect_probeFailed_null_notFlagged() {
+        FetchResult result = withOpenRedirect(null);
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HTTP_OPEN_REDIRECT");
     }
 
     private static FetchResult withReferrerPolicy(String value) {

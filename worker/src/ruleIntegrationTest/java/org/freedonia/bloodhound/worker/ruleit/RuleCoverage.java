@@ -47,6 +47,7 @@ class RuleCoverage {
             "HTTP_NO_HTTPS_REDIRECT",
             "CORS_CREDENTIALED_ORIGIN_REFLECTION",
             "HTTP_TRACE_METHOD_ENABLED",
+            "HTTP_OPEN_REDIRECT",
             "COOKIE_MISSING_HOST_PREFIX",
             "EXPOSURE_GIT_CONFIG",
             "EXPOSURE_ENV_FILE",

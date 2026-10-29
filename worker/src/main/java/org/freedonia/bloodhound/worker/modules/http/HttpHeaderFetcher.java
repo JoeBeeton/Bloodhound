@@ -2,11 +2,14 @@ package org.freedonia.bloodhound.worker.modules.http;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.freedonia.bloodhound.common.net.SafeAddressValidator;
 import org.freedonia.bloodhound.common.net.SafeHttpGet;
@@ -43,6 +46,20 @@ public class HttpHeaderFetcher {
 
     /** A distinctive marker header value - if a server's TRACE response echoes the request back (RFC 7231's own documented behavior for this method), this exact string reappearing in the response body confirms it's a genuine loop-back echo, not just any 200 response. */
     static final String TRACE_PROBE_MARKER = "bh-trace-probe-9f3a1c";
+
+    /**
+     * Common query-param names a login/logout/SSO flow redirects through after completing - not
+     * exhaustive (an app-specific name could always exist), but these cover the overwhelming
+     * majority of real-world open-redirect reports. Kept short deliberately: each is one extra GET
+     * per hostname, and this module already fans out across up to 40 subdomains per target.
+     */
+    private static final List<String> OPEN_REDIRECT_PARAMS =
+            List.of("redirect", "url", "next", "return", "continue");
+
+    /** Same RFC 2606 "definitely not a real, resolvable domain" reasoning as {@link #CORS_PROBE_ORIGIN} - distinctive enough that this exact substring reappearing in a Location header (see HttpHeaderParser#openRedirectFindings) can only mean the server used this probe's own param value, not an unrelated same-pattern coincidence. */
+    static final String OPEN_REDIRECT_PROBE_MARKER = "bh-open-redirect-probe.invalid";
+
+    static final String OPEN_REDIRECT_PROBE_TARGET = "https://" + OPEN_REDIRECT_PROBE_MARKER + "/";
 
     public FetchResult fetch(String hostname) throws ScanModuleException {
         FetchResult.PlainHttpProbe plainHttp = probePlainHttp(hostname);
@@ -132,6 +149,37 @@ public class HttpHeaderFetcher {
         }
     }
 
+    /**
+     * One GET per candidate param name (see {@link #OPEN_REDIRECT_PARAMS}), stopping at the first
+     * one that comes back with any 3xx + Location header at all - whether that Location is
+     * actually off-host (a real open redirect) vs. this param name coincidentally mapping to some
+     * other in-site redirect is a decision for HttpHeaderParser, not this raw-capture fetch step.
+     * {@code Redirect.NEVER} on the shared client (set at class level) means the raw 3xx + Location
+     * is read directly, never silently followed. Best-effort per param: a failure just means try
+     * the next name, not a whole-module failure - the main fetch already succeeded.
+     */
+    private FetchResult.OpenRedirectProbe probeOpenRedirect(boolean https, String hostname) {
+        String encodedTarget = URLEncoder.encode(OPEN_REDIRECT_PROBE_TARGET, StandardCharsets.UTF_8);
+        for (String param : OPEN_REDIRECT_PARAMS) {
+            try {
+                String url = (https ? "https://" : "http://") + hostname + "/?" + param + "=" + encodedTarget;
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(Duration.ofSeconds(8))
+                        .header("User-Agent", ScanUserAgent.VALUE)
+                        .GET()
+                        .build();
+                HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+                String location = response.headers().firstValue("location").orElse(null);
+                if (response.statusCode() >= 300 && response.statusCode() < 400 && location != null) {
+                    return new FetchResult.OpenRedirectProbe(param, location);
+                }
+            } catch (Exception ignored) {
+                // this param name's probe failed outright - try the next one
+            }
+        }
+        return null;
+    }
+
     private HttpResponse<Void> get(String url) throws IOException, InterruptedException {
         return SafeHttpGet.get(
                 client,
@@ -152,6 +200,8 @@ public class HttpHeaderFetcher {
         });
         FetchResult.CorsProbe cors = probeCors(https, hostname);
         FetchResult.TraceProbe trace = probeTraceMethod(https, hostname);
-        return new FetchResult(https, headers, response.headers().allValues("set-cookie"), plainHttp, cors, trace);
+        FetchResult.OpenRedirectProbe openRedirect = probeOpenRedirect(https, hostname);
+        return new FetchResult(
+                https, headers, response.headers().allValues("set-cookie"), plainHttp, cors, trace, openRedirect);
     }
 }

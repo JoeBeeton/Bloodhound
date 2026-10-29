@@ -40,6 +40,7 @@ public final class HttpHeaderParser {
         findings.addAll(httpsRedirectFindings(hostname, result));
         findings.addAll(corsReflectionFindings(hostname, result));
         findings.addAll(traceMethodFindings(hostname, result));
+        findings.addAll(openRedirectFindings(hostname, result));
 
         String banner = (headers.getOrDefault("server", "") + " " + headers.getOrDefault("x-powered-by", "")).trim();
         if (!banner.isEmpty() && VERSION_LIKE.matcher(banner).find()) {
@@ -350,6 +351,30 @@ public final class HttpHeaderParser {
                 Map.of("statusCode", trace.statusCode(), "echoedRequest", trace.echoedMarker())));
     }
 
+    /**
+     * The decisive signal is the fabricated probe marker (see
+     * {@link HttpHeaderFetcher#OPEN_REDIRECT_PROBE_TARGET}) reappearing in the Location header -
+     * proving the server actually redirected to the exact attacker-chosen value handed to it via
+     * a known redirect-param name, not just any off-host 3xx (which could be an unrelated
+     * canonical-domain or SSO redirect that fires every time regardless of what the param says).
+     * {@code .contains(...)}, not an exact match: URLEncoder leaves letters/digits/"."/"-" literal
+     * (only reserved characters like "://" get percent-escaped), so the marker survives intact in
+     * the Location header whether the server echoes it back raw or re-escapes it.
+     */
+    static List<RawFinding> openRedirectFindings(String hostname, FetchResult result) {
+        FetchResult.OpenRedirectProbe probe = result.openRedirect();
+        if (probe == null
+                || probe.location() == null
+                || !probe.location().toLowerCase(Locale.ROOT).contains(HttpHeaderFetcher.OPEN_REDIRECT_PROBE_MARKER)) {
+            return List.of();
+        }
+        return List.of(finding(
+                "HTTP_OPEN_REDIRECT",
+                Severity.MEDIUM,
+                hostname,
+                Map.of("paramName", probe.paramName(), "location", probe.location())));
+    }
+
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {
         String[] copy = COPY.get(ruleId);
         return new RawFinding(ruleId, severity, Category.HEADERS, copy[0], copy[1], asset, evidence);
@@ -500,5 +525,15 @@ public final class HttpHeaderParser {
                                 + "with a cross-site scripting or CSRF primitive elsewhere on the site, TRACE lets an "
                                 + "attacker's script read back a cookie's value even when that cookie is marked "
                                 + "HttpOnly, by echoing the request headers that carried it."
+                    }),
+            Map.entry(
+                    "HTTP_OPEN_REDIRECT",
+                    new String[] {
+                        "Open redirect via a request parameter",
+                        "A request parameter (e.g. redirect, url, next, return, continue) is used directly as the "
+                                + "destination of an HTTP redirect, with no check that the value stays on this site. An "
+                                + "attacker can craft a link that appears to point at this trusted domain but actually "
+                                + "redirects the victim to an attacker-controlled site - commonly used to make phishing "
+                                + "links or malware downloads look more credible."
                     }));
 }
