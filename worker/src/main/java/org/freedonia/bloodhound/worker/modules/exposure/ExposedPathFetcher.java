@@ -276,19 +276,23 @@ public class ExposedPathFetcher {
         }
 
         String redisResponse = probeRedis(hostname);
-        Map<String, ProbeResponse> sourceMapResponses = fetchSourceMapCandidates(hostname);
+        ScriptProbeResults scriptProbes = fetchScriptRelatedCandidates(hostname);
         Map<Integer, String> jdwpResponses = probeJdwp(hostname);
         ProbeResponse rabbitMqResponse = probeRabbitMq(hostname);
         String vncResponse = probeVnc(hostname);
         String snmpResponse = probeSnmp(hostname);
         return new ExposedPathFetchResult(
-                baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse,
-                vncResponse, snmpResponse);
+                baseline, responses, redisResponse, scriptProbes.sourceMapResponses(), jdwpResponses,
+                rabbitMqResponse, vncResponse, snmpResponse, scriptProbes.scriptBodyResponses());
     }
 
     /** Same-host {@code <script src>} URLs referenced by the homepage, capped and bounded - the input to EXPOSURE_JS_SOURCE_MAP. */
     private static final Pattern SCRIPT_SRC_PATTERN = Pattern.compile("(?i)<script\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"']");
     private static final int MAX_SOURCE_MAP_PROBES = 6;
+
+    /** The two script-URL-keyed probe maps that share one homepage fetch + script-URL extraction - see {@link #fetchScriptRelatedCandidates}. */
+    private record ScriptProbeResults(
+            Map<String, ProbeResponse> sourceMapResponses, Map<String, ProbeResponse> scriptBodyResponses) {}
 
     /**
      * Unlike every other check in this class, a source map isn't reachable at a fixed, guessable
@@ -300,22 +304,28 @@ public class ExposedPathFetcher {
      * SSRF-adjacent "connect wherever a response on this page happens to point" this codebase's
      * same-host discipline exists to avoid), and bounded to MAX_SOURCE_MAP_PROBES distinct scripts
      * so a page with dozens of chunks doesn't balloon this module's request count.
+     *
+     * <p>Also fetches each script's own body (not just its ".map" sibling) in the same pass - the
+     * input to the JS-bundle secret scan (see ExposedPathDecisionLogic) - reusing the one homepage
+     * fetch and script-URL extraction rather than repeating both just to get a second probe type.
      */
-    private Map<String, ProbeResponse> fetchSourceMapCandidates(String hostname) {
+    private ScriptProbeResults fetchScriptRelatedCandidates(String hostname) {
         ProbeResponse homepage = probe(hostname, "/", "GET", null, null, false);
         if (homepage.body() == null || homepage.url() == null) {
-            return Map.of();
+            return new ScriptProbeResults(Map.of(), Map.of());
         }
         Set<String> scriptUrls = extractSameHostScriptUrls(hostname, homepage.url(), homepage.body());
         if (scriptUrls.isEmpty()) {
-            return Map.of();
+            return new ScriptProbeResults(Map.of(), Map.of());
         }
-        Map<String, ProbeResponse> results = new ConcurrentHashMap<>();
+        Map<String, ProbeResponse> mapResults = new ConcurrentHashMap<>();
+        Map<String, ProbeResponse> bodyResults = new ConcurrentHashMap<>();
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(4, scriptUrls.size()));
         try {
             List<Future<?>> futures = new ArrayList<>();
             for (String scriptUrl : scriptUrls) {
-                futures.add(pool.submit(() -> results.put(scriptUrl, probeAbsoluteUrl(scriptUrl + ".map"))));
+                futures.add(pool.submit(() -> mapResults.put(scriptUrl, probeAbsoluteUrl(scriptUrl + ".map"))));
+                futures.add(pool.submit(() -> bodyResults.put(scriptUrl, probeAbsoluteUrl(scriptUrl))));
             }
             for (Future<?> f : futures) {
                 try {
@@ -327,7 +337,7 @@ public class ExposedPathFetcher {
         } finally {
             pool.shutdownNow();
         }
-        return results;
+        return new ScriptProbeResults(mapResults, bodyResults);
     }
 
     private static Set<String> extractSameHostScriptUrls(String hostname, String homepageUrl, String body) {

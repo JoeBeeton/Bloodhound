@@ -393,7 +393,8 @@ class ExposedPathDecisionLogicTest {
         String banner = "RFB 003.008\n";
         String secTypes = new String(new byte[] {1, 1}, java.nio.charset.StandardCharsets.ISO_8859_1);
         ExposedPathFetchResult result = new ExposedPathFetchResult(
-                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null);
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null,
+                Map.of());
         List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("EXPOSURE_VNC_NO_AUTH");
@@ -409,7 +410,8 @@ class ExposedPathDecisionLogicTest {
         String banner = "RFB 003.008\n";
         String secTypes = new String(new byte[] {1, 2}, java.nio.charset.StandardCharsets.ISO_8859_1);
         ExposedPathFetchResult result = new ExposedPathFetchResult(
-                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null);
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), banner + secTypes, null,
+                Map.of());
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_VNC_NO_AUTH");
     }
 
@@ -418,7 +420,7 @@ class ExposedPathDecisionLogicTest {
         // Some unrelated service happened to answer on 5900 - not an RFB banner at all.
         ExposedPathFetchResult result = new ExposedPathFetchResult(
                 BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(),
-                "HTTP/1.1 200 OK\r\n\r\n", null);
+                "HTTP/1.1 200 OK\r\n\r\n", null, Map.of());
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_VNC_NO_AUTH");
     }
 
@@ -438,7 +440,8 @@ class ExposedPathDecisionLogicTest {
         };
         String snmpResponse = new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1);
         ExposedPathFetchResult result = new ExposedPathFetchResult(
-                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), null, snmpResponse);
+                BASELINE_404, Map.of(), null, Map.of(), Map.of(), ProbeResponse.unreachable(), null, snmpResponse,
+                Map.of());
         List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("EXPOSURE_SNMP_DEFAULT_COMMUNITY");
@@ -986,6 +989,67 @@ class ExposedPathDecisionLogicTest {
                 null,
                 Map.of("https://example.com/static/main.abc123.js", new ProbeResponse(200, "text/html", 20L, "<html>a real site</html>")));
         assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_JS_SOURCE_MAP");
+    }
+
+    @Test
+    void jsBundle_secretShapedContent_tripsLiveSecretDetectedWithScriptPathLabel() {
+        String scriptUrl = "https://example.com/static/js/main.a1b2c3.js";
+        String body = "var cfg={apiKey:'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567'};";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of(),
+                Map.of(),
+                ProbeResponse.unreachable(),
+                null,
+                null,
+                Map.of(scriptUrl, new ProbeResponse(200, "application/javascript", (long) body.length(), body, scriptUrl)));
+        List<RawFinding> findings = ExposedPathDecisionLogic.decide(HOST, result);
+        assertThat(ruleIds(findings)).contains("EXPOSURE_LIVE_SECRET_DETECTED");
+        RawFinding secretFinding = findings.stream()
+                .filter(f -> f.ruleId().equals("EXPOSURE_LIVE_SECRET_DETECTED"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(secretFinding.severity().name()).isEqualTo("CRITICAL");
+        assertThat(secretFinding.affectedAsset()).isEqualTo("example.com (/static/js/main.a1b2c3.js)");
+        assertThat(secretFinding.evidence()).containsEntry("sourceFile", "/static/js/main.a1b2c3.js");
+        @SuppressWarnings("unchecked")
+        List<String> patternsFound = (List<String>) secretFinding.evidence().get("patternsFound");
+        assertThat(patternsFound).contains("Google API Key");
+    }
+
+    @Test
+    void jsBundle_cleanContent_noSecretFindingEmitted() {
+        String scriptUrl = "https://example.com/static/js/main.a1b2c3.js";
+        String body = "function add(a,b){return a+b;}";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of(),
+                Map.of(),
+                ProbeResponse.unreachable(),
+                null,
+                null,
+                Map.of(scriptUrl, new ProbeResponse(200, "application/javascript", (long) body.length(), body, scriptUrl)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_LIVE_SECRET_DETECTED");
+    }
+
+    @Test
+    void jsBundle_404Response_notScanned() {
+        String scriptUrl = "https://example.com/static/js/main.a1b2c3.js";
+        ExposedPathFetchResult result = new ExposedPathFetchResult(
+                BASELINE_404,
+                Map.of(),
+                null,
+                Map.of(),
+                Map.of(),
+                ProbeResponse.unreachable(),
+                null,
+                null,
+                Map.of(scriptUrl, new ProbeResponse(404, "text/html", 9L, "not found", scriptUrl)));
+        assertThat(ruleIds(ExposedPathDecisionLogic.decide(HOST, result))).doesNotContain("EXPOSURE_LIVE_SECRET_DETECTED");
     }
 
     @Test

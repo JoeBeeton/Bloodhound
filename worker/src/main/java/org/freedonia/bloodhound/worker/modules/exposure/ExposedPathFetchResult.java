@@ -19,6 +19,10 @@ import java.util.Map;
  * @param snmpResponse raw bytes-as-string read after sending an SNMPv1 GetRequest for sysDescr.0
  *     with community "public" to UDP :161, or null if no response - see
  *     EXPOSURE_SNMP_DEFAULT_COMMUNITY
+ * @param scriptBodyResponses same-host {@code <script src>} URL (as found on the homepage, same
+ *     set sourceMapResponses derives from) -> the response fetched for that URL itself (not a
+ *     ".map" sibling) - the input to the JS-bundle secret scan, see
+ *     ExposedPathDecisionLogic#addSecretScanFinding
  */
 public record ExposedPathFetchResult(
         ProbeResponse baseline,
@@ -28,11 +32,12 @@ public record ExposedPathFetchResult(
         Map<Integer, String> jdwpResponses,
         ProbeResponse rabbitMqResponse,
         String vncResponse,
-        String snmpResponse) {
+        String snmpResponse,
+        Map<String, ProbeResponse> scriptBodyResponses) {
 
     /** Test convenience - production code always populates every field below baseline/responses/redisResponse. */
     ExposedPathFetchResult(ProbeResponse baseline, Map<String, ProbeResponse> responses, String redisResponse) {
-        this(baseline, responses, redisResponse, Map.of(), Map.of(), ProbeResponse.unreachable(), null, null);
+        this(baseline, responses, redisResponse, Map.of(), Map.of(), ProbeResponse.unreachable(), null, null, Map.of());
     }
 
     /** Test convenience for cases exercising sourceMapResponses specifically. */
@@ -41,7 +46,8 @@ public record ExposedPathFetchResult(
             Map<String, ProbeResponse> responses,
             String redisResponse,
             Map<String, ProbeResponse> sourceMapResponses) {
-        this(baseline, responses, redisResponse, sourceMapResponses, Map.of(), ProbeResponse.unreachable(), null, null);
+        this(baseline, responses, redisResponse, sourceMapResponses, Map.of(), ProbeResponse.unreachable(), null, null,
+                Map.of());
     }
 
     /** Test convenience for cases exercising jdwpResponses specifically. */
@@ -51,7 +57,8 @@ public record ExposedPathFetchResult(
             String redisResponse,
             Map<String, ProbeResponse> sourceMapResponses,
             Map<Integer, String> jdwpResponses) {
-        this(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, ProbeResponse.unreachable(), null, null);
+        this(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, ProbeResponse.unreachable(), null,
+                null, Map.of());
     }
 
     /** Test convenience for cases exercising rabbitMqResponse specifically. */
@@ -62,6 +69,7 @@ public record ExposedPathFetchResult(
             Map<String, ProbeResponse> sourceMapResponses,
             Map<Integer, String> jdwpResponses,
             ProbeResponse rabbitMqResponse) {
-        this(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse, null, null);
+        this(baseline, responses, redisResponse, sourceMapResponses, jdwpResponses, rabbitMqResponse, null, null,
+                Map.of());
     }
 }

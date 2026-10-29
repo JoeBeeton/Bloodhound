@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.exposure;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -22,11 +23,14 @@ import org.freedonia.bloodhound.common.findings.Severity;
  * simultaneously equal the baseline body and contain e.g.
  * {@code "propertySources"}.
  *
- * <p>When the .env, .git/config, or AWS-credentials check fires, its
- * already-fetched body is additionally re-checked by {@link
- * SecretPatternScanner} for live-looking credential formats - see {@link
- * #addSecretScanFinding}. No new network calls; this only sharpens "a file
- * is exposed" into "here's what's actually in it."
+ * <p>When the .env, .git/config, AWS-credentials, or .NET config check fires, its already-fetched
+ * body is additionally re-checked by {@link SecretPatternScanner} for live-looking credential
+ * formats - see {@link #addSecretScanFinding}. No new network calls for those; this only
+ * sharpens "a file is exposed" into "here's what's actually in it." The same scanner is also run
+ * against the body of every same-host JS file the homepage references (fetched alongside the
+ * EXPOSURE_JS_SOURCE_MAP probe, see {@link ExposedPathFetcher#fetch}) - that one IS a dedicated
+ * fetch, since a shipped frontend bundle is a real leak vector of its own, independent of any
+ * other exposure check firing.
  */
 public final class ExposedPathDecisionLogic {
 
@@ -338,7 +342,29 @@ public final class ExposedPathDecisionLogic {
             }
         }
 
+        // Same same-host script URLs the source-map check above derives from the homepage - here
+        // the script's OWN body (not its .map sibling) is re-checked for live-looking secrets,
+        // reusing the same matcher already applied to .env/.git/config/.aws/credentials/
+        // web.config above. A hardcoded API key/token in a shipped frontend JS bundle is a classic
+        // real-world leak vector this module had no coverage for at all before.
+        for (Map.Entry<String, ProbeResponse> entry : result.scriptBodyResponses().entrySet()) {
+            ProbeResponse scriptResponse = entry.getValue();
+            if (scriptResponse != null && scriptResponse.status() == 200) {
+                addSecretScanFinding(findings, hostname, scriptResponse, scriptFileLabel(entry.getKey()));
+            }
+        }
+
         return findings;
+    }
+
+    /** Shortens a full script URL down to just its path (e.g. "/static/js/main.a1b2c3.js") for a readable fileLabel/affected-asset suffix - falls back to the full URL if it isn't a parseable absolute one. */
+    private static String scriptFileLabel(String scriptUrl) {
+        try {
+            String path = URI.create(scriptUrl).getPath();
+            return path == null || path.isBlank() ? scriptUrl : path;
+        } catch (Exception malformed) {
+            return scriptUrl;
+        }
     }
 
     private static boolean matches(ProbeResponse response, String baselineBody, Predicate<String> positive) {
@@ -397,13 +423,13 @@ public final class ExposedPathDecisionLogic {
     }
 
     /**
-     * Re-greps a body already fetched (and already found to trip its own
-     * exposure rule) for live-looking secret formats - see
-     * {@link SecretPatternScanner}. Reported as a distinct finding rather
-     * than folded into the parent one, with the source file appended to the
-     * affected asset ({@code hostname + " (" + fileLabel + ")"}) so
-     * .env/.git/config/.aws/credentials findings on the same hostname get
-     * independent dedup keys, matching the alt-port precedent used for
+     * Greps a fetched body for live-looking secret formats - see {@link SecretPatternScanner}.
+     * Most callers pass a body already fetched (and already found to trip its own exposure rule)
+     * for a different reason; the JS-bundle caller above fetches specifically for this check, with
+     * no other finding required to fire first. Either way, reported as a distinct finding rather
+     * than folded into the parent one, with the source file appended to the affected asset ({@code
+     * hostname + " (" + fileLabel + ")"}) so .env/.git/config/.aws/credentials/JS-bundle findings
+     * on the same hostname get independent dedup keys, matching the alt-port precedent used for
      * EXPOSURE_DOCKER_API/EXPOSURE_ELASTICSEARCH_UNAUTH above.
      */
     private static void addSecretScanFinding(
