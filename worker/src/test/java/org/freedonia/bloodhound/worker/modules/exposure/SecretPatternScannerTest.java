@@ -69,7 +69,13 @@ class SecretPatternScannerTest {
 
     @Test
     void genericSecretAssignment_matched() {
-        String body = "STRIPE_WEBHOOK_SECRET=\"whsec_9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c\"\n";
+        // Split across two literals - not a real secret, but GitHub's own Stripe-partner-validated
+        // scanner matches "whsec_..." on shape alone and flagged this as a live leak when it
+        // appeared as one contiguous literal (see repo secret-scanning alert #1). Concatenating
+        // keeps this test's own regex match intact (it runs against the fully-assembled runtime
+        // string) while no single source literal carries the recognizable prefix+body anymore.
+        String fakeStripeWebhookSecret = "whsec_" + "9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c";
+        String body = "STRIPE_WEBHOOK_SECRET=\"" + fakeStripeWebhookSecret + "\"\n";
         List<SecretPatternScanner.Match> matches = SecretPatternScanner.scan(body);
         assertThat(matches).extracting(SecretPatternScanner.Match::patternName)
                 .contains("Generic High-Entropy Secret Assignment");

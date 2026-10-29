@@ -994,7 +994,13 @@ class ExposedPathDecisionLogicTest {
     @Test
     void jsBundle_secretShapedContent_tripsLiveSecretDetectedWithScriptPathLabel() {
         String scriptUrl = "https://example.com/static/js/main.a1b2c3.js";
-        String body = "var cfg={apiKey:'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567'};";
+        // Split across two literals - not a real key, but GitHub's secret scanner (and others
+        // like it) match on shape alone and flagged this as a live "Google API Key" leak when it
+        // appeared as one contiguous literal (see repo secret-scanning alert #2). Concatenating
+        // keeps SecretPatternScanner's own regex test intact (it runs against the fully-assembled
+        // runtime string) while no single source literal matches AIza[0-9A-Za-z-_]{35} anymore.
+        String fakeGoogleApiKey = "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567";
+        String body = "var cfg={apiKey:'" + fakeGoogleApiKey + "'};";
         ExposedPathFetchResult result = new ExposedPathFetchResult(
                 BASELINE_404,
                 Map.of(),
