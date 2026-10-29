@@ -61,6 +61,33 @@ class TlsDecisionLogicTest {
         assertThat(ruleIds(TlsDecisionLogic.decide("example.com", r, NOW))).contains("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN");
     }
 
+    @Test
+    void untrustedChain_evidenceCarriesIssuerAndCertificateNames() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), false, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", "CN=self-signed.example.com", null,
+                List.of("self-signed.example.com"), null, null, null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN");
+            assertThat(f.evidence())
+                    .containsEntry("issuer", "CN=self-signed.example.com")
+                    .containsEntry("certificateNames", List.of("self-signed.example.com"));
+        });
+    }
+
+    @Test
+    void untrustedChain_missingIssuerOrCertificateNames_fallsBackRatherThanThrowing() {
+        TlsFetchResult r = new TlsFetchResult(
+                NOW.plus(200, ChronoUnit.DAYS), false, "TLS_AES_128_GCM_SHA256", false, false, true,
+                "max-age=31536000; includeSubDomains", null);
+        List<RawFinding> findings = TlsDecisionLogic.decide("example.com", r, NOW);
+        assertThat(findings).anySatisfy(f -> {
+            assertThat(f.ruleId()).isEqualTo("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN");
+            assertThat(f.evidence()).containsEntry("issuer", "unknown").containsEntry("certificateNames", List.of());
+        });
+    }
+
     /** Host in the asset, not just evidence: two hosts in one target must not dedupe into one finding. */
     @Test
     void tls1Supported_flaggedWithHostAndProtocolAsAffectedAsset() {

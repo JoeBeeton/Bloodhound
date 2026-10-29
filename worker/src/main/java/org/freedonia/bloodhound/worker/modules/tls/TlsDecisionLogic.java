@@ -65,7 +65,17 @@ public final class TlsDecisionLogic {
         }
 
         if (!r.chainTrusted()) {
-            findings.add(finding("TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN", Severity.HIGH, hostname, Map.of()));
+            // issuer/certificateNames come off the leaf cert captured by the permissive handshake,
+            // independent of chainTrusted (a separate default-trust-store connection) - populated in
+            // every real fetch. Previously shipped as Map.of() - a HIGH finding with no issuer/chain
+            // detail wasn't actionable from the UI.
+            findings.add(finding(
+                    "TLS_CERT_SELF_SIGNED_OR_UNTRUSTED_CHAIN",
+                    Severity.HIGH,
+                    hostname,
+                    Map.of(
+                            "issuer", r.certIssuer() == null ? "unknown" : r.certIssuer(),
+                            "certificateNames", r.certDnsNames() == null ? List.of() : r.certDnsNames())));
         }
 
         // "<host>: <protocol>" (the cookie rules' "<host>: <name>" convention), not the bare protocol
