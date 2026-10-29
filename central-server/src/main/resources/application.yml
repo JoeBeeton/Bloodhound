@@ -59,6 +59,11 @@ bloodhound:
     org-slug: ${BOOTSTRAP_ORG_SLUG:}
     admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
     admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  server:
+    # Optional - see SecretCredentialCipher's javadoc and .env.example's own comment. Blank
+    # disables saving a GITHUB_SECRET_SEARCH token from the admin UI outright, rather than
+    # falling back to storing one unencrypted.
+    secrets-encryption-key: ${BLOODHOUND_SECRETS_ENCRYPTION_KEY:}
   worker:
     api-key: ${WORKER_API_KEY:}
     # Same env vars/defaults a worker itself uses (see worker/application.yml's

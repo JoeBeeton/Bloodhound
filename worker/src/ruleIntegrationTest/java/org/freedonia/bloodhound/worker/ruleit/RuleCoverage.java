@@ -14,6 +14,11 @@ class RuleCoverage {
 
     static final Set<String> NOT_LOCAL = Set.of(
             "BREACH_EMAIL_DOMAIN_IN_KNOWN_BREACH",
+            // Same category as BREACH_EMAIL_DOMAIN_IN_KNOWN_BREACH above - needs a real GitHub
+            // token (admin-configured per-org, see GithubSecretSearchIntegrationController) and
+            // a live call to api.github.com's code-search endpoint; verified via synthetic unit
+            // tests in GithubSecretLeakDecisionLogicTest/GithubSecretLeakFetcherTest instead.
+            "EXPOSURE_SECRET_IN_PUBLIC_REPO",
             "NETWORK_IP_KNOWN_BOTNET_C2",
             "NETWORK_ANONYMOUS_FTP",
             "NETWORK_FULL_PORT_SURFACE",

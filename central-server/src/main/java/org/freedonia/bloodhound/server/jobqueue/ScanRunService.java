@@ -122,10 +122,15 @@ public class ScanRunService {
      * from {@link #SUBDOMAIN_FANOUT_MODULE_TYPES} above. DNS_ZONE_EXPLOIT joined for the same
      * domain-wide reasoning as DNS_POSTURE itself: a domain's nameservers aren't a per-host
      * concern either - see DnsZoneExploitModule's own javadoc for why its AXFR/open-resolver
-     * checks moved out of Tier 1's DNS_POSTURE into here.
+     * checks moved out of Tier 1's DNS_POSTURE into here. GITHUB_SECRET_SEARCH joined for the
+     * same domain-wide reasoning again: a GitHub code-search for this target's root domain
+     * isn't a property of any one subdomain, and (unlike the other two) also contends with a
+     * genuinely scarce GLOBAL rate limit shared across every target - see
+     * ScanJobRepository#claim's own GITHUB_SECRET_SEARCH advisory-lock branch - so fanning it
+     * out per-host would multiply pressure on that shared budget for zero additional signal.
      */
     private static final List<String> TIER2_TARGET_SCOPED_MODULE_TYPES =
-            List.of("BUCKET_BRUTE_FORCE", "DNS_ZONE_EXPLOIT");
+            List.of("BUCKET_BRUTE_FORCE", "DNS_ZONE_EXPLOIT", "GITHUB_SECRET_SEARCH");
 
     /**
      * Single source of truth for "which module types count as a deep scan" - lets other classes

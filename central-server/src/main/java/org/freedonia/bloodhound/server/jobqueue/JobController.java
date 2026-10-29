@@ -9,13 +9,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.freedonia.bloodhound.server.findings.FindingPayload;
+import org.freedonia.bloodhound.server.integrations.github.GithubSecretSearchIntegrationRepository;
 import org.freedonia.bloodhound.server.jobqueue.dto.ClaimJobsRequest;
 import org.freedonia.bloodhound.server.jobqueue.dto.ClaimedJobDto;
 import org.freedonia.bloodhound.server.jobqueue.dto.JobFailRequest;
 import org.freedonia.bloodhound.server.jobqueue.dto.JobResultRequest;
 import org.freedonia.bloodhound.server.jobqueue.dto.WorkerScopedRequest;
+import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -47,16 +50,19 @@ public class JobController {
     private final JobLifecycleService jobLifecycleService;
     private final TargetRepository targetRepository;
     private final ObjectMapper objectMapper;
+    private final GithubSecretSearchIntegrationRepository githubSecretSearchIntegrationRepository;
 
     public JobController(
             JobClaimService jobClaimService,
             JobLifecycleService jobLifecycleService,
             TargetRepository targetRepository,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            GithubSecretSearchIntegrationRepository githubSecretSearchIntegrationRepository) {
         this.jobClaimService = jobClaimService;
         this.jobLifecycleService = jobLifecycleService;
         this.targetRepository = targetRepository;
         this.objectMapper = objectMapper;
+        this.githubSecretSearchIntegrationRepository = githubSecretSearchIntegrationRepository;
     }
 
     @PostMapping("/claim")
@@ -85,6 +91,28 @@ public class JobController {
         Map<String, Object> resultMetadata = Map.of("findingCount", findings.size(), "rawMetadata", rawMetadata);
         jobLifecycleService.result(id, request.workerId(), writeJson(resultMetadata), findings, rawMetadata, request.logLines());
         return ResponseEntity.noContent().build();
+    }
+
+    public record GithubTokenResponse(String token) {}
+
+    /**
+     * The one place a worker calls back to central-server mid-job rather than at job-claim/
+     * result-submission time (see GithubSecretLeakModule) - the worker has no DB access at all,
+     * so it can't resolve the per-org token GithubSecretSearchIntegrationRepository manages
+     * itself. Lives under /api/v1/jobs so it inherits the existing hasRole('WORKER') matcher
+     * (SecurityConfig) with zero new auth plumbing. Resolves organization from targetId here
+     * rather than requiring the caller to already know it - ScanContext only carries targetId.
+     * 204 covers "no such target," "no integration configured," and "integration disabled"
+     * alike - the worker module treats all three the same way (skip, don't fail the job).
+     */
+    @GetMapping("/targets/{targetId}/github-secret-search-token")
+    public ResponseEntity<GithubTokenResponse> githubSecretSearchToken(@PathVariable UUID targetId) {
+        return targetRepository
+                .findById(targetId)
+                .map(Target::organizationId)
+                .flatMap(githubSecretSearchIntegrationRepository::findDecryptedTokenForOrganization)
+                .map(token -> ResponseEntity.ok(new GithubTokenResponse(token)))
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PostMapping("/{id}/fail")

@@ -59,6 +59,19 @@ public class ScanJobRepository {
     }
 
     /**
+     * Same shared-external-bottleneck shape as ZAP_ACTIVE_SCAN above, for a different resource:
+     * GitHub's code-search API is rate-limited to ~10 requests/minute per token, GLOBALLY
+     * (not per-target, not per-worker) - unlike every other module type here, which only ever
+     * contends with the TARGET's own infrastructure. Default 1 is deliberately conservative
+     * given the tiny real budget; raising it is a deployment-level decision, not a code change.
+     */
+    @Value("${bloodhound.github-secret-search.max-concurrent-scans:1}")
+    private int githubSecretSearchMaxConcurrentScans = 1;
+
+    /** Same keyspace-collision-avoidance reasoning as {@link #ZAP_CLAIM_LOCK_KEY} - just needs to be a different arbitrary value. */
+    private static final long GITHUB_SECRET_SEARCH_CLAIM_LOCK_KEY = 3_391_006_227_815_904L;
+
+    /**
      * How many jobs of this module type are PENDING, CLAIMED, or RUNNING right now - across
      * EVERY scan_run system-wide, not just one target's own. {@link ScanEtaEstimator} needs this
      * for a module type with a concurrency cap below the worker pool size (currently just
@@ -300,6 +313,13 @@ public class ScanJobRepository {
                           )
                       )
                       AND (
+                          sj.module_type != 'GITHUB_SECRET_SEARCH'
+                          OR (
+                              pg_try_advisory_xact_lock(?)
+                              AND (SELECT count(*) FROM scan_jobs WHERE module_type = 'GITHUB_SECRET_SEARCH' AND status IN ('CLAIMED', 'RUNNING')) < ?
+                          )
+                      )
+                      AND (
                           sj.module_type NOT IN (%s)
                           OR (t.target_type = 'OWN' AND t.authorization_status = 'AUTHORIZED')
                       )
@@ -318,6 +338,8 @@ public class ScanJobRepository {
                         .formatted(tier2Placeholders);
         Object[] args = java.util.stream.Stream.of(
                         java.util.stream.Stream.of(ZAP_CLAIM_LOCK_KEY, zapMaxConcurrentScans),
+                        java.util.stream.Stream.of(
+                                GITHUB_SECRET_SEARCH_CLAIM_LOCK_KEY, githubSecretSearchMaxConcurrentScans),
                         tier2ModuleTypes.stream(),
                         java.util.stream.Stream.of(capacity, workerId, leaseMinutes))
                 .flatMap(s -> s)

@@ -49,6 +49,9 @@ const AdminRulesCatalogPage = lazy(() =>
 const AdminSsoPage = lazy(() => import("./pages/AdminSsoPage").then((m) => ({ default: m.AdminSsoPage })));
 const AdminScimPage = lazy(() => import("./pages/AdminScimPage").then((m) => ({ default: m.AdminScimPage })));
 const AdminSlackPage = lazy(() => import("./pages/AdminSlackPage").then((m) => ({ default: m.AdminSlackPage })));
+const AdminGithubSecretScanPage = lazy(() =>
+  import("./pages/AdminGithubSecretScanPage").then((m) => ({ default: m.AdminGithubSecretScanPage })),
+);
 const AdminMcpPage = lazy(() => import("./pages/AdminMcpPage").then((m) => ({ default: m.AdminMcpPage })));
 const AdminAuditLogPage = lazy(() =>
   import("./pages/AdminAuditLogPage").then((m) => ({ default: m.AdminAuditLogPage })),
@@ -233,6 +236,14 @@ export default function App() {
             element={
               <RequireAdmin>
                 <AdminSlackPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/admin/github-secret-scan"
+            element={
+              <RequireAdmin>
+                <AdminGithubSecretScanPage />
               </RequireAdmin>
             }
           />

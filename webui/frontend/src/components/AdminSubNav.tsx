@@ -14,6 +14,7 @@ const ADMIN_LINKS: { to: string; label: string }[] = [
   { to: "/admin/sso", label: "SSO" },
   { to: "/admin/scim", label: "SCIM" },
   { to: "/admin/slack", label: "Slack" },
+  { to: "/admin/github-secret-scan", label: "GitHub Secret Scan" },
   { to: "/admin/mcp", label: "MCP" },
   { to: "/admin/audit-log", label: "Audit log" },
 ];
