@@ -18,13 +18,14 @@ import org.freedonia.bloodhound.server.jobqueue.dto.WorkerScopedRequest;
 import org.freedonia.bloodhound.server.target.Target;
 import org.freedonia.bloodhound.server.target.TargetRepository;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Worker-facing job queue endpoints - see SecurityConfig, these require ROLE_WORKER
@@ -51,18 +52,21 @@ public class JobController {
     private final TargetRepository targetRepository;
     private final ObjectMapper objectMapper;
     private final GithubSecretSearchIntegrationRepository githubSecretSearchIntegrationRepository;
+    private final ScanJobRepository scanJobRepository;
 
     public JobController(
             JobClaimService jobClaimService,
             JobLifecycleService jobLifecycleService,
             TargetRepository targetRepository,
             ObjectMapper objectMapper,
-            GithubSecretSearchIntegrationRepository githubSecretSearchIntegrationRepository) {
+            GithubSecretSearchIntegrationRepository githubSecretSearchIntegrationRepository,
+            ScanJobRepository scanJobRepository) {
         this.jobClaimService = jobClaimService;
         this.jobLifecycleService = jobLifecycleService;
         this.targetRepository = targetRepository;
         this.objectMapper = objectMapper;
         this.githubSecretSearchIntegrationRepository = githubSecretSearchIntegrationRepository;
+        this.scanJobRepository = scanJobRepository;
     }
 
     @PostMapping("/claim")
@@ -100,15 +104,25 @@ public class JobController {
      * result-submission time (see GithubSecretLeakModule) - the worker has no DB access at all,
      * so it can't resolve the per-org token GithubSecretSearchIntegrationRepository manages
      * itself. Lives under /api/v1/jobs so it inherits the existing hasRole('WORKER') matcher
-     * (SecurityConfig) with zero new auth plumbing. Resolves organization from targetId here
-     * rather than requiring the caller to already know it - ScanContext only carries targetId.
-     * 204 covers "no such target," "no integration configured," and "integration disabled"
-     * alike - the worker module treats all three the same way (skip, don't fail the job).
+     * (SecurityConfig).
+     *
+     * <p>Keyed by job, not target: a security review found the first version
+     * (GET /targets/{targetId}/github-secret-search-token) handed ANY org's decrypted token to
+     * anyone holding a worker credential, for any target id - and workers see target ids from
+     * every org through /claim. Now the caller must hold this exact job's lease (claimed_by +
+     * CLAIMED/RUNNING, same check JobLifecycleService#result uses) and the job must actually be a
+     * GITHUB_SECRET_SEARCH job; anything else is a 404, indistinguishable from an unknown job.
+     * 204 still covers "no integration configured" and "integration disabled".
      */
-    @GetMapping("/targets/{targetId}/github-secret-search-token")
-    public ResponseEntity<GithubTokenResponse> githubSecretSearchToken(@PathVariable UUID targetId) {
+    @PostMapping("/{id}/github-secret-search-token")
+    public ResponseEntity<GithubTokenResponse> githubSecretSearchToken(
+            @PathVariable UUID id, @Valid @RequestBody WorkerScopedRequest request) {
+        ScanJob job = scanJobRepository
+                .findByIdOwnedBy(id, request.workerId())
+                .filter(j -> "GITHUB_SECRET_SEARCH".equals(j.moduleType()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         return targetRepository
-                .findById(targetId)
+                .findById(job.targetId())
                 .map(Target::organizationId)
                 .flatMap(githubSecretSearchIntegrationRepository::findDecryptedTokenForOrganization)
                 .map(token -> ResponseEntity.ok(new GithubTokenResponse(token)))

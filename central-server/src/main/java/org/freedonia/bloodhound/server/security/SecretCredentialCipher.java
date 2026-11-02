@@ -49,12 +49,25 @@ public class SecretCredentialCipher {
     }
 
     public byte[] encrypt(String plaintext) {
+        return encrypt(plaintext, null);
+    }
+
+    /**
+     * {@code associatedData} (e.g. the owning row's table + organization id) is authenticated but
+     * not stored: decrypting with anything else fails. A review found ciphertexts weren't bound to
+     * their row at all, so anyone able to write the table could move one org's encrypted token
+     * onto another org's row and have the app decrypt and use it there.
+     */
+    public byte[] encrypt(String plaintext, String associatedData) {
         requireConfigured();
         try {
             byte[] nonce = new byte[NONCE_BYTES];
             random.nextBytes(nonce);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, nonce));
+            if (associatedData != null) {
+                cipher.updateAAD(associatedData.getBytes(StandardCharsets.UTF_8));
+            }
             byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
             byte[] out = new byte[nonce.length + ciphertext.length];
             System.arraycopy(nonce, 0, out, 0, nonce.length);
@@ -66,12 +79,19 @@ public class SecretCredentialCipher {
     }
 
     public String decrypt(byte[] stored) {
+        return decrypt(stored, null);
+    }
+
+    public String decrypt(byte[] stored, String associatedData) {
         requireConfigured();
         try {
             byte[] nonce = Arrays.copyOfRange(stored, 0, NONCE_BYTES);
             byte[] ciphertext = Arrays.copyOfRange(stored, NONCE_BYTES, stored.length);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, nonce));
+            if (associatedData != null) {
+                cipher.updateAAD(associatedData.getBytes(StandardCharsets.UTF_8));
+            }
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("failed to decrypt credential - wrong key, or corrupted data", e);

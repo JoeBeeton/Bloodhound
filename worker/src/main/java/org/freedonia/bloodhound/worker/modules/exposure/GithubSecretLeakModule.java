@@ -55,7 +55,7 @@ public class GithubSecretLeakModule implements ScanModule {
     @Override
     public ModuleResult execute(ScanContext context) throws ScanModuleException {
         try {
-            GithubSecretLeakFetcher.FetchResult result = fetcher.fetch(context.targetId(), context.hostname());
+            GithubSecretLeakFetcher.FetchResult result = fetcher.fetch(context.jobId(), context.hostname());
             if (!result.enabled()) {
                 log.debug(
                         "github secret search disabled for {} - no GitHub token configured for its org", context.hostname());

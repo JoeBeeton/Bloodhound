@@ -177,6 +177,17 @@ public class ScanJobRepository {
                 .findFirst();
     }
 
+    /** Same lease check as {@link #findByIdOwnedByForUpdate}, without the row lock - for read-only callers that don't go on to change the job. */
+    public Optional<ScanJob> findByIdOwnedBy(UUID id, String workerId) {
+        return jdbc.query(
+                        "SELECT * FROM scan_jobs WHERE id = ? AND claimed_by = ? AND status IN ('CLAIMED', 'RUNNING')",
+                        ROW_MAPPER,
+                        id,
+                        workerId)
+                .stream()
+                .findFirst();
+    }
+
     public List<ScanJob> findByScanRunId(UUID scanRunId) {
         return jdbc.query("SELECT * FROM scan_jobs WHERE scan_run_id = ? ORDER BY created_at", ROW_MAPPER, scanRunId);
     }

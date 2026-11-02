@@ -29,6 +29,17 @@ class SecretCredentialCipherTest {
     }
 
     @Test
+    void boundToAssociatedData_decryptsOnlyWithTheSameAssociatedData() {
+        byte[] stored = cipher.encrypt("ghp_secret", "github_secret_search_integrations:org-a");
+
+        assertThat(cipher.decrypt(stored, "github_secret_search_integrations:org-a")).isEqualTo("ghp_secret");
+        // Moved onto another org's row (or read without binding) - authentication fails.
+        assertThatThrownBy(() -> cipher.decrypt(stored, "github_secret_search_integrations:org-b"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> cipher.decrypt(stored)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void encrypt_neverProducesTheCiphertextVerbatim() {
         String original = "a-live-looking-secret-value";
 

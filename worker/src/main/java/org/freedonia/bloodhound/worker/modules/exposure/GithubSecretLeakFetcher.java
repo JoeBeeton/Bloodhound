@@ -30,11 +30,12 @@ import org.springframework.web.client.RestClient;
  * {@code HibpFetcher}'s own javadoc gives for haveibeenpwned.com.
  *
  * <p>Step 1: ask central-server (the only thing with DB access, and the only place the
- * encrypted-at-rest token is ever decrypted - see {@code JobController}) for this target's
- * org's GitHub token. {@code enabled=false} means either no token is configured, the
- * integration is disabled, or the target itself is unknown - the module treats all three
- * identically (skip, don't fail the job), same "disabled, not a bug" convention as an unset
- * {@code HIBP_API_KEY}.
+ * encrypted-at-rest token is ever decrypted - see {@code JobController}) for the GitHub token of
+ * the org that owns this job, proving which job it's for with its jobId + workerId (central-server
+ * only hands the token out while this worker holds that GITHUB_SECRET_SEARCH job's lease).
+ * {@code enabled=false} means either no token is configured, the integration is disabled, or
+ * central-server refused the request - the module treats all of these identically (skip, don't
+ * fail the job), same "disabled, not a bug" convention as an unset {@code HIBP_API_KEY}.
  *
  * <p>Step 2 (only if enabled): GitHub code-search for the root domain as a literal string,
  * then fetch each of the first {@link #MAX_CANDIDATES} hits' own file content via the Contents
@@ -54,20 +55,24 @@ public class GithubSecretLeakFetcher {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
     private final RestClient centralServerClient;
+    private final String workerId;
     private final HttpClient githubClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 
-    public GithubSecretLeakFetcher(RestClient centralServerClient) {
+    public GithubSecretLeakFetcher(RestClient centralServerClient, String workerId) {
         this.centralServerClient = centralServerClient;
+        this.workerId = workerId;
     }
 
     record TokenResponse(String token) {}
+
+    record TokenRequest(String workerId) {}
 
     public record CandidateFile(String repoFullName, String path, String htmlUrl, String body) {}
 
     public record FetchResult(boolean enabled, List<CandidateFile> candidateFiles) {}
 
-    public FetchResult fetch(UUID targetId, String rootDomain) throws Exception {
-        String token = fetchToken(targetId);
+    public FetchResult fetch(UUID jobId, String rootDomain) throws Exception {
+        String token = fetchToken(jobId);
         if (token == null) {
             return new FetchResult(false, List.of());
         }
@@ -83,17 +88,21 @@ public class GithubSecretLeakFetcher {
         return new FetchResult(true, files);
     }
 
-    /** 204 (no token configured/disabled/unknown target - central-server treats all three alike) comes back as a null body, not an error status, so no exception handling is needed for that case specifically - only genuine failures (central-server unreachable, etc.) land in the catch below. */
-    private String fetchToken(UUID targetId) {
+    /** 204 (no token configured/disabled) comes back as a null body; a 404 (this worker doesn't hold the job's lease, e.g. it expired) lands in the catch below - both mean "skip". */
+    private String fetchToken(UUID jobId) {
+        if (jobId == null) {
+            return null;
+        }
         try {
             TokenResponse response = centralServerClient
-                    .get()
-                    .uri("/api/v1/jobs/targets/{targetId}/github-secret-search-token", targetId)
+                    .post()
+                    .uri("/api/v1/jobs/{jobId}/github-secret-search-token", jobId)
+                    .body(new TokenRequest(workerId))
                     .retrieve()
                     .body(TokenResponse.class);
             return response == null ? null : response.token();
         } catch (Exception e) {
-            log.warn("failed to fetch github-secret-search token for target {}: {}", targetId, e.getMessage());
+            log.warn("failed to fetch github-secret-search token for job {}: {}", jobId, e.getMessage());
             return null;
         }
     }

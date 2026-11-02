@@ -16,11 +16,12 @@ class GithubSecretLeakModuleTest {
     private final GithubSecretLeakFetcher fetcher = mock(GithubSecretLeakFetcher.class);
     private final GithubSecretLeakModule module = new GithubSecretLeakModule(fetcher);
     private final UUID targetId = UUID.randomUUID();
-    private final ScanContext context = new ScanContext(targetId, "example.com", List.of(), Map.of());
+    private final UUID jobId = UUID.randomUUID();
+    private final ScanContext context = new ScanContext(targetId, "example.com", List.of(), Map.of(), jobId);
 
     @Test
     void noTokenConfigured_disabledAndNoFindings() throws Exception {
-        when(fetcher.fetch(targetId, "example.com"))
+        when(fetcher.fetch(jobId, "example.com"))
                 .thenReturn(new GithubSecretLeakFetcher.FetchResult(false, List.of()));
 
         ModuleResult result = module.execute(context);
@@ -33,7 +34,7 @@ class GithubSecretLeakModuleTest {
     void enabledWithNoSecretShapedCandidates_emptyFindings_butEnabledTrue() throws Exception {
         GithubSecretLeakFetcher.CandidateFile clean =
                 new GithubSecretLeakFetcher.CandidateFile("acme/webapp", "src/index.js", "https://github.com/acme/webapp/blob/main/src/index.js", "function add(a,b){return a+b;}");
-        when(fetcher.fetch(targetId, "example.com"))
+        when(fetcher.fetch(jobId, "example.com"))
                 .thenReturn(new GithubSecretLeakFetcher.FetchResult(true, List.of(clean)));
 
         ModuleResult result = module.execute(context);
@@ -48,7 +49,7 @@ class GithubSecretLeakModuleTest {
         GithubSecretLeakFetcher.CandidateFile leaky = new GithubSecretLeakFetcher.CandidateFile(
                 "acme/webapp", "config/secrets.js", "https://github.com/acme/webapp/blob/main/config/secrets.js",
                 "const key = '" + fakeAwsKey + "';");
-        when(fetcher.fetch(targetId, "example.com"))
+        when(fetcher.fetch(jobId, "example.com"))
                 .thenReturn(new GithubSecretLeakFetcher.FetchResult(true, List.of(leaky)));
 
         ModuleResult result = module.execute(context);

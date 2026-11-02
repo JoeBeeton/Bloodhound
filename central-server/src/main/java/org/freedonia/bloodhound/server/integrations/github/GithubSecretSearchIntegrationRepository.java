@@ -46,11 +46,36 @@ public class GithubSecretSearchIntegrationRepository {
     public Optional<String> findDecryptedTokenForOrganization(UUID organizationId) {
         return findByOrganization(organizationId)
                 .filter(GithubSecretSearchIntegration::enabled)
-                .map(i -> cipher.decrypt(i.encryptedToken()));
+                .map(i -> decryptBoundToOrganization(organizationId, i.encryptedToken()));
+    }
+
+    /** Authenticated with the owning org as GCM associated data - see SecretCredentialCipher#encrypt(String, String). */
+    private static String associatedData(UUID organizationId) {
+        return "github_secret_search_integrations:" + organizationId;
+    }
+
+    /**
+     * Rows written before tokens were bound to their org (no associated data) still decrypt the
+     * legacy way once, and are immediately re-encrypted bound to this org - so every row is
+     * upgraded the first time it's used, with no separate migration step that would need the key.
+     */
+    private String decryptBoundToOrganization(UUID organizationId, byte[] stored) {
+        try {
+            return cipher.decrypt(stored, associatedData(organizationId));
+        } catch (IllegalStateException boundDecryptFailed) {
+            String plaintext = cipher.decrypt(stored);
+            jdbc.update(
+                    "UPDATE github_secret_search_integrations SET encrypted_token = ? "
+                            + "WHERE organization_id = ? AND encrypted_token = ?",
+                    cipher.encrypt(plaintext, associatedData(organizationId)),
+                    organizationId,
+                    stored);
+            return plaintext;
+        }
     }
 
     public GithubSecretSearchIntegration upsert(UUID organizationId, String plaintextToken, boolean enabled) {
-        byte[] encrypted = cipher.encrypt(plaintextToken);
+        byte[] encrypted = cipher.encrypt(plaintextToken, associatedData(organizationId));
         jdbc.update(
                 "INSERT INTO github_secret_search_integrations "
                         + "(id, organization_id, encrypted_token, enabled, updated_at) "
