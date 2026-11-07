@@ -105,7 +105,7 @@ class TyposquatDecisionLogicTest {
     }
 
     @Test
-    void mxConfigured_addsEscalationFindingAlongsideBaseOne() {
+    void mxConfigured_noCorroboration_addsHighEscalationAlongsideBaseOne() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
                 "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, null, null, true)));
 
@@ -115,9 +115,111 @@ class TyposquatDecisionLogicTest {
                 .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_MX_CONFIGURED"))
                 .findFirst()
                 .orElseThrow();
-        assertThat(escalation.severity()).isEqualTo(Severity.CRITICAL);
+        assertThat(escalation.severity()).isEqualTo(Severity.HIGH);
         assertThat(escalation.category()).isEqualTo(Category.BRAND);
         assertThat(escalation.affectedAsset()).isEqualTo("exampl.com");
+    }
+
+    @Test
+    void mxConfigured_recentlyRegistered_isCritical() {
+        Instant now = Instant.parse("2026-11-01T00:00:00Z");
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(
+                List.of(new TyposquatChecker.CheckedCandidate(
+                        "exampl.com", "OMISSION", List.of("203.0.113.5"), Instant.parse("2026-10-01T00:00:00Z"),
+                        false, null, null, true)),
+                now);
+        assertThat(mxFinding(findings).severity()).isEqualTo(Severity.CRITICAL);
+    }
+
+    @Test
+    void mxConfigured_registeredYearsAgo_isHigh() {
+        Instant now = Instant.parse("2026-11-01T00:00:00Z");
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(
+                List.of(new TyposquatChecker.CheckedCandidate(
+                        "exampl.com", "OMISSION", List.of("203.0.113.5"), Instant.parse("2009-03-01T00:00:00Z"),
+                        false, null, null, true)),
+                now);
+        assertThat(mxFinding(findings).severity()).isEqualTo(Severity.HIGH);
+    }
+
+    @Test
+    void mxConfigured_visualClone_isCritical() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1}, 85, true)));
+        assertThat(mxFinding(findings).severity()).isEqualTo(Severity.CRITICAL);
+    }
+
+    @Test
+    void brandControlledCandidate_producesNoFindingsAtAll() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
+                "example.org", "TLD_SWAP", List.of("203.0.113.5"), null, false, new byte[] {1}, 99, true, true)));
+        assertThat(findings).isEmpty();
+    }
+
+    @Test
+    void isBrandControlled_mxIntoTheBrandsOwnMailServers() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of("mx1.example.com.", "mx2.example.com."),
+                        List.of("a1.akam.net."),
+                        List.of("MX1.EXAMPLE.COM."),
+                        List.of("ns-1.awsdns-01.org.")))
+                .isTrue();
+    }
+
+    @Test
+    void isBrandControlled_mxUnderTheBrandsDomainEvenIfNotOneOfItsCurrentMx() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com", List.of(), List.of(), List.of("inbound.example.com"), List.of()))
+                .isTrue();
+    }
+
+    @Test
+    void isBrandControlled_identicalDedicatedNameServers() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of(),
+                        List.of("a1-196.akam.net.", "a13-65.akam.net."),
+                        List.of(),
+                        List.of("a13-65.akam.net", "a1-196.akam.net")))
+                .isTrue();
+    }
+
+    @Test
+    void isBrandControlled_identicalButMassSharedNameServers_doesNotCount() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of(),
+                        List.of("dns1.registrar-servers.com.", "dns2.registrar-servers.com."),
+                        List.of(),
+                        List.of("dns1.registrar-servers.com.", "dns2.registrar-servers.com.")))
+                .isFalse();
+    }
+
+    @Test
+    void isBrandControlled_unrelatedMailAndNameServers() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of("mx1.example.com"),
+                        List.of("a1.akam.net"),
+                        List.of("mx.hostedemail.com"),
+                        List.of("ns1.mailbank.com")))
+                .isFalse();
+    }
+
+    @Test
+    void isBrandControlled_lookalikeOfTheBrandDomainItselfIsNotUnderIt() {
+        // "evilexample.com" ends with "example.com" as a string but isn't a subdomain of it.
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com", List.of(), List.of(), List.of("mx.evilexample.com"), List.of()))
+                .isFalse();
+    }
+
+    private static RawFinding mxFinding(List<RawFinding> findings) {
+        return findings.stream()
+                .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_MX_CONFIGURED"))
+                .findFirst()
+                .orElseThrow();
     }
 
     @Test

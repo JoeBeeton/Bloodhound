@@ -184,7 +184,7 @@ class TyposquatCheckerTest {
         var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
         when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(dnsResolver.resolveMxHosts(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("mail.jjaa.com")));
+        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME))).thenReturn(Map.of("jjaa.com", List.of("mail.jjaa.com")));
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
@@ -192,11 +192,24 @@ class TyposquatCheckerTest {
     }
 
     @Test
+    void genuineCandidateMailingIntoTheBrandsOwnMailServers_brandControlled() {
+        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
+        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME)))
+                .thenReturn(Map.of("jjaa.com", List.of("mx1." + ROOT_HOSTNAME), ROOT_HOSTNAME, List.of("mx1." + ROOT_HOSTNAME)));
+
+        List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
+
+        assertThat(result.get(0).brandControlled()).isTrue();
+    }
+
+    @Test
     void genuineCandidateWithNoMxRecords_mxConfiguredFalse() {
         var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
         when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(dnsResolver.resolveMxHosts(List.of("jjaa.com"))).thenReturn(Map.of());
+        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME))).thenReturn(Map.of());
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 

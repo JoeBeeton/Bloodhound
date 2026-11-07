@@ -3,7 +3,10 @@ spring:
     name: worker
 
 server:
-  port: 8081
+  # Configurable so 3 worker instances can share one Mullvad VPN network namespace
+  # (network_mode: service:gluetun in docker-compose.yml) without each binding the
+  # identical port - see docker-compose.yml's worker-1/2/3 services.
+  port: ${SERVER_PORT:8081}
 
 bloodhound:
   central-server-url: ${CENTRAL_SERVER_URL:http://localhost:8080}

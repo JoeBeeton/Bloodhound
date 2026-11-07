@@ -47,7 +47,21 @@ public class TyposquatChecker {
             boolean wildcardArtifact,
             byte[] screenshotPng,
             Integer visualSimilarityPercent,
-            boolean mxConfigured) {}
+            boolean mxConfigured,
+            boolean brandControlled) {
+        public CheckedCandidate(
+                String domain,
+                String permutationType,
+                List<String> resolvedIps,
+                Instant registrationDate,
+                boolean wildcardArtifact,
+                byte[] screenshotPng,
+                Integer visualSimilarityPercent,
+                boolean mxConfigured) {
+            this(domain, permutationType, resolvedIps, registrationDate, wildcardArtifact, screenshotPng,
+                    visualSimilarityPercent, mxConfigured, false);
+        }
+    }
 
     /** realSiteScreenshotPng is null whenever no candidate ended up genuine enough to need the comparison baseline at all. */
     public record CheckResult(byte[] realSiteScreenshotPng, List<CheckedCandidate> candidates) {}
@@ -127,8 +141,20 @@ public class TyposquatChecker {
                     return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(domain));
                 })
                 .toList();
+        // The real target's own MX/NS, resolved in the same batches as the candidates', so a
+        // lookalike the brand itself operates (a defensive registration mailing into the brand's
+        // own servers, or delegated to the brand's own nameservers) can be told apart from a
+        // squatter's - see TyposquatDecisionLogic#isBrandControlled.
+        List<String> mxAndNsLookups = new ArrayList<>(genuineDomains);
+        if (!genuineDomains.isEmpty()) {
+            mxAndNsLookups.add(rootHostname);
+        }
         Map<String, List<String>> mxHosts =
-                genuineDomains.isEmpty() ? Map.of() : dnsResolver.resolveMxHosts(genuineDomains);
+                genuineDomains.isEmpty() ? Map.of() : dnsResolver.resolveMxHosts(mxAndNsLookups);
+        Map<String, List<String>> nameServers =
+                genuineDomains.isEmpty() ? Map.of() : dnsResolver.resolveNameServers(mxAndNsLookups);
+        List<String> brandMx = mxHosts.getOrDefault(rootHostname, List.of());
+        List<String> brandNs = nameServers.getOrDefault(rootHostname, List.of());
 
         List<CheckedCandidate> result = new ArrayList<>();
         for (PermutationGenerator.Candidate candidate : candidates) {
@@ -137,6 +163,13 @@ public class TyposquatChecker {
             boolean genuine = !ips.isEmpty() && !wildcardArtifact;
             Instant registrationDate = genuine ? tryWhois(candidate.domain()) : null;
             boolean mxConfigured = mxHosts.containsKey(candidate.domain());
+            boolean brandControlled = genuine
+                    && TyposquatDecisionLogic.isBrandControlled(
+                            rootHostname,
+                            brandMx,
+                            brandNs,
+                            mxHosts.getOrDefault(candidate.domain(), List.of()),
+                            nameServers.getOrDefault(candidate.domain(), List.of()));
 
             byte[] candidateScreenshot = null;
             Integer similarity = null;
@@ -158,7 +191,8 @@ public class TyposquatChecker {
                     wildcardArtifact,
                     candidateScreenshot,
                     similarity,
-                    mxConfigured));
+                    mxConfigured,
+                    brandControlled));
         }
         return new CheckResult(realScreenshot, result);
     }

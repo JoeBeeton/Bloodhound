@@ -16,6 +16,7 @@ import org.xbill.DNS.AAAARecord;
 import org.xbill.DNS.CNAMERecord;
 import org.xbill.DNS.Lookup;
 import org.xbill.DNS.MXRecord;
+import org.xbill.DNS.Name;
 import org.xbill.DNS.NSRecord;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Resolver;
@@ -225,7 +226,10 @@ public class SubdomainDnsResolver {
             }
             List<String> targets = new ArrayList<>();
             for (Record record : records) {
-                if (record instanceof MXRecord mx) {
+                // A null MX ("MX 0 .", RFC 7505) is a domain explicitly declaring it accepts NO
+                // mail - common on parked/for-sale domains. Counting its "." target as a mail
+                // host made every such domain look mail-enabled (e.g. typosquat MX findings).
+                if (record instanceof MXRecord mx && !mx.getTarget().equals(Name.root)) {
                     targets.add(mx.getTarget().toString(true));
                 }
             }
