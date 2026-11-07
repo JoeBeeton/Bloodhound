@@ -11,12 +11,15 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
  * CISA's Known Exploited Vulnerabilities catalog: a free, no-auth, CDN-served
- * static JSON file (~1600 entries, refreshed by CISA as new confirmed
- * active-exploitation CVEs are added). Fetch and parse are split the same way
+ * static JSON file (~1800 entries, refreshed by CISA as new confirmed
+ * active-exploitation CVEs are added), with CISA's GitHub copy as a fallback
+ * source. Fetch and parse are split the same way
  * every other module in this project splits network I/O from pure
  * interpretation, so parse() is unit-testable against a canned fixture with
  * zero network calls.
@@ -24,24 +27,76 @@ import org.springframework.stereotype.Component;
 @Component
 public class KevCatalogFetcher {
 
-    private static final String URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+    private static final Logger log = LoggerFactory.getLogger(KevCatalogFetcher.class);
+
+    static final String CISA_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+
+    /**
+     * CISA's own GitHub repository for the same catalog. cisa.gov answers 403 to the prod host's
+     * Hetzner address (even for its homepage), while this copy is reachable from it. Checked on
+     * 2026-11-07: byte-identical to the cisa.gov file (same catalogVersion, entry count and hash).
+     */
+    static final String GITHUB_URL =
+            "https://raw.githubusercontent.com/cisagov/kev-data/main/known_exploited_vulnerabilities.json";
+
+    static final List<String> SOURCES = List.of(CISA_URL, GITHUB_URL);
+
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
-    private final HttpClient client =
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /** Fetches one URL and returns the body of a 200 response, or throws. */
+    interface Source {
+        String get(String url) throws IOException, InterruptedException;
+    }
 
-    public String fetchRaw() throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(URL))
-                .timeout(TIMEOUT)
-                .header("Accept", "application/json")
-                .GET()
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Source source;
+
+    public KevCatalogFetcher() {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(8))
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            throw new IOException("CISA KEV feed returned HTTP " + response.statusCode());
+        this.source = url -> {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(TIMEOUT)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new IOException("HTTP " + response.statusCode());
+            }
+            return response.body();
+        };
+    }
+
+    KevCatalogFetcher(Source source) {
+        this.source = source;
+    }
+
+    /**
+     * Tries each of {@link #SOURCES} in order and returns the first body that parses into at least
+     * one catalog entry, so a block page served with a 200 also falls through to the next source.
+     * Throws only when every source fails, naming each failure.
+     */
+    public String fetchRaw() throws IOException, InterruptedException {
+        List<String> failures = new ArrayList<>();
+        for (String url : SOURCES) {
+            String host = URI.create(url).getHost();
+            try {
+                String body = source.get(url);
+                if (!parse(body).isEmpty()) {
+                    if (!failures.isEmpty()) {
+                        log.info("KEV catalog fetched from fallback {} after: {}", host, String.join("; ", failures));
+                    }
+                    return body;
+                }
+                failures.add(host + ": no usable entries");
+            } catch (IOException e) {
+                failures.add(host + ": " + e.getMessage());
+            }
         }
-        return response.body();
+        throw new IOException("every KEV catalog source failed - " + String.join("; ", failures));
     }
 
     /** Pure - no network calls. Malformed individual entries are skipped rather than failing the whole parse. */

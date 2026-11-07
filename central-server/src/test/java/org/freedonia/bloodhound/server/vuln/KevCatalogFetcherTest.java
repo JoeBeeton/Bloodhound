@@ -1,8 +1,11 @@
 package org.freedonia.bloodhound.server.vuln;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -73,5 +76,47 @@ class KevCatalogFetcherTest {
     @Test
     void emptyVulnerabilitiesArray_producesEmptyList() {
         assertThat(fetcher.parse("{\"vulnerabilities\": []}")).isEmpty();
+    }
+
+    private static final String ONE_ENTRY = "{\"vulnerabilities\": [{\"cveID\": \"CVE-2024-0001\"}]}";
+
+    @Test
+    void fetchRaw_cisaAnswers_githubNotRequested() throws Exception {
+        List<String> requested = new ArrayList<>();
+        KevCatalogFetcher f = new KevCatalogFetcher(url -> {
+            requested.add(url);
+            return ONE_ENTRY;
+        });
+        assertThat(f.fetchRaw()).isEqualTo(ONE_ENTRY);
+        assertThat(requested).containsExactly(KevCatalogFetcher.CISA_URL);
+    }
+
+    @Test
+    void fetchRaw_cisaForbidden_fallsBackToGithub() throws Exception {
+        KevCatalogFetcher f = new KevCatalogFetcher(url -> {
+            if (url.equals(KevCatalogFetcher.CISA_URL)) {
+                throw new IOException("HTTP 403");
+            }
+            return ONE_ENTRY;
+        });
+        assertThat(f.fetchRaw()).isEqualTo(ONE_ENTRY);
+    }
+
+    @Test
+    void fetchRaw_cisaServesABlockPageWith200_fallsBackToGithub() throws Exception {
+        KevCatalogFetcher f = new KevCatalogFetcher(
+                url -> url.equals(KevCatalogFetcher.CISA_URL) ? "<html>Access Denied</html>" : ONE_ENTRY);
+        assertThat(f.fetchRaw()).isEqualTo(ONE_ENTRY);
+    }
+
+    @Test
+    void fetchRaw_everySourceFails_throwsNamingEach() {
+        KevCatalogFetcher f = new KevCatalogFetcher(url -> {
+            throw new IOException("HTTP 403");
+        });
+        assertThatThrownBy(f::fetchRaw)
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("www.cisa.gov: HTTP 403")
+                .hasMessageContaining("raw.githubusercontent.com: HTTP 403");
     }
 }
