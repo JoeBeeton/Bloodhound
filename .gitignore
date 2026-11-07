@@ -22,6 +22,10 @@ npm-debug.log*
 *.tsbuildinfo
 
 # Env / secrets
+# Local database dumps - full copies of every org's data (password hashes, encrypted integration
+# tokens, findings), never to be committed.
+backups/
+*.sql.gz
 .env
 .env.*
 !.env.example
@@ -32,3 +36,6 @@ npm-debug.log*
 
 # Docker
 *.pid
+
+# Leftover root-owned build dirs moved aside after a container build wrote them as root
+build.stale-root-owned-*/
