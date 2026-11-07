@@ -39,7 +39,20 @@ public final class LegacyTlsProbeSupport {
 
     static final String DISABLED_ALGORITHMS_PROPERTY = "jdk.tls.disabledAlgorithms";
     static final String CLIENT_PROTOCOLS_PROPERTY = "jdk.tls.client.protocols";
-    private static final Set<String> LEGACY_PROTOCOLS = Set.of("TLSv1", "TLSv1.1", "SSLv3");
+    /**
+     * The legacy protocols, plus what JDK 24 newly disabled (static-RSA key exchange and SHA-1
+     * TLS 1.2 handshake signatures) - keeping JDK 21 behaviour, where a server offering only those
+     * could still be handshaken with and scanned, and TLS_NO_FORWARD_SECRECY could still observe
+     * a server choosing static RSA.
+     */
+    private static final Set<String> LEGACY_PROTOCOLS = Set.of(
+            "TLSv1",
+            "TLSv1.1",
+            "SSLv3",
+            "TLS_RSA_*",
+            "rsa_pkcs1_sha1 usage HandshakeSignature",
+            "ecdsa_sha1 usage HandshakeSignature",
+            "dsa_sha1 usage HandshakeSignature");
 
     private LegacyTlsProbeSupport() {}
 

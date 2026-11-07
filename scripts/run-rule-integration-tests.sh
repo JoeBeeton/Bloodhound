@@ -58,7 +58,7 @@ mount --bind "$NSDIR/hosts" /etc/hosts
 mount --bind "$NSDIR/resolv.conf" /etc/resolv.conf
 mount --bind "$NSDIR/nsswitch.conf" /etc/nsswitch.conf
 
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk}"
 export PATH="$JAVA_HOME/bin:$PATH"
 # unshare --map-root-user is uid 0, so Java's user.home is /root and the wrapper
 # cannot create /root/.gradle. Keep the real user's Gradle home.

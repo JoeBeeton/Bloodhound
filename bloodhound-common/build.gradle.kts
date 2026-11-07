@@ -3,11 +3,11 @@
 // for both central-server and worker without pulling in a Boot runtime.
 
 dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    // MIT-licensed, matches the version Spring Boot 3.4.1's dependency-management BOM
-    // resolves for central-server/worker's tests (via spring-boot-starter-test) - kept in
-    // step so mocking behavior doesn't drift between modules. Needed here (unlike
-    // SafeAddressValidatorTest's plain-JUnit style) to mock java.net.http.HttpClient/
-    // HttpResponse for SafeHttpGetTest without making real network calls.
-    testImplementation("org.mockito:mockito-core:5.14.2")
+    // Versions kept in step with what central-server's Spring Boot BOM resolves, so test
+    // behavior doesn't drift between modules. Gradle 9 no longer supplies the launcher itself.
+    testImplementation("org.junit.jupiter:junit-jupiter:6.0.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
+    // Needed here (unlike SafeAddressValidatorTest's plain-JUnit style) to mock
+    // java.net.http.HttpClient/HttpResponse for SafeHttpGetTest without real network calls.
+    testImplementation("org.mockito:mockito-core:5.23.0")
 }

@@ -1,7 +1,11 @@
 # Build context is the repo root (multi-module Gradle build). settings.gradle.kts
 # includes all four modules, so Gradle needs every project directory present
 # to evaluate the build even though we only assemble worker's jar here.
-FROM gradle:8.12-jdk21 AS build
+# Same pinned Temurin release as central-server's Dockerfile - see there.
+ARG JDK_IMAGE=eclipse-temurin:25.0.5_8-jdk-noble
+ARG JRE_IMAGE=eclipse-temurin:25.0.5_8-jre-noble
+
+FROM ${JDK_IMAGE} AS build
 WORKDIR /project
 COPY settings.gradle.kts build.gradle.kts ./
 COPY gradle ./gradle
@@ -20,9 +24,10 @@ RUN ./gradlew :worker:bootJar --no-daemon -x test
 # added build complexity for marginal gain over crt.sh + subfinder, so it's
 # left out of Phase 1 (documented deviation from the milestone brief, which
 # left amass as a judgment call).
-FROM ghcr.io/graalvm/jdk-community:21 AS subfinder
+FROM ${JRE_IMAGE} AS subfinder
 WORKDIR /tmp/subfinder
-RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+RUN apt-get update && apt-get install -y --no-install-recommends unzip curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 # Checksum-verified, not just version-pinned - a security review noted this was fetched via curl
 # with no signature/checksum check at all, unlike zgrab2 below (go install gets module-proxy
 # checksum verification for free). ProjectDiscovery publishes a sha256 checksums file alongside
@@ -43,9 +48,10 @@ RUN curl -fsSL -O \
 # hostnames a company's own frontend code references that never got a public CT-logged cert and
 # aren't a guessable wordlist entry - a different discovery angle than either existing source
 # structurally can cover. Version pinned; bump deliberately, don't float latest.
-FROM ghcr.io/graalvm/jdk-community:21 AS katana
+FROM ${JRE_IMAGE} AS katana
 WORKDIR /tmp/katana
-RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+RUN apt-get update && apt-get install -y --no-install-recommends unzip curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 ARG KATANA_VERSION=1.7.0
 RUN curl -fsSL -O \
       "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VERSION}/katana_${KATANA_VERSION}_linux_amd64.zip" \
@@ -59,9 +65,10 @@ RUN curl -fsSL -O \
 # above. modules/portscan's Tier 2 full-port-range discovery tool - see
 # NaabuFetcher/DeepPortScanModule (Tier 1's light scan needed no external
 # binary at all - it's a plain java.net.Socket connect sweep).
-FROM ghcr.io/graalvm/jdk-community:21 AS naabu
+FROM ${JRE_IMAGE} AS naabu
 WORKDIR /tmp/naabu
-RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+RUN apt-get update && apt-get install -y --no-install-recommends unzip curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 # Checksum-verified - same reasoning as subfinder above. naabu's checksums file (unlike
 # subfinder's/nuclei's) doesn't embed the version in its filename - confirmed against the actual
 # release assets, not guessed.
@@ -94,9 +101,10 @@ RUN go install "github.com/zmap/zgrab2/cmd/zgrab2@${ZGRAB2_VERSION}"
 # fetched/updated at scan time - reproducible builds, and no runtime
 # dependency on GitHub being reachable mid-scan (NucleiFetcher passes
 # -disable-update-check and points -t at the exact directory baked in here).
-FROM ghcr.io/graalvm/jdk-community:21 AS nuclei
+FROM ${JRE_IMAGE} AS nuclei
 WORKDIR /tmp/nuclei
-RUN microdnf install -y unzip curl ca-certificates && microdnf clean all
+RUN apt-get update && apt-get install -y --no-install-recommends unzip curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 # Checksum-verified - same reasoning as subfinder above.
 ARG NUCLEI_VERSION=3.11.1
 RUN curl -fsSL -O \
@@ -123,10 +131,12 @@ RUN curl -fsSL -O \
 RUN ./nuclei -update-templates -ud /tmp/nuclei-templates \
     && chmod -R a+rX /tmp/nuclei-templates
 
-FROM ghcr.io/graalvm/jdk-community:21
+FROM ${JRE_IMAGE}
 WORKDIR /app
 
-RUN microdnf install -y ca-certificates && microdnf clean all
+# curl: the compose healthcheck; the JRE image doesn't ship it.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=subfinder /tmp/subfinder/subfinder /usr/local/bin/subfinder
 COPY --from=katana /tmp/katana/katana /usr/local/bin/katana

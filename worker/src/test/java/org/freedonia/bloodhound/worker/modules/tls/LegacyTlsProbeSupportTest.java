@@ -17,6 +17,17 @@ class LegacyTlsProbeSupportTest {
                         + "3DES_EDE_CBC, anon, NULL, ECDH");
     }
 
+    /** The real JDK 25 default, verbatim - JDK 24's additions go too, leaving the JDK 21 relaxed list. */
+    @Test
+    void jdk25Default_alsoDropsStaticRsaAndSha1HandshakeSignatures() {
+        String jdk25Default = "SSLv3, TLSv1, TLSv1.1, DTLSv1.0, RC4, DES, MD5withRSA, DH keySize < 1024, "
+                + "EC keySize < 224, 3DES_EDE_CBC, anon, NULL, ECDH, TLS_RSA_*, "
+                + "rsa_pkcs1_sha1 usage HandshakeSignature, ecdsa_sha1 usage HandshakeSignature, "
+                + "dsa_sha1 usage HandshakeSignature";
+        assertThat(LegacyTlsProbeSupport.withoutLegacyProtocols(jdk25Default))
+                .isEqualTo(LegacyTlsProbeSupport.withoutLegacyProtocols(JDK21_DEFAULT));
+    }
+
     /** The old scan-time regex turned "DTLSv1.0" into "D.0" - exact-entry matching must not. */
     @Test
     void dtlsEntryIsNotMangled() {

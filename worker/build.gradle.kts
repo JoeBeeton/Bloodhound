@@ -85,7 +85,7 @@ tasks.register<JavaExec>("generateRuleFixtureMaterial") {
     outputs.dir(ruleFixtureDir)
     outputs.upToDateWhen { false }
     javaLauncher.set(javaToolchains.launcherFor {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     })
     jvmArgs(ruleExports)
 }
@@ -120,14 +120,9 @@ tasks.register<Test>("ruleIntegrationTest") {
     // Append (path does not start with '='). Overrides jdk.tls.disabledAlgorithms before ProtocolVersion initializes.
     jvmArgs(ruleExports + listOf("-Djava.security.properties=${ruleSecurityFile.asFile.absolutePath}"))
     javaLauncher.set(javaToolchains.launcherFor {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     })
-    // Gradle 9's failOnNoDiscoveredTests is absent on 8.14. A match-all filter
-    // with failOnNoMatchingTests fails the task when JUnit discovers nothing.
-    filter {
-        isFailOnNoMatchingTests = true
-        includeTestsMatching("*")
-    }
+    failOnNoDiscoveredTests = true
     testLogging {
         events(
             org.gradle.api.tasks.testing.logging.TestLogEvent.PASSED,
