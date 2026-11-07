@@ -95,7 +95,7 @@ public class JobPollingLoop {
         // for JobLogCapture/JobLogCaptureAppender's wiring itself.
         log.info("starting execution of {} against {}", job.moduleType(), job.hostname());
         try {
-            ScanContext context = new ScanContext(job.targetId(), job.hostname(), List.of(), job.payload());
+            ScanContext context = new ScanContext(job.targetId(), job.hostname(), List.of(), job.payload(), job.id());
             ModuleResult result = module.get().execute(context);
             reportResult(job, result, JobLogCapture.end());
         } catch (ScanModuleException e) {
