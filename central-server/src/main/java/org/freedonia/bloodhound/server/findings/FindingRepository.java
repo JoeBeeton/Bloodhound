@@ -132,10 +132,29 @@ public class FindingRepository {
         return "bh-" + row.get("hostname") + "-" + row.get("claimed_number");
     }
 
-    /** Reproduced again this run: bump updated_at and move scan_run_id to the current run, without duplicating the row. */
-    public void touch(List<UUID> ids, UUID scanRunId) {
-        for (UUID id : ids) {
-            jdbc.update("UPDATE findings SET scan_run_id = ?, updated_at = now() WHERE id = ?", scanRunId, id);
+    /**
+     * Reproduced again this run: move scan_run_id to the current run and refresh everything the
+     * rule itself decides (severity, category, title, description, evidence) from this run's
+     * payload, without duplicating the row. A review found the first version only bumped
+     * updated_at/scan_run_id, so every severity re-grade (e.g. the typosquat and actuator
+     * re-grades) only ever reached findings first detected after it shipped - an already-open
+     * CRITICAL stayed CRITICAL, with its first-detection evidence, for as long as it kept being
+     * reproduced. Identity (rule_id, affected_asset, display_id, first_detected_scan_run_id)
+     * and triage state (status, status_reason) are deliberately left alone.
+     */
+    public void touch(Map<UUID, FindingPayload> reproduced, UUID scanRunId) {
+        for (Map.Entry<UUID, FindingPayload> entry : reproduced.entrySet()) {
+            FindingPayload payload = entry.getValue();
+            jdbc.update(
+                    "UPDATE findings SET scan_run_id = ?, severity = ?, category = ?, title = ?, description = ?, "
+                            + "evidence = ?::jsonb, updated_at = now() WHERE id = ?",
+                    scanRunId,
+                    payload.severity(),
+                    payload.category(),
+                    payload.title(),
+                    payload.description(),
+                    writeJson(payload.evidence()),
+                    entry.getKey());
         }
     }
 

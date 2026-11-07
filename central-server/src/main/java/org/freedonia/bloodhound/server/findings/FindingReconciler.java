@@ -2,7 +2,6 @@ package org.freedonia.bloodhound.server.findings;
 
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,7 +37,7 @@ public final class FindingReconciler {
         // meant three rows in toInsert. The first occurrence of a given key wins - arbitrary,
         // but no less arbitrary than which host HostFanOut happened to schedule first.
         Map<String, FindingPayload> toInsertByKey = new LinkedHashMap<>();
-        Set<java.util.UUID> toTouch = new LinkedHashSet<>();
+        Map<java.util.UUID, FindingPayload> toTouch = new LinkedHashMap<>();
         Set<String> reproducedKeys = new HashSet<>();
 
         for (FindingPayload finding : reported) {
@@ -46,7 +45,7 @@ public final class FindingReconciler {
             reproducedKeys.add(key);
             OpenFindingKey existing = openByKey.get(key);
             if (existing != null) {
-                toTouch.add(existing.id());
+                toTouch.putIfAbsent(existing.id(), finding);
             } else {
                 toInsertByKey.putIfAbsent(key, finding);
             }
@@ -57,6 +56,7 @@ public final class FindingReconciler {
                 .map(OpenFindingKey::id)
                 .toList();
 
-        return new ReconciliationPlan(List.copyOf(toInsertByKey.values()), List.copyOf(toTouch), toResolve);
+        return new ReconciliationPlan(
+                List.copyOf(toInsertByKey.values()), List.copyOf(toTouch.keySet()), toResolve, Map.copyOf(toTouch));
     }
 }

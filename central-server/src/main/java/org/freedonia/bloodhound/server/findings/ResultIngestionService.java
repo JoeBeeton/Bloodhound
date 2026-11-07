@@ -66,7 +66,7 @@ public class ResultIngestionService {
 
         plan.toInsert().forEach(payload -> insertTolerant(scanRunId, targetId, moduleType, scanScope, payload));
         if (!plan.toTouch().isEmpty()) {
-            findingRepository.touch(plan.toTouch(), scanRunId);
+            findingRepository.touch(plan.reproducedPayloads(), scanRunId);
         }
         if (!plan.toResolve().isEmpty()) {
             findingRepository.resolve(plan.toResolve());

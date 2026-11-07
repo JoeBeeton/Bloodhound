@@ -91,7 +91,7 @@ class ResultIngestionServiceTest {
         service.ingest(scanRunId, targetId, "DNS_POSTURE", null, List.of(reproduced, fresh));
 
         verify(repository).insert(scanRunId, targetId, "DNS_POSTURE", null, fresh);
-        verify(repository, times(1)).touch(List.of(openId), scanRunId);
+        verify(repository, times(1)).touch(java.util.Map.of(openId, reproduced), scanRunId);
         verify(repository, times(1)).resolve(List.of(staleId));
         verify(repository, times(0)).insert(eq(scanRunId), eq(targetId), eq("DNS_POSTURE"), eq(null), eq(reproduced));
     }

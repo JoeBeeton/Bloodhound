@@ -44,6 +44,18 @@ class FindingReconcilerTest {
     }
 
     @Test
+    void reproducedFinding_carriesThisRunsPayload_soARegradeReachesTheExistingRow() {
+        UUID existingId = UUID.randomUUID();
+        List<OpenFindingKey> open = List.of(new OpenFindingKey(existingId, "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE", "examp1e.com"));
+        FindingPayload regraded = new FindingPayload(
+                "BRAND_TYPOSQUAT_HOSTING_LIVE_SITE", "HIGH", "BRAND", "title", "description", "examp1e.com", Map.of("k", "v"));
+
+        ReconciliationPlan plan = FindingReconciler.reconcile(open, List.of(regraded));
+
+        assertThat(plan.reproducedPayloads()).containsExactly(Map.entry(existingId, regraded));
+    }
+
+    @Test
     void previouslyOpenFindingNotReproduced_getsResolved() {
         UUID staleId = UUID.randomUUID();
         List<OpenFindingKey> open = List.of(
