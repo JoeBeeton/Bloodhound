@@ -21,6 +21,31 @@ class SafeAddressValidatorTest {
     }
 
     @Test
+    void reservedIpv4Ranges_unsafe() throws Exception {
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("198.18.0.1")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("198.19.255.254")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("192.0.0.8")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("240.0.0.1")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("255.255.255.255")));
+        // Neighbours of those ranges stay public.
+        assertTrue(SafeAddressValidator.isSafeToConnect(ip("198.20.0.1")));
+        assertTrue(SafeAddressValidator.isSafeToConnect(ip("192.0.3.1")));
+    }
+
+    @Test
+    void localUseNat64Prefix_unsafe() throws Exception {
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("64:ff9b:1::a00:1")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("64:ff9b:1:ffff::8.8.8.8")));
+    }
+
+    @Test
+    void sixToFourEmbeddingAPrivateIpv4_unsafe_publicOneSafe() throws Exception {
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("2002:7f00:1::1")));
+        assertFalse(SafeAddressValidator.isSafeToConnect(ip("2002:a9fe:a9fe::")));
+        assertTrue(SafeAddressValidator.isSafeToConnect(ip("2002:808:808::1")));
+    }
+
+    @Test
     void privateIpv4_unsafe() throws Exception {
         assertFalse(SafeAddressValidator.isSafeToConnect(ip("10.0.0.1")));
         assertFalse(SafeAddressValidator.isSafeToConnect(ip("192.168.1.1")));

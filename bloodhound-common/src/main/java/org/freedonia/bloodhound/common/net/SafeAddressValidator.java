@@ -96,6 +96,19 @@ public final class SafeAddressValidator {
             if (first == 100 && second >= 64 && second <= 127) {
                 return false;
             }
+            // 192.0.0.0/24 - IETF protocol assignments (RFC 6890), incl. DS-Lite/NAT64 plumbing.
+            if (first == 192 && second == 0 && (bytes[2] & 0xFF) == 0) {
+                return false;
+            }
+            // 198.18.0.0/15 - benchmarking (RFC 2544); in practice used as internal address
+            // space by some cloud/VPN fabrics, never a legitimate public target.
+            if (first == 198 && (second == 18 || second == 19)) {
+                return false;
+            }
+            // 240.0.0.0/4 - reserved "Class E", including 255.255.255.255 limited broadcast.
+            if (first >= 240) {
+                return false;
+            }
         }
         if (bytes.length == 16) {
             // fc00::/7 - IPv6 Unique Local Addresses (RFC 4193), almost always
@@ -110,6 +123,15 @@ public final class SafeAddressValidator {
             // un-checked RFC1918 IPv4 address would.
             int first = bytes[0] & 0xFF;
             if ((first & 0xFE) == 0xFC) {
+                return false;
+            }
+            // 64:ff9b:1::/48 - RFC 8215's LOCAL-use NAT64 prefix. Unlike the well-known
+            // 64:ff9b::/96 handled below, the operator picks where the IPv4 address sits inside
+            // it (RFC 6052 allows several prefix lengths), so it can't be reliably unwrapped -
+            // and the only reason to deploy one is translating to an operator's OWN IPv4 space.
+            // Refused outright rather than guessed at.
+            if (first == 0x00 && (bytes[1] & 0xFF) == 0x64 && (bytes[2] & 0xFF) == 0xFF && (bytes[3] & 0xFF) == 0x9B
+                    && bytes[4] == 0 && bytes[5] == 1) {
                 return false;
             }
             // A security review found IPv4-compatible IPv6 (the deprecated "::a.b.c.d" form, RFC
@@ -140,9 +162,10 @@ public final class SafeAddressValidator {
     }
 
     /**
-     * The last 4 bytes of {@code bytes} if it's a 16-byte IPv4-compatible address ("::a.b.c.d" -
-     * the first 12 bytes all zero) or a NAT64 address ("64:ff9b::/96" - RFC 6052's well-known
-     * prefix in the first 12 bytes, embedded IPv4 in the last 4) - null otherwise.
+     * The embedded IPv4 address of a 16-byte IPv4-compatible address ("::a.b.c.d" - the first 12
+     * bytes all zero), a NAT64 address ("64:ff9b::/96" - RFC 6052's well-known prefix in the first
+     * 12 bytes, embedded IPv4 in the last 4) or a 6to4 address ("2002::/16", IPv4 in bytes 2-5) -
+     * null otherwise.
      */
     private static byte[] embeddedIPv4Address(byte[] bytes) {
         boolean allZeroPrefix = true;
@@ -167,7 +190,15 @@ public final class SafeAddressValidator {
                 && bytes[9] == 0
                 && bytes[10] == 0
                 && bytes[11] == 0;
-        return nat64Prefix ? Arrays.copyOfRange(bytes, 12, 16) : null;
+        if (nat64Prefix) {
+            return Arrays.copyOfRange(bytes, 12, 16);
+        }
+        // 6to4 (RFC 3056, "2002:AABB:CCDD::/48"): the IPv4 address is bytes 2-5. A relay
+        // decapsulates to that IPv4 address, so 2002:7f00:1:: is just 127.0.0.1 in disguise.
+        if ((bytes[0] & 0xFF) == 0x20 && (bytes[1] & 0xFF) == 0x02) {
+            return Arrays.copyOfRange(bytes, 2, 6);
+        }
+        return null;
     }
 
     public static boolean isUnsafeToConnect(InetAddress address) {
