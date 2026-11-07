@@ -278,4 +278,45 @@ class DeepPortScanDecisionLogicTest {
                 .contains("NETWORK_PROMISCUOUS_PORT_RESPONSE")
                 .doesNotContain("PORT_UNEXPECTED_OPEN_ADMIN_SERVICE");
     }
+
+    private static final List<PortDetail> CATCH_ALL_ADMIN_PORTS =
+            List.of(port(135), port(1433), port(1521), port(3306), port(5432), port(6379), port(27017));
+
+    private static List<String> ruleIdsWith(PortDetail... extra) {
+        List<PortDetail> ports = new java.util.ArrayList<>(CATCH_ALL_ADMIN_PORTS);
+        ports.addAll(List.of(extra));
+        return DeepPortScanDecisionLogic.decide("edge.example.com", ports).stream()
+                .map(RawFinding::ruleId)
+                .toList();
+    }
+
+    /** Found in prod: catch-all edges answered on 21/23/110/143 with no greeting at all. */
+    @Test
+    void promiscuousHost_unidentifiedFtpTelnetAndMailPorts_notReported() {
+        assertThat(ruleIdsWith(port(21), port(23), port(110), port(143)))
+                .contains("NETWORK_PROMISCUOUS_PORT_RESPONSE")
+                .doesNotContain("PORT_OPEN_UNENCRYPTED_MGMT", "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+    }
+
+    /** A greeting that identifies the protocol proves a real listener even behind a catch-all edge. */
+    @Test
+    void promiscuousHost_bannerIdentifiedFtpAndPop3_stillReported() {
+        assertThat(ruleIdsWith(port(21, "ftp", "220 ProFTPD Server", null), port(110, "pop3", "+OK Dovecot ready.", null)))
+                .contains("PORT_OPEN_UNENCRYPTED_MGMT", "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+    }
+
+    /** The banner must match the port's own protocol family: SSH answering on 143 is not IMAP. */
+    @Test
+    void promiscuousHost_bannerForADifferentProtocol_notReported() {
+        assertThat(ruleIdsWith(port(143, "ssh", "SSH-2.0-OpenSSH_9.6", "9.6"), port(21, "http", "nginx", null)))
+                .doesNotContain("PORT_OPEN_UNENCRYPTED_MGMT", "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+    }
+
+    @Test
+    void notPromiscuous_unidentifiedFtpAndImapPorts_stillReported() {
+        List<String> ids = DeepPortScanDecisionLogic.decide("example.com", List.of(port(21), port(143))).stream()
+                .map(RawFinding::ruleId)
+                .toList();
+        assertThat(ids).contains("PORT_OPEN_UNENCRYPTED_MGMT", "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED");
+    }
 }

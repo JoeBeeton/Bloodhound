@@ -259,6 +259,13 @@ public final class PortScanDecisionLogic {
                             hostname + ":" + port,
                             evidence));
                 }
+            } else if (promiscuous) {
+                // Found in prod: all 40 open FTP/Telnet, POP3/IMAP and SSH findings sat on the 8
+                // hosts this same scan had already flagged as promiscuous (Cloudflare, Fly.io and
+                // OVH edges accepting every TCP port), and none of those ports sent a protocol
+                // greeting. A bare TCP connect on such a host says nothing about any one service,
+                // so the same skip the admin/database ports get above applies to these too.
+                continue;
             } else if (UNENCRYPTED_MGMT_PORTS.contains(port)) {
                 findings.add(new RawFinding(
                         "PORT_OPEN_UNENCRYPTED_MGMT",

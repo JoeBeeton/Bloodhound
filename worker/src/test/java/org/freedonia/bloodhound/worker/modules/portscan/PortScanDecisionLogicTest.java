@@ -104,13 +104,30 @@ class PortScanDecisionLogicTest {
                 .isEqualTo(List.of(1433, 1521, 3306, 3389, 5432, 5900, 5984, 6379, 27017));
     }
 
-    /** A non-admin unencrypted-mgmt port finding still fires normally alongside the promiscuous one. */
+    /**
+     * Found in prod: Cloudflare, Fly.io and OVH edges that accept every TCP port produced FTP/Telnet,
+     * POP3/IMAP and SSH findings on top of the promiscuous one, with no service behind any of them.
+     * A bare connect on such a host is no evidence for these ports either.
+     */
     @Test
-    void promiscuousAdminPorts_plusAnUnencryptedMgmtPort_bothReported() {
+    void promiscuousHost_ftpTelnetMailAndSshPortsNotReportedIndividually() {
         List<RawFinding> findings = decide(
-                "example.com", ipv4(List.of(3389, 3306, 5432, 27017, 6379, 21)));
+                "edge.example.com",
+                ipv4(List.of(135, 1433, 1521, 3306, 3389, 5432, 6379, 27017, 21, 22, 23, 110, 143, 443)));
+        assertThat(ruleIds(findings)).containsExactly("NETWORK_PROMISCUOUS_PORT_RESPONSE");
+    }
+
+    /** Below the threshold the same ports are still reported on their own. */
+    @Test
+    void fourAdminPorts_plusFtpTelnetMailAndSsh_allReportedIndividually() {
+        List<RawFinding> findings = decide("example.com", ipv4(List.of(3389, 3306, 5432, 27017, 21, 22, 23, 110, 143)));
         assertThat(ruleIds(findings))
-                .containsExactlyInAnyOrder("NETWORK_PROMISCUOUS_PORT_RESPONSE", "PORT_OPEN_UNENCRYPTED_MGMT");
+                .doesNotContain("NETWORK_PROMISCUOUS_PORT_RESPONSE")
+                .contains(
+                        "PORT_OPEN_UNENCRYPTED_MGMT",
+                        "NETWORK_CLEARTEXT_MAIL_PROTOCOL_EXPOSED",
+                        "NETWORK_SSH_PORT_REACHABLE");
+        assertThat(findings).hasSize(9);
     }
 
     @Test

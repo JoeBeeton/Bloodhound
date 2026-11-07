@@ -162,7 +162,8 @@ public final class DeepPortScanDecisionLogic {
                             hostname + ":" + portId,
                             evidence));
                 }
-            } else if (PortScanDecisionLogic.UNENCRYPTED_MGMT_PORTS.contains(portId)) {
+            } else if (PortScanDecisionLogic.UNENCRYPTED_MGMT_PORTS.contains(portId)
+                    && (!promiscuous || identifiedAs(details, CLEARTEXT_MGMT_SERVICES))) {
                 findings.add(new RawFinding(
                         "PORT_OPEN_UNENCRYPTED_MGMT",
                         Severity.MEDIUM,
@@ -172,7 +173,8 @@ public final class DeepPortScanDecisionLogic {
                                 + " (deep scan identified it as " + representative.serviceSummary() + ").",
                         hostname + ":" + portId,
                         evidence));
-            } else if (PortScanDecisionLogic.CLEARTEXT_MAIL_PORTS.contains(portId)) {
+            } else if (PortScanDecisionLogic.CLEARTEXT_MAIL_PORTS.contains(portId)
+                    && (!promiscuous || identifiedAs(details, CLEARTEXT_MAIL_SERVICES))) {
                 // Same rule_id/severity as PortScanDecisionLogic's own Tier 1 finding for this
                 // exact port - see NETWORK_SMB_NETBIOS_EXPOSED's own comment above for why.
                 findings.add(new RawFinding(
@@ -221,6 +223,22 @@ public final class DeepPortScanDecisionLogic {
                 Map.of("openPortCount", allOpenPortIds.size(), "ports", allOpenPortIds)));
 
         return findings;
+    }
+
+    /**
+     * Services whose greeting proves a real listener on a promiscuous host. On a host that
+     * accepts every TCP port (see PortScanDecisionLogic#isPromiscuousPortPattern) a bare open 21,
+     * 23, 110 or 143 is no evidence, but a banner BannerDecisionLogic identified as that protocol
+     * is. Telnet sends option negotiation rather than a text banner, so it is never identified and
+     * a real Telnet service behind such an edge is not reported: a known gap, accepted over
+     * reporting every port of every catch-all host.
+     */
+    static final Set<String> CLEARTEXT_MGMT_SERVICES = Set.of("ftp", "telnet");
+
+    static final Set<String> CLEARTEXT_MAIL_SERVICES = Set.of("pop3", "imap");
+
+    private static boolean identifiedAs(List<PortDetail> details, Set<String> services) {
+        return details.stream().anyMatch(d -> d.serviceName() != null && services.contains(d.serviceName()));
     }
 
     private static List<String> addressFamilies(List<PortDetail> details) {
