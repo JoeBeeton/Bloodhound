@@ -29,19 +29,55 @@ import org.freedonia.bloodhound.common.findings.Severity;
  * subdomain, not from anyone registering this specific lookalike label - not
  * real typosquatting signal, just noise from an unrelated wildcarded zone.
  *
- * <p>A candidate flagged {@code brandControlled} is never emitted either: it routes mail into the
- * brand's own mail servers or is delegated to the brand's own nameservers, i.e. it's the brand's
- * own defensive registration - exactly what a brand SHOULD do, not a squatter. A review found the
- * previous version flagging competitors' own defensive registrations (a .org/.io whose MX pointed
- * at the brand's own .com mail servers) CRITICAL with text calling them "not a defensive
- * registration".
+ * <p>A {@link Disposition#BRAND_CONTROLLED} candidate is never emitted either, and parked,
+ * redirect-to-brand and corporate-registrar ones get a single LOW/INFO registration finding with
+ * no MX/live-site escalations - a prod review found ~95 of 127 lookalikes flagged HIGH/CRITICAL
+ * were exactly these.
  */
 public final class TyposquatDecisionLogic {
+
+    /** What a resolving lookalike evidently is, before any severity is decided. */
+    public enum Disposition {
+        UNKNOWN,
+        /** Mails into the brand's own servers or shares its dedicated nameservers - never reported. */
+        BRAND_CONTROLLED,
+        /** Its homepage lands on the brand's own site - very likely the brand's, reported as INFO. */
+        REDIRECTS_TO_BRAND,
+        /** Held at a corporate brand-protection registrar - usually a defensive registration, INFO. */
+        CORPORATE_REGISTRAR,
+        /** Parked or listed for sale - a registered lookalike, but no active use. LOW. */
+        PARKED
+    }
 
     /** Registered this recently, a lookalike staged for mail is much more likely fresh phishing infrastructure than a years-old unrelated business. */
     static final Duration RECENT_REGISTRATION = Duration.ofDays(90);
 
-    static final int CLONE_SIMILARITY_PERCENT = 80;
+    /** See ScreenshotSimilarity: unrelated pages topped out at 55 (same-template pages ~65), real copies started at 72. */
+    static final int CLONE_SIMILARITY_PERCENT = 70;
+
+    /**
+     * Mail hosts serving huge numbers of unrelated domains - a lookalike on Google Workspace says
+     * nothing about it belonging to a brand that also happens to use Google Workspace.
+     */
+    private static final List<String> SHARED_MAIL_PROVIDER_SUFFIXES = List.of(
+            "google.com", "googlemail.com", "outlook.com", "zoho.com", "zoho.eu", "icloud.com",
+            "yahoodns.net", "protonmail.ch", "messagingengine.com", "mimecast.com", "messagelabs.com",
+            "secureserver.net", "privateemail.com", "hostedemail.com", "emailsrvr.com", "ionos.com",
+            "ionos.co.uk", "ovh.net", "amazonaws.com", "mailgun.org", "sendgrid.net", "porkbun.com",
+            "titan.email", "yandex.net", "improvmx.com", "forwardemail.net", "stackmail.com",
+            "hostinger.com", "beget.com");
+
+    /** Nameservers/MX that only parking services and domain marketplaces hand out (observed on prod's parked lookalikes). */
+    static final List<String> PARKING_DNS_SUFFIXES = List.of(
+            "afternic.com", "abovedomains.com", "above.com", "parklogic.com", "hostedmxserver.com",
+            "atom.com", "giantpanda.com", "mailerhost.net", "dns-parking.com", "sedo.com",
+            "sedoparking.com", "bodis.com", "parkingcrew.net", "dan.com", "fabulous.com",
+            "cashparking.com", "nameshift.com", "sawsells.com", "aftermarket.com");
+
+    /** Corporate brand-protection registrars - their DNS/mail forwarding on a lookalike usually means a defensive registration. */
+    static final List<String> CORPORATE_REGISTRAR_SUFFIXES = List.of(
+            "cscdns.net", "cscdns.uk", "markmonitor.com", "comlaude-dns.com", "comlaude-dns.net",
+            "comlaude-dns.eu", "safenames.net");
 
     /**
      * Nameserver hosts that big registrars/parking services hand out, identically, to huge numbers
@@ -83,7 +119,8 @@ public final class TyposquatDecisionLogic {
         String brand = normalize(brandDomain);
         Set<String> brandMx = normalizeAll(brandMxHosts);
         for (String mx : normalizeAll(candidateMxHosts)) {
-            if (brandMx.contains(mx) || mx.equals(brand) || mx.endsWith("." + brand)) {
+            boolean sharedBrandMx = brandMx.contains(mx) && !hostUnderAny(mx, SHARED_MAIL_PROVIDER_SUFFIXES);
+            if (sharedBrandMx || hostUnderAny(mx, List.of(brand))) {
                 return true;
             }
         }
@@ -94,8 +131,39 @@ public final class TyposquatDecisionLogic {
                 && brandNs.stream().noneMatch(TyposquatDecisionLogic::isSharedNameServer);
     }
 
+    /** {@code page} may be null when the homepage couldn't be fetched. */
+    public static Disposition classify(
+            String brandDomain,
+            List<String> brandMxHosts,
+            List<String> brandNameServers,
+            List<String> candidateMxHosts,
+            List<String> candidateNameServers,
+            TyposquatPageProbe.PageInfo page) {
+        if (isBrandControlled(brandDomain, brandMxHosts, brandNameServers, candidateMxHosts, candidateNameServers)) {
+            return Disposition.BRAND_CONTROLLED;
+        }
+        if (page != null && page.landingHost() != null
+                && hostUnderAny(page.landingHost(), List.of(normalize(brandDomain)))) {
+            return Disposition.REDIRECTS_TO_BRAND;
+        }
+        Set<String> dnsHosts = normalizeAll(candidateNameServers);
+        dnsHosts.addAll(normalizeAll(candidateMxHosts));
+        if (dnsHosts.stream().anyMatch(h -> hostUnderAny(h, CORPORATE_REGISTRAR_SUFFIXES))) {
+            return Disposition.CORPORATE_REGISTRAR;
+        }
+        if ((page != null && page.parkingPage()) || dnsHosts.stream().anyMatch(h -> hostUnderAny(h, PARKING_DNS_SUFFIXES))) {
+            return Disposition.PARKED;
+        }
+        return Disposition.UNKNOWN;
+    }
+
+    static boolean hostUnderAny(String host, List<String> domains) {
+        String h = normalize(host);
+        return domains.stream().anyMatch(d -> h.equals(d) || h.endsWith("." + d));
+    }
+
     private static boolean isSharedNameServer(String ns) {
-        return SHARED_NAMESERVER_SUFFIXES.stream().anyMatch(suffix -> ns.equals(suffix) || ns.endsWith("." + suffix));
+        return hostUnderAny(ns, SHARED_NAMESERVER_SUFFIXES);
     }
 
     private static Set<String> normalizeAll(List<String> hosts) {
@@ -124,7 +192,13 @@ public final class TyposquatDecisionLogic {
     static List<RawFinding> decide(List<TyposquatChecker.CheckedCandidate> checked, Instant now) {
         List<RawFinding> findings = new ArrayList<>();
         for (TyposquatChecker.CheckedCandidate candidate : checked) {
-            if (candidate.resolvedIps().isEmpty() || candidate.wildcardArtifact() || candidate.brandControlled()) {
+            if (candidate.resolvedIps().isEmpty()
+                    || candidate.wildcardArtifact()
+                    || candidate.disposition() == Disposition.BRAND_CONTROLLED) {
+                continue;
+            }
+            if (candidate.disposition() != Disposition.UNKNOWN) {
+                findings.add(lowRiskRegistration(candidate));
                 continue;
             }
             boolean looksLikeClone = candidate.visualSimilarityPercent() != null
@@ -149,7 +223,7 @@ public final class TyposquatDecisionLogic {
             if (candidate.visualSimilarityPercent() != null) {
                 description += " Its homepage's visual layout is " + candidate.visualSimilarityPercent()
                         + "% similar to the real target's, based on a screenshot comparison - "
-                        + (candidate.visualSimilarityPercent() >= 80
+                        + (candidate.visualSimilarityPercent() >= CLONE_SIMILARITY_PERCENT
                                 ? "a strong additional signal that this may be an actual clone/impersonation, not just a coincidental name."
                                 : "a comparatively weak visual match, which leans toward coincidental naming rather than a rendered clone.");
             }
@@ -227,5 +301,47 @@ public final class TyposquatDecisionLogic {
             }
         }
         return findings;
+    }
+
+    /** The registration alone, without the MX/live-site escalations - see {@link Disposition}. */
+    private static RawFinding lowRiskRegistration(TyposquatChecker.CheckedCandidate candidate) {
+        String humanType = candidate.permutationType().toLowerCase(Locale.ROOT).replace('_', ' ');
+        String what = "A domain closely resembling this target's own (a " + humanType + " variant) is registered";
+        String description;
+        Severity severity;
+        switch (candidate.disposition()) {
+            case PARKED -> {
+                severity = Severity.LOW;
+                description = what + ", but it is parked or listed for sale rather than serving its own content or "
+                        + "handling mail. No sign of active abuse; worth acquiring or monitoring in case it changes "
+                        + "hands.";
+            }
+            case REDIRECTS_TO_BRAND -> {
+                severity = Severity.INFO;
+                description = what + " and its homepage lands on this target's own site, so it is very likely one "
+                        + "of the brand's own defensive registrations. Confirm it is held by the brand.";
+            }
+            case CORPORATE_REGISTRAR -> {
+                severity = Severity.INFO;
+                description = what + " through a corporate brand-protection registrar, which usually means a "
+                        + "defensive registration by the brand itself. Confirm it is held by the brand.";
+            }
+            default -> throw new IllegalArgumentException("not a low-risk disposition: " + candidate.disposition());
+        }
+        Map<String, Object> evidence = new LinkedHashMap<>();
+        evidence.put("permutationType", candidate.permutationType());
+        evidence.put("resolvedIps", candidate.resolvedIps());
+        evidence.put("assessment", candidate.disposition().name());
+        if (candidate.registrationDate() != null) {
+            evidence.put("registrationDate", candidate.registrationDate().toString());
+        }
+        return new RawFinding(
+                "TYPOSQUAT_DOMAIN_REGISTERED",
+                severity,
+                Category.BRAND,
+                "Registered lookalike domain: " + candidate.domain(),
+                description,
+                candidate.domain(),
+                evidence);
     }
 }

@@ -1406,32 +1406,34 @@ This zone resolves arbitrary, non-existent subdomains, which means passive subdo
 
 | Rule ID | Severity | Title | Scope |
 |---|---|---|---|
-| `BRAND_TYPOSQUAT_HOSTING_LIVE_SITE` | 🔴 CRITICAL | Lookalike domain is hosting a live website | Tier 1 + Tier 2 |
-| `BRAND_TYPOSQUAT_MX_CONFIGURED` | 🔴 CRITICAL | Lookalike domain has mail servers configured | Tier 1 + Tier 2 |
-| `TYPOSQUAT_DOMAIN_REGISTERED` | 🟠 HIGH | Registered lookalike domain detected | Tier 1 + Tier 2 |
+| `BRAND_TYPOSQUAT_HOSTING_LIVE_SITE` | 🔴 CRITICAL / 🟠 HIGH | Lookalike domain is hosting a live website | Tier 1 + Tier 2 |
+| `BRAND_TYPOSQUAT_MX_CONFIGURED` | 🔴 CRITICAL / 🟠 HIGH | Lookalike domain has mail servers configured | Tier 1 + Tier 2 |
+| `TYPOSQUAT_DOMAIN_REGISTERED` | 🟠 HIGH / 🔵 LOW / ⚪ INFO | Registered lookalike domain detected | Tier 1 + Tier 2 |
 | `BRAND_IMPERSONATING_APP_DETECTED` | 🟡 MEDIUM | Possible brand-impersonating app found on an app store | Tier 1 + Tier 2 |
 
 ### `BRAND_TYPOSQUAT_HOSTING_LIVE_SITE`
 
-**Lookalike domain is hosting a live website** — 🔴 CRITICAL
+**Lookalike domain is hosting a live website** — 🔴 CRITICAL when its homepage is a visual clone of the target's (≥70% screenshot similarity), otherwise 🟠 HIGH
 
-A registered lookalike domain is serving a live, renderable web page rather than just holding a DNS record, consistent with active phishing/impersonation content.
+A registered lookalike domain is serving a live, renderable web page rather than just holding a DNS record, consistent with active phishing/impersonation content. Not raised for blank pages, parked/for-sale pages, or lookalikes that are evidently the brand's own (see `TYPOSQUAT_DOMAIN_REGISTERED`). No similarity score is computed when either homepage is a bot-challenge page.
 
 **Remediation:** Pursue takedown/UDRP action for the lookalike domain and its hosting provider; consider a phishing-content report to browser safe-browsing lists.
 
 ### `BRAND_TYPOSQUAT_MX_CONFIGURED`
 
-**Lookalike domain has mail servers configured** — 🔴 CRITICAL
+**Lookalike domain has mail servers configured** — 🔴 CRITICAL when the domain was registered in the last 90 days or is a visual clone, otherwise 🟠 HIGH
 
-A registered lookalike domain has MX records configured - it isn't just parked, it's set up to receive email, consistent with active phishing-reply capture or business-email-compromise staging.
+A registered lookalike domain has MX records configured - it isn't just parked, it's set up to receive email, consistent with active phishing-reply capture or business-email-compromise staging. Not raised for parking-service mail, null MX, or lookalikes that are evidently the brand's own.
 
 **Remediation:** Pursue takedown/UDRP action for the lookalike domain, and warn staff/customers this pattern is associated with active phishing infrastructure, not just a coincidental registration.
 
 ### `TYPOSQUAT_DOMAIN_REGISTERED`
 
-**Registered lookalike domain detected** — 🟠 HIGH
+**Registered lookalike domain detected** — 🟠 HIGH; 🔵 LOW if parked/for sale; ⚪ INFO if it redirects to the target's own site or is held at a corporate brand-protection registrar
 
 A domain closely resembling this target's own - generated via common typosquatting techniques (character omission/duplication/transposition, keyboard-adjacent substitution, ASCII homoglyph substitution, cross-script IDN/Unicode homograph substitution, TLD swap, or hyphenation) - is registered and actively resolving. This is consistent with phishing or brand-impersonation infrastructure, though it can occasionally be a coincidentally similarly-named, unrelated legitimate site.
+
+Parked domains (parking/marketplace nameservers or mail, or a for-sale page), lookalikes whose homepage lands on the target's own site, and ones held at a corporate brand-protection registrar (e.g. CSC, MarkMonitor) get only this finding at the lower severity, with no MX/live-site escalations. Lookalikes that mail into the target's own (non-shared) mail servers or share its dedicated nameservers aren't reported at all. The evidence's `assessment` field records which applied.
 
 **Remediation:** Investigate the flagged domain to confirm whether it is malicious. If so, consider reporting it to the registrar/host, pursuing a UDRP proceeding, or blocking it at your organization's email/web gateways.
 

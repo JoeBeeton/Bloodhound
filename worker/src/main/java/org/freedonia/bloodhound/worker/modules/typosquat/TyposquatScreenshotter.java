@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Calls the browserless/chromium sidecar (see docker-compose.yml) to render
  * a hostname's homepage and capture a small PNG screenshot, for
- * {@link PerceptualHash}-based visual-similarity comparison against the
+ * {@link ScreenshotSimilarity}-based visual-similarity comparison against the
  * real target.
  *
  * <p>The sidecar has full network access within the Docker network (it's a

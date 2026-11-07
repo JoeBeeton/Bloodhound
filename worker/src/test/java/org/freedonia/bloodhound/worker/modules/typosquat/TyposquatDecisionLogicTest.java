@@ -7,6 +7,7 @@ import java.util.List;
 import org.freedonia.bloodhound.common.findings.Category;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.freedonia.bloodhound.common.findings.Severity;
+import org.freedonia.bloodhound.worker.modules.typosquat.TyposquatDecisionLogic.Disposition;
 import org.junit.jupiter.api.Test;
 
 class TyposquatDecisionLogicTest {
@@ -79,9 +80,9 @@ class TyposquatDecisionLogicTest {
                 new TyposquatChecker.CheckedCandidate(
                         "example.c-o.uk", "HYPHENATION", List.of("203.0.113.5"), null, true, null, null, false),
                 new TyposquatChecker.CheckedCandidate(
-                        "jjaa.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false, null, null, false)));
+                        "exmaple.com", "TRANSPOSITION", List.of("198.51.100.7"), null, false, null, null, false)));
         assertThat(findings).hasSize(1);
-        assertThat(findings.get(0).affectedAsset()).isEqualTo("jjaa.com");
+        assertThat(findings.get(0).affectedAsset()).isEqualTo("exmaple.com");
     }
 
     @Test
@@ -151,9 +152,124 @@ class TyposquatDecisionLogicTest {
 
     @Test
     void brandControlledCandidate_producesNoFindingsAtAll() {
-        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "example.org", "TLD_SWAP", List.of("203.0.113.5"), null, false, new byte[] {1}, 99, true, true)));
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(candidate(Disposition.BRAND_CONTROLLED)));
         assertThat(findings).isEmpty();
+    }
+
+    /** Regression: prod had ~69 parked/for-sale lookalikes flagged CRITICAL via parking MX and blank-page "clones". */
+    @Test
+    void parkedCandidate_singleLowRegistrationFinding_noEscalations() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(candidate(Disposition.PARKED)));
+
+        assertThat(findings).hasSize(1);
+        assertThat(findings.get(0).ruleId()).isEqualTo("TYPOSQUAT_DOMAIN_REGISTERED");
+        assertThat(findings.get(0).severity()).isEqualTo(Severity.LOW);
+        assertThat(findings.get(0).evidence()).containsEntry("assessment", "PARKED");
+        assertThat(findings.get(0).description()).contains("parked or listed for sale");
+    }
+
+    @Test
+    void redirectsToBrandCandidate_singleInfoFinding() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(candidate(Disposition.REDIRECTS_TO_BRAND)));
+        assertThat(findings).singleElement().satisfies(f -> {
+            assertThat(f.severity()).isEqualTo(Severity.INFO);
+            assertThat(f.description()).contains("lands on this target's own site");
+        });
+    }
+
+    @Test
+    void corporateRegistrarCandidate_singleInfoFinding() {
+        List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(candidate(Disposition.CORPORATE_REGISTRAR)));
+        assertThat(findings).singleElement().satisfies(f -> {
+            assertThat(f.severity()).isEqualTo(Severity.INFO);
+            assertThat(f.description()).contains("brand-protection registrar");
+        });
+    }
+
+    /** Live site, MX and a "clone" score - all would escalate an UNKNOWN candidate. */
+    private static TyposquatChecker.CheckedCandidate candidate(Disposition disposition) {
+        return new TyposquatChecker.CheckedCandidate(
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1}, 99, true, disposition);
+    }
+
+    /**
+     * Regression for a bug shipped with brand-control detection: monzo.com and revolut.com both use
+     * Google Workspace, so any lookalike also on Google Workspace counted as brand-controlled and
+     * was silently dropped.
+     */
+    @Test
+    void isBrandControlled_sameSharedMailProvider_doesNotCount() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of("aspmx.l.google.com", "alt1.aspmx.l.google.com"),
+                        List.of("curt.ns.cloudflare.com"),
+                        List.of("ASPMX.L.GOOGLE.COM."),
+                        List.of("ns1.porkbun.com")))
+                .isFalse();
+    }
+
+    @Test
+    void isBrandControlled_sameDedicatedMailGateway_stillCounts() {
+        assertThat(TyposquatDecisionLogic.isBrandControlled(
+                        "example.com",
+                        List.of("mx0a-0023b801.pphosted.com"),
+                        List.of(),
+                        List.of("mx0a-0023b801.pphosted.com"),
+                        List.of()))
+                .isTrue();
+    }
+
+    @Test
+    void classify_parkingNameServers() {
+        assertThat(classify(List.of(), List.of("ns1.afternic.com", "ns2.afternic.com"), null))
+                .isEqualTo(Disposition.PARKED);
+    }
+
+    @Test
+    void classify_parkingMailServer() {
+        assertThat(classify(List.of("mx156.hostedmxserver.com"), List.of("ns1.porkbun.com"), null))
+                .isEqualTo(Disposition.PARKED);
+    }
+
+    @Test
+    void classify_parkingPage() {
+        assertThat(classify(List.of(), List.of("ns1.porkbun.com"), new TyposquatPageProbe.PageInfo("exampl.com", true, false)))
+                .isEqualTo(Disposition.PARKED);
+    }
+
+    @Test
+    void classify_corporateBrandProtectionRegistrar() {
+        assertThat(classify(List.of("custmx.cscdns.net"), List.of("dns1.cscdns.net", "dns2.cscdns.net"), null))
+                .isEqualTo(Disposition.CORPORATE_REGISTRAR);
+    }
+
+    @Test
+    void classify_homepageLandsOnTheBrand() {
+        assertThat(classify(List.of(), List.of("ns1.porkbun.com"), new TyposquatPageProbe.PageInfo("www.example.com", false, false)))
+                .isEqualTo(Disposition.REDIRECTS_TO_BRAND);
+    }
+
+    @Test
+    void classify_homepageLandsOnALookalikeOfTheBrand_notTheBrand() {
+        assertThat(classify(List.of(), List.of("ns1.porkbun.com"), new TyposquatPageProbe.PageInfo("evilexample.com", false, false)))
+                .isEqualTo(Disposition.UNKNOWN);
+    }
+
+    @Test
+    void classify_ordinaryHostingWithNoPageSignal_unknown() {
+        assertThat(classify(List.of("mx.privateemail.com"), List.of("ns07.domaincontrol.com"), null))
+                .isEqualTo(Disposition.UNKNOWN);
+    }
+
+    @Test
+    void classify_brandControlledWinsOverEverythingElse() {
+        assertThat(classify(List.of("mx1.example.com"), List.of("ns1.afternic.com"), null))
+                .isEqualTo(Disposition.BRAND_CONTROLLED);
+    }
+
+    private static Disposition classify(List<String> mx, List<String> ns, TyposquatPageProbe.PageInfo page) {
+        return TyposquatDecisionLogic.classify(
+                "example.com", List.of("mx1.example.com"), List.of("a1-196.akam.net"), mx, ns, page);
     }
 
     @Test
@@ -278,7 +394,8 @@ class TyposquatDecisionLogicTest {
     @Test
     void liveScreenshotCaptured_exactlyAtThreshold_isCritical() {
         List<RawFinding> findings = TyposquatDecisionLogic.decide(List.of(new TyposquatChecker.CheckedCandidate(
-                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3}, 80, false)));
+                "exampl.com", "OMISSION", List.of("203.0.113.5"), null, false, new byte[] {1, 2, 3},
+                TyposquatDecisionLogic.CLONE_SIMILARITY_PERCENT, false)));
 
         RawFinding escalation = findings.stream()
                 .filter(f -> f.ruleId().equals("BRAND_TYPOSQUAT_HOSTING_LIVE_SITE"))

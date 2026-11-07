@@ -1,13 +1,20 @@
 package org.freedonia.bloodhound.worker.modules.typosquat;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.freedonia.bloodhound.worker.modules.subdomain.SubdomainDnsResolver;
 import org.freedonia.bloodhound.worker.modules.whois.WhoisFetcher;
 
@@ -28,7 +35,7 @@ import org.freedonia.bloodhound.worker.modules.whois.WhoisFetcher;
  *
  * <p>For every "genuine" candidate (resolves, not a wildcard artifact),
  * captures a screenshot via {@link TyposquatScreenshotter} and computes a
- * {@link PerceptualHash}-based visual-similarity score against one shared
+ * {@link ScreenshotSimilarity}-based visual-similarity score against one shared
  * screenshot of the real target - a page that actually LOOKS like the real
  * one is a much stronger phishing/impersonation signal than registration
  * alone. Screenshotting is best-effort exactly like the WHOIS lookup below:
@@ -48,7 +55,7 @@ public class TyposquatChecker {
             byte[] screenshotPng,
             Integer visualSimilarityPercent,
             boolean mxConfigured,
-            boolean brandControlled) {
+            TyposquatDecisionLogic.Disposition disposition) {
         public CheckedCandidate(
                 String domain,
                 String permutationType,
@@ -59,25 +66,34 @@ public class TyposquatChecker {
                 Integer visualSimilarityPercent,
                 boolean mxConfigured) {
             this(domain, permutationType, resolvedIps, registrationDate, wildcardArtifact, screenshotPng,
-                    visualSimilarityPercent, mxConfigured, false);
+                    visualSimilarityPercent, mxConfigured, TyposquatDecisionLogic.Disposition.UNKNOWN);
         }
     }
 
     /** realSiteScreenshotPng is null whenever no candidate ended up genuine enough to need the comparison baseline at all. */
     public record CheckResult(byte[] realSiteScreenshotPng, List<CheckedCandidate> candidates) {}
 
+    private static final int PROBE_CONCURRENCY = 8;
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
+
     private final SubdomainDnsResolver dnsResolver;
     private final WhoisFetcher whoisFetcher;
     private final TyposquatScreenshotter screenshotter;
+    private final TyposquatPageProbe pageProbe;
 
     public TyposquatChecker(TyposquatScreenshotter screenshotter) {
-        this(new SubdomainDnsResolver(), new WhoisFetcher(), screenshotter);
+        this(new SubdomainDnsResolver(), new WhoisFetcher(), screenshotter, new TyposquatPageProbe());
     }
 
-    TyposquatChecker(SubdomainDnsResolver dnsResolver, WhoisFetcher whoisFetcher, TyposquatScreenshotter screenshotter) {
+    TyposquatChecker(
+            SubdomainDnsResolver dnsResolver,
+            WhoisFetcher whoisFetcher,
+            TyposquatScreenshotter screenshotter,
+            TyposquatPageProbe pageProbe) {
         this.dnsResolver = dnsResolver;
         this.whoisFetcher = whoisFetcher;
         this.screenshotter = screenshotter;
+        this.pageProbe = pageProbe;
     }
 
     /**
@@ -117,20 +133,6 @@ public class TyposquatChecker {
             }
         });
 
-        // The real target's own screenshot is the comparison baseline for every genuine
-        // candidate below - captured at most once per check() call (not per candidate), and
-        // only if there's actually at least one genuine candidate to compare it against.
-        boolean anyGenuineCandidate = candidates.stream().anyMatch(c -> {
-            List<String> ips = resolved.getOrDefault(c.domain(), List.of());
-            return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(c.domain()));
-        });
-        Long realSiteHash = null;
-        byte[] realScreenshot = null;
-        if (anyGenuineCandidate) {
-            realScreenshot = screenshotter.capture(rootHostname);
-            realSiteHash = PerceptualHash.hash(realScreenshot);
-        }
-
         // Batched upfront (same shape as the IP resolution above), not per-candidate in the loop
         // below - only for genuine candidates, since a wildcard-artifact or non-resolving one is
         // never going to produce a finding regardless of its MX configuration.
@@ -141,6 +143,24 @@ public class TyposquatChecker {
                     return !ips.isEmpty() && !wildcardParents.contains(wildcardParent(domain));
                 })
                 .toList();
+
+        // The real target's own screenshot is the comparison baseline for every genuine
+        // candidate below - captured at most once per check() call (not per candidate), and
+        // only if there's actually at least one genuine candidate to compare it against.
+        ScreenshotSimilarity.Fingerprint realFingerprint = null;
+        byte[] realScreenshot = null;
+        Map<String, TyposquatPageProbe.PageInfo> pages = Map.of();
+        if (!genuineDomains.isEmpty()) {
+            realScreenshot = screenshotter.capture(rootHostname);
+            realFingerprint = ScreenshotSimilarity.fingerprint(realScreenshot);
+            List<String> toProbe = new ArrayList<>(genuineDomains);
+            toProbe.add(rootHostname);
+            pages = probeAll(toProbe);
+        }
+        // A bot-challenge page as the baseline (seen live: revolut.com serves one to the scanner)
+        // would make every other challenge or near-blank page look like a clone.
+        TyposquatPageProbe.PageInfo brandPage = pages.get(rootHostname);
+        boolean baselineComparable = brandPage == null || !brandPage.challengePage();
         // The real target's own MX/NS, resolved in the same batches as the candidates', so a
         // lookalike the brand itself operates (a defensive registration mailing into the brand's
         // own servers, or delegated to the brand's own nameservers) can be told apart from a
@@ -162,24 +182,36 @@ public class TyposquatChecker {
             boolean wildcardArtifact = !ips.isEmpty() && wildcardParents.contains(wildcardParent(candidate.domain()));
             boolean genuine = !ips.isEmpty() && !wildcardArtifact;
             Instant registrationDate = genuine ? tryWhois(candidate.domain()) : null;
-            boolean mxConfigured = mxHosts.containsKey(candidate.domain());
-            boolean brandControlled = genuine
-                    && TyposquatDecisionLogic.isBrandControlled(
+            // "localhost" MX targets (seen live) can't receive anything - not mail routing.
+            List<String> candidateMx = mxHosts.getOrDefault(candidate.domain(), List.of()).stream()
+                    .filter(h -> !h.equalsIgnoreCase("localhost"))
+                    .toList();
+            boolean mxConfigured = !candidateMx.isEmpty();
+            TyposquatPageProbe.PageInfo page = pages.get(candidate.domain());
+            TyposquatDecisionLogic.Disposition disposition = genuine
+                    ? TyposquatDecisionLogic.classify(
                             rootHostname,
                             brandMx,
                             brandNs,
-                            mxHosts.getOrDefault(candidate.domain(), List.of()),
-                            nameServers.getOrDefault(candidate.domain(), List.of()));
+                            candidateMx,
+                            nameServers.getOrDefault(candidate.domain(), List.of()),
+                            page)
+                    : TyposquatDecisionLogic.Disposition.UNKNOWN;
 
             byte[] candidateScreenshot = null;
             Integer similarity = null;
-            if (genuine && realSiteHash != null) {
+            if (genuine && realFingerprint != null) {
                 candidateScreenshot = screenshotter.capture(candidate.domain());
-                Long candidateHash = PerceptualHash.hash(candidateScreenshot);
-                if (candidateHash != null) {
-                    similarity = PerceptualHash.similarityPercent(realSiteHash, candidateHash);
-                } else {
+                ScreenshotSimilarity.Fingerprint candidateFingerprint =
+                        ScreenshotSimilarity.fingerprint(candidateScreenshot);
+                if (candidateFingerprint == null || !candidateFingerprint.informative()) {
+                    // Undecodable or blank (an unrendered parking page, a "Redirecting..." stub) -
+                    // not evidence of a live site, and nothing to compare.
                     candidateScreenshot = null;
+                } else if (baselineComparable
+                        && disposition == TyposquatDecisionLogic.Disposition.UNKNOWN
+                        && (page == null || !page.challengePage())) {
+                    similarity = ScreenshotSimilarity.similarityPercent(realFingerprint, candidateFingerprint);
                 }
             }
 
@@ -192,14 +224,41 @@ public class TyposquatChecker {
                     candidateScreenshot,
                     similarity,
                     mxConfigured,
-                    brandControlled));
+                    disposition));
         }
         return new CheckResult(realScreenshot, result);
     }
 
+    private Map<String, TyposquatPageProbe.PageInfo> probeAll(List<String> hostnames) {
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(PROBE_CONCURRENCY, hostnames.size()));
+        try {
+            Map<String, Future<TyposquatPageProbe.PageInfo>> futures = new LinkedHashMap<>();
+            for (String hostname : hostnames) {
+                futures.put(hostname, pool.submit(() -> pageProbe.probe(hostname)));
+            }
+            Map<String, TyposquatPageProbe.PageInfo> pages = new HashMap<>();
+            for (Map.Entry<String, Future<TyposquatPageProbe.PageInfo>> entry : futures.entrySet()) {
+                try {
+                    TyposquatPageProbe.PageInfo page = entry.getValue().get(PROBE_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+                    if (page != null) {
+                        pages.put(entry.getKey(), page);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception ignored) {
+                    // unreachable or timed out - classified on DNS alone
+                }
+            }
+            return pages;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     /**
      * The zone to probe for wildcard DNS: everything after the candidate's
-     * first dot. For a normal two-label candidate ("jaj4.com"), that's just
+     * first dot. For a normal two-label candidate ("examp1e.com"), that's just
      * the TLD ("com") - harmless and correctly never wildcarded, nobody
      * wildcards a public registry. The case that actually matters is a
      * hyphenation/omission/etc. candidate generated from a target whose real

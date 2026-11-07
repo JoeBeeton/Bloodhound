@@ -27,7 +27,8 @@ class TyposquatCheckerTest {
     private final SubdomainDnsResolver dnsResolver = mock(SubdomainDnsResolver.class);
     private final WhoisFetcher whoisFetcher = mock(WhoisFetcher.class);
     private final TyposquatScreenshotter screenshotter = mock(TyposquatScreenshotter.class);
-    private final TyposquatChecker checker = new TyposquatChecker(dnsResolver, whoisFetcher, screenshotter);
+    private final TyposquatPageProbe pageProbe = mock(TyposquatPageProbe.class);
+    private final TyposquatChecker checker = new TyposquatChecker(dnsResolver, whoisFetcher, screenshotter, pageProbe);
 
     private static byte[] solidPng(Color color) {
         try {
@@ -80,11 +81,11 @@ class TyposquatCheckerTest {
 
     @Test
     void resolvingCandidateWhoseParentZoneIsNotWildcarded_notFlaggedAsArtifact() throws Exception {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
-        // The wildcard probe under "com" (jjaa.com's parent) resolves to nothing - com isn't wildcarded.
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
+        // The wildcard probe under "com" (raelsite.com's parent) resolves to nothing - com isn't wildcarded.
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(whoisFetcher.fetch("jjaa.com")).thenThrow(new RuntimeException("no whois data"));
+        when(whoisFetcher.fetch("raelsite.com")).thenThrow(new RuntimeException("no whois data"));
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
@@ -95,11 +96,11 @@ class TyposquatCheckerTest {
 
     @Test
     void genuineCandidate_screenshotsBothRealSiteAndCandidate_computesSimilarity() {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(solidPng(Color.BLUE));
-        when(screenshotter.capture("jjaa.com")).thenReturn(solidPng(Color.BLUE));
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(screenshotter.capture("raelsite.com")).thenReturn(ScreenshotSimilarityTest.pagePng(1));
 
         TyposquatChecker.CheckResult checkResult = checker.check(ROOT_HOSTNAME, List.of(candidate));
 
@@ -110,7 +111,7 @@ class TyposquatCheckerTest {
         // internally for hashing.
         assertThat(checkResult.realSiteScreenshotPng()).isNotNull();
         verify(screenshotter, times(1)).capture(ROOT_HOSTNAME);
-        verify(screenshotter, times(1)).capture("jjaa.com");
+        verify(screenshotter, times(1)).capture("raelsite.com");
     }
 
     @Test
@@ -126,8 +127,8 @@ class TyposquatCheckerTest {
 
     @Test
     void realSiteScreenshotFails_candidateGetsNoSimilarityScore_stillNoWastedScreenshotCall() {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
         when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(null);
 
@@ -136,18 +137,18 @@ class TyposquatCheckerTest {
         assertThat(result.get(0).screenshotPng()).isNull();
         assertThat(result.get(0).visualSimilarityPercent()).isNull();
         // The real site's screenshot failed to hash - never worth also screenshotting the candidate.
-        verify(screenshotter, never()).capture("jjaa.com");
+        verify(screenshotter, never()).capture("raelsite.com");
     }
 
     @Test
     void multipleGenuineCandidates_realSiteScreenshottedOnlyOnce() {
-        var candidateA = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
+        var candidateA = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
         var candidateB = new PermutationGenerator.Candidate("rea1site.com", "HOMOGLYPH");
-        when(dnsResolver.resolveAll(List.of("jjaa.com", "rea1site.com")))
-                .thenReturn(Map.of("jjaa.com", List.of("198.51.100.7"), "rea1site.com", List.of("198.51.100.8")));
+        when(dnsResolver.resolveAll(List.of("raelsite.com", "rea1site.com")))
+                .thenReturn(Map.of("raelsite.com", List.of("198.51.100.7"), "rea1site.com", List.of("198.51.100.8")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
         when(screenshotter.capture(eq(ROOT_HOSTNAME))).thenReturn(solidPng(Color.GREEN));
-        when(screenshotter.capture(eq("jjaa.com"))).thenReturn(solidPng(Color.RED));
+        when(screenshotter.capture(eq("raelsite.com"))).thenReturn(solidPng(Color.RED));
         when(screenshotter.capture(eq("rea1site.com"))).thenReturn(solidPng(Color.GREEN));
 
         checker.check(ROOT_HOSTNAME, List.of(candidateA, candidateB));
@@ -181,10 +182,10 @@ class TyposquatCheckerTest {
 
     @Test
     void genuineCandidateWithMxRecords_mxConfiguredTrue() {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME))).thenReturn(Map.of("jjaa.com", List.of("mail.jjaa.com")));
+        when(dnsResolver.resolveMxHosts(List.of("raelsite.com", ROOT_HOSTNAME))).thenReturn(Map.of("raelsite.com", List.of("mail.raelsite.com")));
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
@@ -193,23 +194,102 @@ class TyposquatCheckerTest {
 
     @Test
     void genuineCandidateMailingIntoTheBrandsOwnMailServers_brandControlled() {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME)))
-                .thenReturn(Map.of("jjaa.com", List.of("mx1." + ROOT_HOSTNAME), ROOT_HOSTNAME, List.of("mx1." + ROOT_HOSTNAME)));
+        when(dnsResolver.resolveMxHosts(List.of("raelsite.com", ROOT_HOSTNAME)))
+                .thenReturn(Map.of("raelsite.com", List.of("mx1." + ROOT_HOSTNAME), ROOT_HOSTNAME, List.of("mx1." + ROOT_HOSTNAME)));
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
-        assertThat(result.get(0).brandControlled()).isTrue();
+        assertThat(result.get(0).disposition()).isEqualTo(TyposquatDecisionLogic.Disposition.BRAND_CONTROLLED);
+    }
+
+    @Test
+    void candidateOnTheSameGoogleWorkspaceMxAsTheBrand_notBrandControlled() {
+        stubGenuine("raelsite.com");
+        when(dnsResolver.resolveMxHosts(List.of("raelsite.com", ROOT_HOSTNAME)))
+                .thenReturn(Map.of("raelsite.com", List.of("aspmx.l.google.com"), ROOT_HOSTNAME, List.of("aspmx.l.google.com")));
+
+        var result = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")));
+
+        assertThat(result.candidates().get(0).disposition()).isEqualTo(TyposquatDecisionLogic.Disposition.UNKNOWN);
+    }
+
+    @Test
+    void blankCandidateScreenshot_droppedAndNotScored() {
+        stubGenuine("raelsite.com");
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(screenshotter.capture("raelsite.com")).thenReturn(solidPng(Color.WHITE));
+
+        var candidate = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")))
+                .candidates().get(0);
+
+        assertThat(candidate.screenshotPng()).isNull();
+        assertThat(candidate.visualSimilarityPercent()).isNull();
+    }
+
+    @Test
+    void brandServesABotChallenge_noSimilarityScores_screenshotsKept() {
+        stubGenuine("raelsite.com");
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(screenshotter.capture("raelsite.com")).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(pageProbe.probe(ROOT_HOSTNAME)).thenReturn(new TyposquatPageProbe.PageInfo(ROOT_HOSTNAME, false, true));
+
+        var candidate = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")))
+                .candidates().get(0);
+
+        assertThat(candidate.visualSimilarityPercent()).isNull();
+        assertThat(candidate.screenshotPng()).isNotNull();
+    }
+
+    @Test
+    void parkedCandidate_classifiedParked_notScored() {
+        stubGenuine("raelsite.com");
+        when(screenshotter.capture(ROOT_HOSTNAME)).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(screenshotter.capture("raelsite.com")).thenReturn(ScreenshotSimilarityTest.pagePng(1));
+        when(pageProbe.probe("raelsite.com")).thenReturn(new TyposquatPageProbe.PageInfo("raelsite.com", true, false));
+
+        var candidate = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")))
+                .candidates().get(0);
+
+        assertThat(candidate.disposition()).isEqualTo(TyposquatDecisionLogic.Disposition.PARKED);
+        assertThat(candidate.visualSimilarityPercent()).isNull();
+    }
+
+    @Test
+    void candidateRedirectingToTheBrand_classifiedAsSuch() {
+        stubGenuine("raelsite.com");
+        when(pageProbe.probe("raelsite.com")).thenReturn(new TyposquatPageProbe.PageInfo("www." + ROOT_HOSTNAME, false, false));
+
+        var candidate = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")))
+                .candidates().get(0);
+
+        assertThat(candidate.disposition()).isEqualTo(TyposquatDecisionLogic.Disposition.REDIRECTS_TO_BRAND);
+    }
+
+    @Test
+    void localhostMx_notMailRouting() {
+        stubGenuine("raelsite.com");
+        when(dnsResolver.resolveMxHosts(List.of("raelsite.com", ROOT_HOSTNAME))).thenReturn(Map.of("raelsite.com", List.of("localhost")));
+
+        var candidate = checker.check(ROOT_HOSTNAME, List.of(new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION")))
+                .candidates().get(0);
+
+        assertThat(candidate.mxConfigured()).isFalse();
+    }
+
+    private void stubGenuine(String domain) {
+        when(dnsResolver.resolveAll(List.of(domain))).thenReturn(Map.of(domain, List.of("198.51.100.7")));
+        when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
     }
 
     @Test
     void genuineCandidateWithNoMxRecords_mxConfiguredFalse() {
-        var candidate = new PermutationGenerator.Candidate("jjaa.com", "TRANSPOSITION");
-        when(dnsResolver.resolveAll(List.of("jjaa.com"))).thenReturn(Map.of("jjaa.com", List.of("198.51.100.7")));
+        var candidate = new PermutationGenerator.Candidate("raelsite.com", "TRANSPOSITION");
+        when(dnsResolver.resolveAll(List.of("raelsite.com"))).thenReturn(Map.of("raelsite.com", List.of("198.51.100.7")));
         when(dnsResolver.resolveAll(argThatContainsAWildcardProbeHostname())).thenReturn(Map.of());
-        when(dnsResolver.resolveMxHosts(List.of("jjaa.com", ROOT_HOSTNAME))).thenReturn(Map.of());
+        when(dnsResolver.resolveMxHosts(List.of("raelsite.com", ROOT_HOSTNAME))).thenReturn(Map.of());
 
         List<TyposquatChecker.CheckedCandidate> result = checker.check(ROOT_HOSTNAME, List.of(candidate)).candidates();
 
