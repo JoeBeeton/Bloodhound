@@ -21,29 +21,49 @@ services:
   webui:
     ports: !override []
 
-  # These three join gluetun's network namespace entirely (see gluetun's own
+  # These join gluetun's network namespace entirely (see gluetun's own
   # comment below) instead of their normal networks, so their outbound
   # traffic egresses through Mullvad. localhost replaces the Docker-DNS
   # hostnames worker used to reach zap/screenshotter, since a container on
   # network_mode: service:X has no DNS name of its own on the shared
-  # networks - only gluetun's does. replicas dropped to 1 while behind the
-  # shared namespace: multiple worker replicas would all try to bind the
-  # same actuator port (8081) inside that one shared namespace and collide.
-  worker:
+  # networks - only gluetun's does.
+  #
+  # worker-1/2/3 (not a single `worker` with deploy.replicas: 3 any more, see the base file's
+  # own comment on that service): each already binds a distinct SERVER_PORT in the base file
+  # specifically so all three can share this one namespace without colliding on the actuator
+  # health port - that's the only thing that previously forced replicas down to 1 here.
+  #
+  # cap_add: NET_ADMIN - a real gap found live 2026-10-30: sharing gluetun's network NAMESPACE
+  # does not share its CAPABILITIES. Confirmed concretely: with this missing, TCP connections to
+  # *anything* on the shared subnets failed outright ("Network is unreachable", instant, not a
+  # timeout) even to the bridge gateway itself, while ICMP and `ip route get` both succeeded fine
+  # - the multi-table policy routing gluetun's entrypoint sets up (`ip rule`, see its own
+  # comment) apparently needs the connecting process to hold NET_ADMIN to actually use those
+  # non-default tables for a new TCP socket, not just to configure them. Without this, the whole
+  # shared-namespace design is silently broken for exactly the kind of traffic it exists to carry.
+  worker-1: &worker-vpn-override
     networks: !override []
     network_mode: "service:gluetun"
+    cap_add:
+      - NET_ADMIN
     depends_on:
       gluetun:
         condition: service_started
     environment:
       ZAP_BASE_URL: http://localhost:8080
       SCREENSHOTTER_BASE_URL: http://localhost:3000
-    deploy:
-      replicas: 1
+
+  worker-2:
+    <<: *worker-vpn-override
+
+  worker-3:
+    <<: *worker-vpn-override
 
   zap:
     networks: !override []
     network_mode: "service:gluetun"
+    cap_add:
+      - NET_ADMIN
     depends_on:
       gluetun:
         condition: service_started
@@ -51,6 +71,8 @@ services:
   screenshotter:
     networks: !override []
     network_mode: "service:gluetun"
+    cap_add:
+      - NET_ADMIN
     depends_on:
       gluetun:
         condition: service_started
@@ -98,11 +120,32 @@ services:
       WIREGUARD_PRIVATE_KEY: ${MULLVAD_WIREGUARD_PRIVATE_KEY}
       WIREGUARD_ADDRESSES: ${MULLVAD_WIREGUARD_ADDRESSES}
       SERVER_COUNTRIES: Sweden
+    # gluetun's own DNS_SERVER (on by default in the image - deliberately left on, see this
+    # service's own comment above on fail-closed VPN DNS leak protection for real target
+    # lookups) replaces name resolution for the whole shared network namespace it gives worker/
+    # zap/screenshotter - it has no idea what "central-server" is, a local Compose service name,
+    # not a real internet host. Confirmed live 2026-10-30: worker could resolve and reach
+    # central-server right after the stack first came up, then lost that ability outright after
+    # a plain gluetun restart (no recreation, identical env/image) - genuinely non-deterministic
+    # across restarts, not a one-off. /etc/hosts entries are checked by the system resolver
+    # before any nameserver query is attempted at all, regardless of gluetun's own DNS-server
+    # override, so this is reliable where depending on resolution timing isn't. Points at
+    # central-server's own pinned static IP (see docker-compose.yml's app_net/central-server
+    # comments) - needs to stay in sync if that ever changes.
+    extra_hosts:
+      - "central-server:172.20.0.10"
+    # app_net gets an explicit pin here too (.5, distinct from central-server's .10) - gluetun
+    # has no dependency ordering forcing it to start after central-server, so without an
+    # explicit address it can simply win the race for whatever IP IPAM hands out first on a
+    # fresh network (confirmed live: it grabbed central-server's own .2 pin before central-
+    # server's request was honored, when neither address was explicit). Pinning both removes
+    # the race entirely rather than relying on allocation order.
     networks:
-      - app_net
-      - scan_net
-      - screenshot_net
-      - targets_net
+      app_net:
+        ipv4_address: 172.20.0.5
+      scan_net:
+      screenshot_net:
+      targets_net:
     deploy:
       resources:
         limits:

@@ -50,7 +50,17 @@
 networks:
   db_net:
     internal: true
+  # Pinned (not Docker-auto-assigned) so central-server's own static address below stays valid
+  # across a network recreation - a real gap found live 2026-10-30: gluetun's own DNS_SERVER
+  # takes over name resolution for the whole shared network namespace it gives worker/zap/
+  # screenshotter (see docker-compose.prod.yml's own comment on why that's kept on, not
+  # disabled), which has no idea what "central-server" is - confirmed live, DNS resolution of
+  # that name failed outright through gluetun after a restart. extra_hosts (also in
+  # docker-compose.prod.yml) is the fix, and it needs a stable IP to point at.
   app_net:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
   scan_net:
   screenshot_net:
   targets_net:
@@ -145,8 +155,15 @@ services:
     ports:
       - "8080:8080"
     networks:
-      - db_net
-      - app_net
+      db_net:
+      # Static, not the plain list form every other service here uses - see app_net's own
+      # comment above on why: gluetun's extra_hosts entry (docker-compose.prod.yml) needs a
+      # fixed address for "central-server" to point at. .10, not .2: gluetun itself has no pin
+      # of its own and grabs whatever IPAM hands out first on network creation - confirmed live
+      # it can take .2 before this pin is honored, a real allocation-order race, not a
+      # hypothetical one. Both addresses are now explicit specifically to remove that race.
+      app_net:
+        ipv4_address: 172.20.0.10
     # A container-hardening review found no service in this file had a memory/CPU ceiling at all -
     # `docker stats` confirmed every container showed the *host's* full memory as its limit column,
     # meaning a single runaway service could starve every sibling container on the same host,
@@ -196,7 +213,15 @@ services:
           memory: 256M
           cpus: "0.25"
 
-  worker:
+  # worker-1/2/3: three explicitly-named instances rather than deploy.replicas: 3 (which this
+  # service used until 2026-10-30) - replicas share one anonymous identity, which can't support
+  # each one needing its own distinct SERVER_PORT once docker-compose.prod.yml puts all three
+  # behind one shared Mullvad VPN network namespace (see that file's own comment on gluetun):
+  # three JVMs sharing one namespace would otherwise all try to bind the identical actuator
+  # health port (8081) and collide. Harmless in this base (non-VPN) file too - three distinct
+  # ports cost nothing here, and keeping the base and prod-override shapes consistent (one
+  # override block per named service) matters more than saving a few lines in dev mode.
+  worker-1: &worker
     build:
       context: .
       dockerfile: worker/Dockerfile
@@ -214,7 +239,7 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    environment:
+    environment: &worker-environment
       CENTRAL_SERVER_URL: ${CENTRAL_SERVER_URL}
       WORKER_API_KEY: ${WORKER_API_KEY}
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS}
@@ -232,19 +257,15 @@ services:
       # hostname that doesn't resolve is simply never looked up, same as any other unresolvable
       # name.
       BLOODHOUND_SSRF_ALLOWLIST: juiceshop.local
-    # 3 by default - modern `docker compose` (v2+) honors deploy.replicas on
-    # a plain `docker compose up` without swarm mode, so this doesn't need
-    # --scale. Override ad hoc with: docker compose up --scale worker=N
-    #
+      SERVER_PORT: 8081
     # resources.limits: the highest-value target for this - see central-server's own comment for
     # the general finding. worker specifically spawns nuclei/zgrab2/naabu/subfinder against real,
     # untrusted external hosts (a slow/pathological response, or a nuclei template matching badly,
-    # has no ceiling on the JVM+subprocess tree's combined memory/CPU otherwise) - each of the 3
-    # replicas gets its own limit, not one shared across all three. 2G/1.5 is generous headroom
-    # over live-observed usage (300-650MB per replica at idle/light load) to avoid OOM-killing a
-    # real deep scan (many nuclei templates, a wide naabu port range) mid-run.
+    # has no ceiling on the JVM+subprocess tree's combined memory/CPU otherwise) - each instance
+    # gets its own limit, not one shared across all three. 2G/1.5 is generous headroom over
+    # live-observed usage (300-650MB per instance at idle/light load) to avoid OOM-killing a real
+    # deep scan (many nuclei templates, a wide naabu port range) mid-run.
     deploy:
-      replicas: 3
       resources:
         limits:
           memory: 2G
@@ -254,6 +275,30 @@ services:
       - scan_net
       - screenshot_net
       - targets_net
+
+  worker-2:
+    <<: *worker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *worker-environment
+      SERVER_PORT: 8082
+
+  worker-3:
+    <<: *worker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *worker-environment
+      SERVER_PORT: 8083
 
   # Tier 2 active-scan engine (OWASP ZAP), REST API only - no host port, and
   # (see the networks: block above) reachable only from worker, not from
