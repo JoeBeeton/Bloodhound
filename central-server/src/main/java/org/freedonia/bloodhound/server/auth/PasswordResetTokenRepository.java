@@ -54,6 +54,20 @@ public class PasswordResetTokenRepository {
     }
 
     /**
+     * Which user a still-valid token belongs to, WITHOUT consuming it - lets the reset endpoint
+     * reject a weak new password and leave the link usable for a second try, instead of burning
+     * it on a validation error. The real authorization step is still {@link #consume}.
+     */
+    public Optional<UUID> findValidUserId(String code) {
+        return jdbc.query(
+                        "SELECT user_id FROM password_reset_tokens WHERE code = ? AND expires_at > now()",
+                        (rs, rowNum) -> UUID.fromString(rs.getString("user_id")),
+                        code)
+                .stream()
+                .findFirst();
+    }
+
+    /**
      * Single-use: one atomic {@code DELETE ... RETURNING}, not a SELECT then a separate DELETE -
      * same reasoning as SsoHandoffCodeRepository#consume's own javadoc, so a raced double-submit
      * of the same token can't both succeed. {@code WHERE expires_at > now()} means an expired row

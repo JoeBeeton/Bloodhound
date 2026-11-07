@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.webui;
 
+import org.freedonia.bloodhound.webui.config.ClientAddressForwardingInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -20,6 +21,9 @@ public class WebuiApplication {
 
     @Bean
     public RestClient centralServerClient(@Value("${bloodhound.central-server-url}") String baseUrl) {
-        return RestClient.builder().baseUrl(baseUrl).build();
+        return RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestInterceptor(new ClientAddressForwardingInterceptor())
+                .build();
     }
 }

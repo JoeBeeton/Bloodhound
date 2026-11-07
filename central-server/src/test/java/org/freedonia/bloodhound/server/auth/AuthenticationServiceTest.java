@@ -37,12 +37,12 @@ class AuthenticationServiceTest {
     void login_badCredentials_recordsFailure_throwsGenericException_notLeakingWhetherEmailExists() {
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("bad"));
 
-        assertThatThrownBy(() -> service.login("nobody@example.com", "wrong"))
+        assertThatThrownBy(() -> service.login("nobody@example.com", "wrong", "198.51.100.9"))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(loginAttemptLimiter).checkAllowed("nobody@example.com");
-        verify(loginAttemptLimiter).recordFailure("nobody@example.com");
-        verify(loginAttemptLimiter, never()).recordSuccess(any());
+        verify(loginAttemptLimiter).checkAllowed("198.51.100.9", "nobody@example.com");
+        verify(loginAttemptLimiter).recordFailure("198.51.100.9", "nobody@example.com");
+        verify(loginAttemptLimiter, never()).recordSuccess(any(), any());
         verify(userRepository, never()).touchLastLogin(any());
     }
 
@@ -50,9 +50,9 @@ class AuthenticationServiceTest {
     void login_rateLimited_neverReachesAuthenticationManager() {
         org.mockito.Mockito.doThrow(new LoginRateLimitedException())
                 .when(loginAttemptLimiter)
-                .checkAllowed("limited@example.com");
+                .checkAllowed("198.51.100.9", "limited@example.com");
 
-        assertThatThrownBy(() -> service.login("limited@example.com", "pw")).isInstanceOf(LoginRateLimitedException.class);
+        assertThatThrownBy(() -> service.login("limited@example.com", "pw", "198.51.100.9")).isInstanceOf(LoginRateLimitedException.class);
 
         verify(authenticationManager, never()).authenticate(any());
     }
@@ -65,12 +65,12 @@ class AuthenticationServiceTest {
         when(jwtService.issueAccessToken(user.id(), user.organizationId(), user.role(), user.email())).thenReturn("jwt-token");
         when(jwtService.accessTokenTtlSeconds()).thenReturn(900L);
 
-        AuthResult result = service.login("u@example.com", "correct-password");
+        AuthResult result = service.login("u@example.com", "correct-password", "198.51.100.9");
 
         assertThat(result.accessToken()).isEqualTo("jwt-token");
         assertThat(result.refreshToken()).isNotBlank();
-        verify(loginAttemptLimiter).recordSuccess("u@example.com");
-        verify(loginAttemptLimiter, never()).recordFailure(any());
+        verify(loginAttemptLimiter).recordSuccess("198.51.100.9", "u@example.com");
+        verify(loginAttemptLimiter, never()).recordFailure(any(), any());
         verify(userRepository).touchLastLogin(user.id());
         verify(refreshTokenRepository).insert(eq(result.refreshTokenId()), eq(user.id()), any(), any(), any());
     }

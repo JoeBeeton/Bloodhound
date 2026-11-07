@@ -37,7 +37,7 @@ class McpLoginRateLimitFilterTest {
     void lockedOutEmail_blocksBeforeAuthenticationRunsAtAll() throws Exception {
         String email = "victim@example.com";
         for (int i = 0; i < 10; i++) {
-            loginAttemptLimiter.recordFailure(email);
+            loginAttemptLimiter.recordFailure("127.0.0.1", email);
         }
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/login");
         request.setParameter("username", email);
@@ -59,7 +59,7 @@ class McpLoginRateLimitFilterTest {
         // credential submission.
         String email = "victim@example.com";
         for (int i = 0; i < 10; i++) {
-            loginAttemptLimiter.recordFailure(email);
+            loginAttemptLimiter.recordFailure("127.0.0.1", email);
         }
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/login");
         MockHttpServletResponse response = new MockHttpServletResponse();

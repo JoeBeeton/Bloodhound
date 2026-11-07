@@ -46,7 +46,7 @@ final class McpLoginRateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         if (LOGIN_SUBMIT.matches(request)) {
             try {
-                loginAttemptLimiter.checkAllowed(request.getParameter("username"));
+                loginAttemptLimiter.checkAllowed(request.getRemoteAddr(), request.getParameter("username"));
             } catch (LoginRateLimitedException e) {
                 // Same destination Spring's own default AuthenticationFailureHandler for this
                 // chain redirects to (see McpSecurityConfig's failureHandler) - the plain default

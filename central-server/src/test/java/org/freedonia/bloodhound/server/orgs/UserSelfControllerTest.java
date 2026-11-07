@@ -31,6 +31,8 @@ class UserSelfControllerTest {
     private final UserRepository userRepository = mock(UserRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final org.freedonia.bloodhound.server.apikey.ApiKeyRepository apiKeyRepository =
+            mock(org.freedonia.bloodhound.server.apikey.ApiKeyRepository.class);
     private final LoginAttemptLimiter loginAttemptLimiter = mock(LoginAttemptLimiter.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     // Real, not mocked - a lightweight, deterministic component with no external dependencies
@@ -41,6 +43,7 @@ class UserSelfControllerTest {
             userRepository,
             passwordEncoder,
             refreshTokenRepository,
+            apiKeyRepository,
             loginAttemptLimiter,
             auditLogRepository,
             weakPasswordChecker);
@@ -70,6 +73,7 @@ class UserSelfControllerTest {
         // missing entirely, leaving every other active session (any device) untouched by a
         // password change - the primary self-remediation action a compromised user takes.
         verify(refreshTokenRepository).revokeAllForUser(userId);
+        verify(apiKeyRepository).revokeAllForUser(userId);
     }
 
     @Test

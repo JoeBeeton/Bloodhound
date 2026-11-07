@@ -49,19 +49,20 @@ public class AuthenticationService {
         this.absoluteMaxSessionDuration = Duration.ofDays(absoluteMaxSessionDays);
     }
 
-    public AuthResult login(String email, String password) {
-        loginAttemptLimiter.checkAllowed(email);
+    /** {@code clientIp} scopes the brute-force lockout - see LoginAttemptLimiter; null if unknown. */
+    public AuthResult login(String email, String password, String clientIp) {
+        loginAttemptLimiter.checkAllowed(clientIp, email);
         AuthenticatedUserPrincipal principal;
         try {
             var authentication =
                     authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(email, password));
             principal = (AuthenticatedUserPrincipal) authentication.getPrincipal();
         } catch (AuthenticationException e) {
-            loginAttemptLimiter.recordFailure(email);
+            loginAttemptLimiter.recordFailure(clientIp, email);
             // Deliberately generic - don't leak whether the email exists.
             throw new InvalidCredentialsException();
         }
-        loginAttemptLimiter.recordSuccess(email);
+        loginAttemptLimiter.recordSuccess(clientIp, email);
         User user = principal.user();
         userRepository.touchLastLogin(user.id());
         return issueTokens(user, Instant.now());

@@ -30,9 +30,11 @@ server:
   # Spring ignores that header by default - without this, URLs it builds from the raw incoming
   # request (notably the OAuth2 protected-resource metadata's resource identifier, RFC 9728)
   # come out as http://mcp.bloodhound-asm.com/... instead of https://, failing MCP clients'
-  # audience check against the https:// issuer in MCP_ISSUER_URI. Safe to trust unconditionally:
-  # central-server's port is never published to the host in prod (docker-compose.prod.yml),
-  # only Caddy can reach it, so nothing else can spoof this header directly.
+  # audience check against the https:// issuer in MCP_ISSUER_URI. Also applies X-Forwarded-For to
+  # getRemoteAddr(): webui's ClientAddressForwardingInterceptor sends the real browser address on
+  # every proxied call, which the login/forgot-password limiters key on. Safe to trust
+  # unconditionally: central-server's port is never published to the host in prod
+  # (docker-compose.prod.yml) - only Caddy, webui and the workers can reach it, never a browser.
   forward-headers-strategy: framework
 
 management:

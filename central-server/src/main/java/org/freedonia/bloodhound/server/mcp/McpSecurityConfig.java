@@ -168,12 +168,12 @@ public class McpSecurityConfig {
                 // see its javadoc - rather than Spring's auto-generated default.
                 .formLogin(form -> form.loginPage("/login")
                         .successHandler((request, response, authentication) -> {
-                            loginAttemptLimiter.recordSuccess(authentication.getName());
+                            loginAttemptLimiter.recordSuccess(request.getRemoteAddr(), authentication.getName());
                             new SavedRequestAwareAuthenticationSuccessHandler()
                                     .onAuthenticationSuccess(request, response, authentication);
                         })
                         .failureHandler((request, response, exception) -> {
-                            loginAttemptLimiter.recordFailure(request.getParameter("username"));
+                            loginAttemptLimiter.recordFailure(request.getRemoteAddr(), request.getParameter("username"));
                             new SimpleUrlAuthenticationFailureHandler("/login?error")
                                     .onAuthenticationFailure(request, response, exception);
                         }))

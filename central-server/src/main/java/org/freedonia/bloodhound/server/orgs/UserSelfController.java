@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.JwtPrincipal;
 import org.freedonia.bloodhound.server.auth.LoginAttemptLimiter;
@@ -42,6 +43,7 @@ public class UserSelfController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final ApiKeyRepository apiKeyRepository;
     private final LoginAttemptLimiter loginAttemptLimiter;
     private final AuditLogRepository auditLogRepository;
     private final WeakPasswordChecker weakPasswordChecker;
@@ -50,12 +52,14 @@ public class UserSelfController {
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
+            ApiKeyRepository apiKeyRepository,
             LoginAttemptLimiter loginAttemptLimiter,
             AuditLogRepository auditLogRepository,
             WeakPasswordChecker weakPasswordChecker) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.apiKeyRepository = apiKeyRepository;
         this.loginAttemptLimiter = loginAttemptLimiter;
         this.auditLogRepository = auditLogRepository;
         this.weakPasswordChecker = weakPasswordChecker;
@@ -139,8 +143,11 @@ public class UserSelfController {
         // think my account is compromised, change my password" as a self-remediation action.
         // This does sign the caller themselves out too (their next /refresh will fail and they'll
         // need to log in again) - the same "signed out everywhere" behavior a password change
-        // triggers on most major platforms, not an oversight.
+        // triggers on most major platforms, not an oversight. The user's API keys go too, for the
+        // same reason: a review found an attacker's self-minted keys survived the victim's
+        // "change my password" remediation for up to their full 90-day lifetime.
         refreshTokenRepository.revokeAllForUser(user.id());
+        apiKeyRepository.revokeAllForUser(user.id());
         return ResponseEntity.noContent().build();
     }
 

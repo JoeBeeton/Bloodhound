@@ -166,6 +166,7 @@ public class OrgUserController {
         String temporaryPassword = generateTemporaryPassword();
         userRepository.updatePasswordHash(id, passwordEncoder.encode(temporaryPassword));
         refreshTokenRepository.revokeAllForUser(id);
+        apiKeyRepository.revokeAllForUser(id);
         auditLogRepository.record(
                 orgId,
                 principal.userId(),

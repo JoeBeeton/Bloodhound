@@ -39,6 +39,8 @@ class AuthControllerTest {
     private final PasswordResetTokenRepository passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
+    private final org.freedonia.bloodhound.server.apikey.ApiKeyRepository apiKeyRepository =
+            mock(org.freedonia.bloodhound.server.apikey.ApiKeyRepository.class);
     private final WeakPasswordChecker weakPasswordChecker = mock(WeakPasswordChecker.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final EmailSender emailSender = mock(EmailSender.class);
@@ -50,6 +52,7 @@ class AuthControllerTest {
             passwordResetTokenRepository,
             passwordEncoder,
             refreshTokenRepository,
+            apiKeyRepository,
             weakPasswordChecker,
             auditLogRepository,
             emailSender,
@@ -67,9 +70,9 @@ class AuthControllerTest {
                 UUID.randomUUID(), UUID.randomUUID(), "u@example.com", "Name", "hash", "LOCAL", "VIEWER", "ACTIVE",
                 Instant.now(), true, null);
         AuthResult result = new AuthResult("access-jwt", 900L, "raw-refresh", UUID.randomUUID(), UserSummary.from(user));
-        when(authenticationService.login("u@example.com", "correct-pw")).thenReturn(result);
+        when(authenticationService.login("u@example.com", "correct-pw", "127.0.0.1")).thenReturn(result);
 
-        ResponseEntity<AuthResponse> response = controller.login(new LoginRequest("u@example.com", "correct-pw"));
+        ResponseEntity<AuthResponse> response = controller.login(new LoginRequest("u@example.com", "correct-pw"), new org.springframework.mock.web.MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody().accessToken()).isEqualTo("access-jwt");
@@ -77,10 +80,10 @@ class AuthControllerTest {
 
     @Test
     void login_invalidCredentials_401() {
-        when(authenticationService.login("u@example.com", "wrong-pw")).thenThrow(new InvalidCredentialsException());
+        when(authenticationService.login("u@example.com", "wrong-pw", "127.0.0.1")).thenThrow(new InvalidCredentialsException());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> controller.login(new LoginRequest("u@example.com", "wrong-pw")))
+                        () -> controller.login(new LoginRequest("u@example.com", "wrong-pw"), new org.springframework.mock.web.MockHttpServletRequest()))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(401));
     }
@@ -91,10 +94,10 @@ class AuthControllerTest {
         // way to distinguish "you're rate-limited" from any other failure, since both collapsed
         // into the same generic error - a real Retry-After header (not just a status code) is
         // what lets the UI show "try again in N minutes" instead of an unhelpful "try again".
-        when(authenticationService.login("u@example.com", "wrong-pw")).thenThrow(new LoginRateLimitedException());
-        when(loginAttemptLimiter.remainingLockoutSeconds("u@example.com")).thenReturn(645L);
+        when(authenticationService.login("u@example.com", "wrong-pw", "127.0.0.1")).thenThrow(new LoginRateLimitedException());
+        when(loginAttemptLimiter.remainingLockoutSeconds("127.0.0.1", "u@example.com")).thenReturn(645L);
 
-        ResponseEntity<AuthResponse> response = controller.login(new LoginRequest("u@example.com", "wrong-pw"));
+        ResponseEntity<AuthResponse> response = controller.login(new LoginRequest("u@example.com", "wrong-pw"), new org.springframework.mock.web.MockHttpServletRequest());
 
         assertThat(response.getStatusCode().value()).isEqualTo(429);
         assertThat(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("645");
@@ -148,7 +151,7 @@ class AuthControllerTest {
 
     @Test
     void resetPassword_invalidOrExpiredToken_400WithMessage_notABareStatusException() {
-        when(passwordResetTokenRepository.consume("bad-token")).thenReturn(Optional.empty());
+        when(passwordResetTokenRepository.findValidUserId("bad-token")).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("bad-token", "new-password-123"));
 
@@ -157,9 +160,9 @@ class AuthControllerTest {
     }
 
     @Test
-    void resetPassword_weakPassword_400WithMessage() {
+    void resetPassword_weakPassword_400WithMessage_tokenLeftUsableForAnotherTry() {
         User user = localUser(UUID.randomUUID());
-        when(passwordResetTokenRepository.consume("tok")).thenReturn(Optional.of(user.id()));
+        when(passwordResetTokenRepository.findValidUserId("tok")).thenReturn(Optional.of(user.id()));
         when(userRepository.findById(user.id())).thenReturn(Optional.of(user));
         when(weakPasswordChecker.isWeak("password1", user.email())).thenReturn(true);
 
@@ -167,11 +170,27 @@ class AuthControllerTest {
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
         verify(userRepository, never()).updatePasswordHash(any(), any());
+        verify(passwordResetTokenRepository, never()).consume(any());
     }
 
     @Test
-    void resetPassword_success_updatesHashAndRevokesSessions() {
+    void resetPassword_tokenConsumedConcurrently_400_passwordUnchanged() {
         User user = localUser(UUID.randomUUID());
+        when(passwordResetTokenRepository.findValidUserId("tok")).thenReturn(Optional.of(user.id()));
+        when(userRepository.findById(user.id())).thenReturn(Optional.of(user));
+        when(weakPasswordChecker.isWeak("a-genuinely-strong-password", user.email())).thenReturn(false);
+        when(passwordResetTokenRepository.consume("tok")).thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("tok", "a-genuinely-strong-password"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        verify(userRepository, never()).updatePasswordHash(any(), any());
+    }
+
+    @Test
+    void resetPassword_success_updatesHashAndRevokesSessionsAndApiKeys() {
+        User user = localUser(UUID.randomUUID());
+        when(passwordResetTokenRepository.findValidUserId("tok")).thenReturn(Optional.of(user.id()));
         when(passwordResetTokenRepository.consume("tok")).thenReturn(Optional.of(user.id()));
         when(userRepository.findById(user.id())).thenReturn(Optional.of(user));
         when(weakPasswordChecker.isWeak("a-genuinely-strong-password", user.email())).thenReturn(false);
@@ -182,5 +201,6 @@ class AuthControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(204);
         verify(userRepository).updatePasswordHash(user.id(), "new-hash");
         verify(refreshTokenRepository).revokeAllForUser(user.id());
+        verify(apiKeyRepository).revokeAllForUser(user.id());
     }
 }

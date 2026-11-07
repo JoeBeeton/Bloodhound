@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.freedonia.bloodhound.server.apikey.ApiKeyRepository;
 import org.freedonia.bloodhound.server.audit.AuditLogRepository;
 import org.freedonia.bloodhound.server.auth.dto.AuthResponse;
 import org.freedonia.bloodhound.server.auth.dto.ForgotPasswordRequest;
@@ -45,6 +46,7 @@ public class AuthController {
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final ApiKeyRepository apiKeyRepository;
     private final WeakPasswordChecker weakPasswordChecker;
     private final AuditLogRepository auditLogRepository;
     private final EmailSender emailSender;
@@ -58,6 +60,7 @@ public class AuthController {
             PasswordResetTokenRepository passwordResetTokenRepository,
             PasswordEncoder passwordEncoder,
             RefreshTokenRepository refreshTokenRepository,
+            ApiKeyRepository apiKeyRepository,
             WeakPasswordChecker weakPasswordChecker,
             AuditLogRepository auditLogRepository,
             EmailSender emailSender,
@@ -69,6 +72,7 @@ public class AuthController {
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.apiKeyRepository = apiKeyRepository;
         this.weakPasswordChecker = weakPasswordChecker;
         this.auditLogRepository = auditLogRepository;
         this.emailSender = emailSender;
@@ -76,9 +80,14 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<AuthResponse> login(
+            @Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
+        // The real client's address - webui's AuthProxyController forwards it as X-Forwarded-For,
+        // which server.forward-headers-strategy applies to getRemoteAddr().
+        String clientIp = servletRequest.getRemoteAddr();
         try {
-            return ResponseEntity.ok(AuthResponse.from(authenticationService.login(request.email(), request.password())));
+            return ResponseEntity.ok(
+                    AuthResponse.from(authenticationService.login(request.email(), request.password(), clientIp)));
         } catch (InvalidCredentialsException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid email or password");
         } catch (LoginRateLimitedException e) {
@@ -87,7 +96,7 @@ public class AuthController {
             // from any other failure without this, so it showed the same generic error message
             // for both. ResponseStatusException doesn't support adding response headers, hence
             // building the ResponseEntity directly here instead of throwing like the other cases.
-            long retryAfterSeconds = loginAttemptLimiter.remainingLockoutSeconds(request.email());
+            long retryAfterSeconds = loginAttemptLimiter.remainingLockoutSeconds(clientIp, request.email());
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
                     .build();
@@ -158,22 +167,32 @@ public class AuthController {
 
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
-        Optional<UUID> userId = passwordResetTokenRepository.consume(request.token());
-        if (userId.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorMessageResponse("This reset link is invalid or has expired - request a new one."));
+        // Validate the new password BEFORE consuming the token: a review found the original
+        // consume-first order burned the link on a merely-too-weak password, forcing a whole new
+        // forgot-password round trip (or, for an invite, a new invite from an admin).
+        Optional<UUID> pendingUserId = passwordResetTokenRepository.findValidUserId(request.token());
+        if (pendingUserId.isEmpty()) {
+            return invalidResetLink();
         }
-        User user = userRepository.findById(userId.get()).orElseThrow();
+        User user = userRepository.findById(pendingUserId.get()).orElseThrow();
         if (weakPasswordChecker.isWeak(request.newPassword(), user.email())) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorMessageResponse(
                             "This password is too common or easily guessed. Choose something less predictable."));
         }
+        // consume() is still the single-use authorization step - a concurrent submit of the same
+        // token that won the race between the lookup above and here gets the invalid-link answer.
+        if (!passwordResetTokenRepository.consume(request.token()).equals(pendingUserId)) {
+            return invalidResetLink();
+        }
         userRepository.updatePasswordHash(user.id(), passwordEncoder.encode(request.newPassword()));
         // Same "something changed, sign out everywhere" reasoning as UserSelfController#changePassword's
         // own revoke - doubly so here, since reaching this endpoint at all means someone (hopefully
-        // the account owner) believed the password needed resetting in the first place.
+        // the account owner) believed the password needed resetting in the first place. API keys
+        // too: a review found a reset after a suspected compromise left any keys the attacker had
+        // minted working for their full remaining lifetime (up to 90 days).
         refreshTokenRepository.revokeAllForUser(user.id());
+        apiKeyRepository.revokeAllForUser(user.id());
         // Self-service, like USER_PASSWORD_CHANGED - the "actor" is the account itself, reached
         // through an emailed link rather than an authenticated session, not an admin acting on it.
         auditLogRepository.record(
@@ -185,5 +204,10 @@ public class AuthController {
                 user.id().toString(),
                 "email=" + user.email());
         return ResponseEntity.noContent().build();
+    }
+
+    private static ResponseEntity<ErrorMessageResponse> invalidResetLink() {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorMessageResponse("This reset link is invalid or has expired - request a new one."));
     }
 }
