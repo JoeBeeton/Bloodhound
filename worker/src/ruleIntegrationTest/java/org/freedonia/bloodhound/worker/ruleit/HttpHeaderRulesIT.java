@@ -33,7 +33,8 @@ class HttpHeaderRulesIT {
                 "COOKIE_MISSING_SECURE_FLAG",
                 "COOKIE_MISSING_HTTPONLY_FLAG",
                 "COOKIE_MISSING_SAMESITE",
-                "COOKIE_MISSING_HOST_PREFIX");
+                "COOKIE_MISSING_HOST_PREFIX",
+                "HTTP_OPEN_REDIRECT");
         ScanSupport.assertAbsent(result, "HEADER_CSP_WEAK_POLICY");
         ScanSupport.assertAsset(result, "COOKIE_MISSING_SECURE_FLAG", FixtureHosts.HEADERS_MISSING + ": session");
         ScanSupport.assertAsset(result, "COOKIE_MISSING_HOST_PREFIX", FixtureHosts.HEADERS_MISSING + ": auth");
@@ -62,6 +63,7 @@ class HttpHeaderRulesIT {
                 "COOKIE_MISSING_SECURE_FLAG",
                 "COOKIE_MISSING_HTTPONLY_FLAG",
                 "COOKIE_MISSING_SAMESITE",
-                "COOKIE_MISSING_HOST_PREFIX");
+                "COOKIE_MISSING_HOST_PREFIX",
+                "HTTP_OPEN_REDIRECT");
     }
 }

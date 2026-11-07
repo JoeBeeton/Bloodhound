@@ -43,7 +43,7 @@ public class HttpHeaderModule implements ScanModule {
                 SUBDOMAIN_CAP,
                 POOL_SIZE,
                 PER_HOST_TIMEOUT_SECONDS,
-                hostname -> HttpHeaderParser.parse(hostname, fetcher.fetch(hostname)));
+                hostname -> HttpHeaderParser.parse(hostname, fetcher.fetch(hostname, context.hostname())));
         return new ModuleResult(
                 result.findings(), Map.of("hostsCovered", result.hostsCovered(), "hostsAttempted", result.hostsAttempted()));
     }

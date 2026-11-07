@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import org.freedonia.bloodhound.common.findings.RawFinding;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class HttpHeaderParserTest {
 
@@ -334,24 +336,102 @@ class HttpHeaderParserTest {
         assertThat(HttpHeaderParser.parse("example.com", result)).isEmpty();
     }
 
+    private static final String PROBE_URL =
+            "https://example.com/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F";
+
+    private static FetchResult openRedirectAt(String requestUrl, String location) {
+        return withOpenRedirect(new FetchResult.OpenRedirectProbe("redirect", location, requestUrl));
+    }
+
     @Test
-    void openRedirect_locationCarriesProbeMarker_flaggedMedium() {
-        FetchResult result = withOpenRedirect(
-                new FetchResult.OpenRedirectProbe("redirect", "https://bh-open-redirect-probe.invalid/"));
+    void openRedirect_locationIsTheProbeDomain_flaggedMedium() {
+        FetchResult result = openRedirectAt(PROBE_URL, "https://bh-open-redirect-probe.invalid/");
         List<RawFinding> findings = HttpHeaderParser.parse("example.com", result);
         assertThat(findings).anySatisfy(f -> {
             assertThat(f.ruleId()).isEqualTo("HTTP_OPEN_REDIRECT");
             assertThat(f.severity().name()).isEqualTo("MEDIUM");
             assertThat(f.evidence()).containsEntry("paramName", "redirect");
+            assertThat(f.evidence()).containsEntry("requestUrl", PROBE_URL);
         });
     }
 
+    /** Shapes a browser treats as off-site to the probe domain. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "https://bh-open-redirect-probe.invalid/",
+        "HTTPS://BH-OPEN-REDIRECT-PROBE.INVALID/path?x=1",
+        "http://bh-open-redirect-probe.invalid",
+        "//bh-open-redirect-probe.invalid/",
+        "/\\bh-open-redirect-probe.invalid/",
+        "\\\\bh-open-redirect-probe.invalid/",
+        "https:\\\\bh-open-redirect-probe.invalid\\",
+        "  https://bh-open-redirect-probe.invalid/  ",
+        "https://bh-open-redirect-probe.invalid./",
+        "https://bh-open-redirect-probe.invalid:8443/",
+        "https://www.example.com@bh-open-redirect-probe.invalid/",
+        "https://sub.bh-open-redirect-probe.invalid/",
+        "/\t/bh-open-redirect-probe.invalid/"
+    })
+    void openRedirect_offSiteToProbeDomain_flagged(String location) {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", openRedirectAt(PROBE_URL, location))))
+                .contains("HTTP_OPEN_REDIRECT");
+    }
+
+    /**
+     * The redirect shapes behind all 12 open prod findings before this check resolved hosts: each
+     * stays on the target's own site and merely keeps the probe value in its query string.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        // apex to www, query kept
+        "https://www.example.com/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F",
+        "https://www.example.com:443/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F",
+        // param duplicated on the way
+        "https://www.example.com/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F"
+                + "&redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F",
+        // subdomain to the main site's section
+        "https://www.example.com/careers/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F",
+        // own login page with a ReturnUrl
+        "https://example.com/login?ReturnUrl=%2F%3Fredirect%3Dhttps%253A%252F%252Fbh-open-redirect-probe.invalid%252F",
+        "/login?ReturnUrl=%2F%3Fredirect%3Dhttps%253A%252F%252Fbh-open-redirect-probe.invalid%252F",
+        // tracking parameter on the apex
+        "https://example.com/?kol_redirect_url=https%3A%2F%2Fapp.example.com%2F%3Fredirect%3D"
+                + "https%253A%252F%252Fbh-open-redirect-probe.invalid%252F",
+        // locale prefix, relative
+        "/se/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F",
+        // probe marker in the path of a same-site URL
+        "https://example.com/bh-open-redirect-probe.invalid/",
+        // a host that only starts with the marker belongs to someone else, not the probe
+        "https://bh-open-redirect-probe.invalid.example.com/",
+        // third-party SSO carrying the value inside its own redirect_uri
+        "https://login.example-sso.com/authorize?redirect_uri=https%3A%2F%2Fexample.com%2F%3Fredirect%3D"
+                + "https%253A%252F%252Fbh-open-redirect-probe.invalid%252F"
+    })
+    void openRedirect_sameSiteRedirectCarryingTheProbeValue_notFlagged(String location) {
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", openRedirectAt(PROBE_URL, location))))
+                .doesNotContain("HTTP_OPEN_REDIRECT");
+    }
+
     @Test
-    void openRedirect_locationIsOffHostButDoesNotCarryTheProbeMarker_notFlagged() {
+    void openRedirect_relativeLocationResolvedAgainstTheHopThatReturnedIt() {
+        // The fetcher followed apex -> www; the www hop then redirected to the probe domain with
+        // a protocol-relative URL. Resolution must use the hop's URL, not the original probe URL.
+        String hop = "https://www.example.com/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F";
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", openRedirectAt(hop, "//bh-open-redirect-probe.invalid/"))))
+                .contains("HTTP_OPEN_REDIRECT");
+    }
+
+    @Test
+    void openRedirect_locationIsOffHostButNotTheProbeDomain_notFlagged() {
         // An off-host 3xx alone isn't enough - a canonical-domain or SSO redirect that fires
-        // regardless of the param's value would false-positive here without the marker check.
-        FetchResult result =
-                withOpenRedirect(new FetchResult.OpenRedirectProbe("redirect", "https://login.example-sso.com/"));
+        // regardless of the param's value would false-positive here.
+        FetchResult result = openRedirectAt(PROBE_URL, "https://login.example-sso.com/");
+        assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HTTP_OPEN_REDIRECT");
+    }
+
+    @Test
+    void openRedirect_missingRequestUrl_notFlagged() {
+        FetchResult result = openRedirectAt(null, "https://bh-open-redirect-probe.invalid/");
         assertThat(ruleIds(HttpHeaderParser.parse("example.com", result))).doesNotContain("HTTP_OPEN_REDIRECT");
     }
 

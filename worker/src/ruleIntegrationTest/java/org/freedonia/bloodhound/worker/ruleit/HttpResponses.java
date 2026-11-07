@@ -1,6 +1,8 @@
 package org.freedonia.bloodhound.worker.ruleit;
 
 import java.io.ByteArrayOutputStream;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,7 +28,9 @@ public final class HttpResponses {
     private static final String LARAVEL_BASELINE =
             "<!DOCTYPE html><div class=\"whoops-container\"><h1>Whoops!</h1><p>probe-baseline</p></div>";
 
-    public record Request(String method, String path, String host, Map<String, List<String>> headers, String rawHead) {}
+    /** {@code path} has no query string; {@code query} is the part after {@code ?}, empty when there is none. */
+    public record Request(
+            String method, String path, String query, String host, Map<String, List<String>> headers, String rawHead) {}
 
     public record Response(int status, String contentType, byte[] body, Map<String, List<String>> headers) {}
 
@@ -40,7 +44,7 @@ public final class HttpResponses {
             return headersMissing(method, request);
         }
         if (FixtureHosts.HEADERS_CSP.equals(host)) {
-            return headersCsp(tls, method);
+            return headersCsp(tls, method, path, request.query());
         }
         if (FixtureHosts.EXPOSURE.equals(host)) {
             return exposure(method, path);
@@ -57,7 +61,32 @@ public final class HttpResponses {
         return text(404, "text/plain", "not-found\n");
     }
 
+    /**
+     * Open-redirect probe shapes. {@code redirect} sends the visitor to the site's own login page
+     * with the value carried along, the false-positive shape. {@code url} canonicalises to a
+     * {@code /www/} hop on the same host, and that hop honours the value: a real open redirect the
+     * probe only reaches by following the first, same-site redirect.
+     */
+    private static Response openRedirectProbe(String host, String path, String query) {
+        if (path.equals("/") && query.startsWith("redirect=")) {
+            String back = URLEncoder.encode("/?" + query, StandardCharsets.UTF_8);
+            return text(302, "text/plain", "login\n", "Location", "https://" + host + "/login?ReturnUrl=" + back);
+        }
+        if (path.equals("/") && query.startsWith("url=")) {
+            return text(301, "text/plain", "canonical\n", "Location", "https://" + host + "/www/?" + query);
+        }
+        if (path.equals("/www/") && query.startsWith("url=")) {
+            String value = URLDecoder.decode(query.substring("url=".length()), StandardCharsets.UTF_8);
+            return text(302, "text/plain", "bye\n", "Location", value);
+        }
+        return null;
+    }
+
     private static Response headersMissing(String method, Request request) {
+        Response redirect = openRedirectProbe(request.host(), request.path(), request.query());
+        if (redirect != null) {
+            return redirect;
+        }
         Map<String, List<String>> headers = new LinkedHashMap<>();
         headers.put("Server", List.of("Apache/2.4.41"));
         headers.put("Set-Cookie", List.of("session=abc", "auth=1; Secure"));
@@ -72,9 +101,21 @@ public final class HttpResponses {
         return new Response(200, "text/html", "<html>missing</html>".getBytes(StandardCharsets.UTF_8), headers);
     }
 
-    private static Response headersCsp(boolean tls, String method) {
+    private static Response headersCsp(boolean tls, String method, String path, String query) {
         if (!tls) {
             return text(301, "text/plain", "see https\n", "Location", "https://" + FixtureHosts.HEADERS_CSP + "/");
+        }
+        // Same-site redirects that keep the probe value, and an SSO hop off-site: none is an open redirect.
+        if (path.equals("/") && query.startsWith("redirect=")) {
+            return openRedirectProbe(FixtureHosts.HEADERS_CSP, path, query);
+        }
+        if (path.equals("/") && query.startsWith("url=")) {
+            return text(301, "text/plain", "same\n", "Location", "/en/?" + query);
+        }
+        if (path.equals("/") && !query.isEmpty()) {
+            return text(302, "text/plain", "sso\n", "Location",
+                    "https://login.sso.invalid/authorize?redirect_uri=" + URLEncoder.encode(
+                            "https://" + FixtureHosts.HEADERS_CSP + "/?" + query, StandardCharsets.UTF_8));
         }
         if ("TRACE".equals(method)) {
             return text(405, "text/plain", "method not allowed\n");

@@ -1,5 +1,6 @@
 package org.freedonia.bloodhound.worker.modules.http;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -352,27 +353,36 @@ public final class HttpHeaderParser {
     }
 
     /**
-     * The decisive signal is the fabricated probe marker (see
-     * {@link HttpHeaderFetcher#OPEN_REDIRECT_PROBE_TARGET}) reappearing in the Location header -
-     * proving the server actually redirected to the exact attacker-chosen value handed to it via
-     * a known redirect-param name, not just any off-host 3xx (which could be an unrelated
-     * canonical-domain or SSO redirect that fires every time regardless of what the param says).
-     * {@code .contains(...)}, not an exact match: URLEncoder leaves letters/digits/"."/"-" literal
-     * (only reserved characters like "://" get percent-escaped), so the marker survives intact in
-     * the Location header whether the server echoes it back raw or re-escapes it.
+     * The decisive signal is a redirect whose destination host, resolved the way a browser
+     * resolves it, is the fabricated probe domain (see
+     * {@link HttpHeaderFetcher#OPEN_REDIRECT_PROBE_TARGET}). That proves the server sent the
+     * visitor to the attacker-chosen value. The marker merely appearing in the Location header is
+     * not enough: a same-site redirect that keeps the query string ({@code
+     * https://www.example.com/?redirect=https%3A%2F%2Fbh-open-redirect-probe.invalid%2F}) carries it
+     * too, and that shape was every one of the 12 open findings in prod before this check existed.
      */
     static List<RawFinding> openRedirectFindings(String hostname, FetchResult result) {
         FetchResult.OpenRedirectProbe probe = result.openRedirect();
-        if (probe == null
-                || probe.location() == null
-                || !probe.location().toLowerCase(Locale.ROOT).contains(HttpHeaderFetcher.OPEN_REDIRECT_PROBE_MARKER)) {
+        if (probe == null || probe.location() == null || probe.requestUrl() == null) {
+            return List.of();
+        }
+        URI requestUrl;
+        try {
+            requestUrl = URI.create(probe.requestUrl());
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        if (!OpenRedirectLocation.pointsAtProbe(requestUrl, probe.location())) {
             return List.of();
         }
         return List.of(finding(
                 "HTTP_OPEN_REDIRECT",
                 Severity.MEDIUM,
                 hostname,
-                Map.of("paramName", probe.paramName(), "location", probe.location())));
+                Map.of(
+                        "paramName", probe.paramName(),
+                        "location", probe.location(),
+                        "requestUrl", probe.requestUrl())));
     }
 
     private static RawFinding finding(String ruleId, Severity severity, String asset, Map<String, Object> evidence) {

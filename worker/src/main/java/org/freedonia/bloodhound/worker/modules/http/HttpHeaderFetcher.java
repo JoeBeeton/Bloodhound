@@ -56,18 +56,34 @@ public class HttpHeaderFetcher {
     private static final List<String> OPEN_REDIRECT_PARAMS =
             List.of("redirect", "url", "next", "return", "continue");
 
-    /** Same RFC 2606 "definitely not a real, resolvable domain" reasoning as {@link #CORS_PROBE_ORIGIN} - distinctive enough that this exact substring reappearing in a Location header (see HttpHeaderParser#openRedirectFindings) can only mean the server used this probe's own param value, not an unrelated same-pattern coincidence. */
+    /**
+     * Same RFC 2606 "definitely not a real, resolvable domain" reasoning as {@link #CORS_PROBE_ORIGIN}.
+     * A finding needs a redirect whose resolved host is this domain (see OpenRedirectLocation), not
+     * just this string somewhere in the Location header: same-site redirects routinely carry the
+     * query string, probe value included.
+     */
     static final String OPEN_REDIRECT_PROBE_MARKER = "bh-open-redirect-probe.invalid";
 
     static final String OPEN_REDIRECT_PROBE_TARGET = "https://" + OPEN_REDIRECT_PROBE_MARKER + "/";
 
-    public FetchResult fetch(String hostname) throws ScanModuleException {
+    /** Requests per param chain: the probe itself plus up to two same-site hops (apex to www, then a locale prefix). */
+    static final int OPEN_REDIRECT_MAX_HOPS = 3;
+
+    /** Total time for all open-redirect chains on one host. */
+    private static final Duration OPEN_REDIRECT_BUDGET = Duration.ofSeconds(12);
+
+    /**
+     * @param rootDomain the scan target's root domain. Open-redirect probing follows same-site
+     *     hops under it (careers.example.com to www.example.com) and nowhere else. Null limits
+     *     following to {@code hostname} and its subdomains.
+     */
+    public FetchResult fetch(String hostname, String rootDomain) throws ScanModuleException {
         FetchResult.PlainHttpProbe plainHttp = probePlainHttp(hostname);
         try {
-            return toResult(true, hostname, get("https://" + hostname + "/"), plainHttp);
+            return toResult(true, hostname, rootDomain, get("https://" + hostname + "/"), plainHttp);
         } catch (Exception httpsFailure) {
             try {
-                return toResult(false, hostname, get("http://" + hostname + "/"), plainHttp);
+                return toResult(false, hostname, rootDomain, get("http://" + hostname + "/"), plainHttp);
             } catch (Exception httpFailure) {
                 throw new ScanModuleException("failed to reach " + hostname + " over HTTPS or HTTP", httpFailure);
             }
@@ -150,31 +166,55 @@ public class HttpHeaderFetcher {
     }
 
     /**
-     * One GET per candidate param name (see {@link #OPEN_REDIRECT_PARAMS}), stopping at the first
-     * one that comes back with any 3xx + Location header at all - whether that Location is
-     * actually off-host (a real open redirect) vs. this param name coincidentally mapping to some
-     * other in-site redirect is a decision for HttpHeaderParser, not this raw-capture fetch step.
-     * {@code Redirect.NEVER} on the shared client (set at class level) means the raw 3xx + Location
-     * is read directly, never silently followed. Best-effort per param: a failure just means try
-     * the next name, not a whole-module failure - the main fetch already succeeded.
+     * One request chain per candidate param name (see {@link #OPEN_REDIRECT_PARAMS}). It stops at
+     * the first redirect that lands on the probe domain. A redirect that stays on the target's own
+     * site and keeps the probe value (apex to {@code www}, a locale prefix) is followed, up to
+     * {@link #OPEN_REDIRECT_MAX_HOPS} requests, because the application that might honour the
+     * param sits behind it. Anything else ends that param's chain and the next name is tried.
+     * Stopping at the first 3xx of any kind used to end the probe on {@code redirect} for nearly
+     * every apex, so the other names and the real application were never tested.
+     *
+     * <p>{@code Redirect.NEVER} on the shared client means each hop is read raw and every
+     * followed hop is checked by SafeAddressValidator before it is requested. The whole probe has
+     * a time budget so slow hosts can't push the module past HostFanOut's per-host timeout.
+     * Best-effort: a failure just means the next param name is tried.
      */
-    private FetchResult.OpenRedirectProbe probeOpenRedirect(boolean https, String hostname) {
+    private FetchResult.OpenRedirectProbe probeOpenRedirect(boolean https, String hostname, String rootDomain) {
         String encodedTarget = URLEncoder.encode(OPEN_REDIRECT_PROBE_TARGET, StandardCharsets.UTF_8);
+        long deadline = System.nanoTime() + OPEN_REDIRECT_BUDGET.toNanos();
         for (String param : OPEN_REDIRECT_PARAMS) {
+            URI current = URI.create((https ? "https://" : "http://") + hostname + "/?" + param + "=" + encodedTarget);
             try {
-                String url = (https ? "https://" : "http://") + hostname + "/?" + param + "=" + encodedTarget;
-                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                        .timeout(Duration.ofSeconds(8))
-                        .header("User-Agent", ScanUserAgent.VALUE)
-                        .GET()
-                        .build();
-                HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
-                String location = response.headers().firstValue("location").orElse(null);
-                if (response.statusCode() >= 300 && response.statusCode() < 400 && location != null) {
-                    return new FetchResult.OpenRedirectProbe(param, location);
+                for (int hop = 0; hop < OPEN_REDIRECT_MAX_HOPS; hop++) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) {
+                        return null;
+                    }
+                    SafeAddressValidator.requireSafeIfResolvable(current.getHost());
+                    HttpRequest request = HttpRequest.newBuilder(current)
+                            .timeout(Duration.ofNanos(Math.min(remaining, Duration.ofSeconds(8).toNanos())))
+                            .header("User-Agent", ScanUserAgent.VALUE)
+                            .GET()
+                            .build();
+                    HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+                    String location = response.headers().firstValue("location").orElse(null);
+                    if (response.statusCode() < 300 || response.statusCode() >= 400 || location == null) {
+                        break;
+                    }
+                    if (OpenRedirectLocation.pointsAtProbe(current, location)) {
+                        return new FetchResult.OpenRedirectProbe(param, location, current.toString());
+                    }
+                    URI next = OpenRedirectLocation.resolve(current, location);
+                    if (!OpenRedirectLocation.followable(next, rootDomain, hostname)) {
+                        break;
+                    }
+                    current = next;
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
             } catch (Exception ignored) {
-                // this param name's probe failed outright - try the next one
+                // this param name's chain failed outright - try the next one
             }
         }
         return null;
@@ -191,7 +231,11 @@ public class HttpHeaderFetcher {
     }
 
     private FetchResult toResult(
-            boolean https, String hostname, HttpResponse<Void> response, FetchResult.PlainHttpProbe plainHttp) {
+            boolean https,
+            String hostname,
+            String rootDomain,
+            HttpResponse<Void> response,
+            FetchResult.PlainHttpProbe plainHttp) {
         Map<String, String> headers = new LinkedHashMap<>();
         response.headers().map().forEach((name, values) -> {
             if (!values.isEmpty()) {
@@ -200,7 +244,7 @@ public class HttpHeaderFetcher {
         });
         FetchResult.CorsProbe cors = probeCors(https, hostname);
         FetchResult.TraceProbe trace = probeTraceMethod(https, hostname);
-        FetchResult.OpenRedirectProbe openRedirect = probeOpenRedirect(https, hostname);
+        FetchResult.OpenRedirectProbe openRedirect = probeOpenRedirect(https, hostname, rootDomain);
         return new FetchResult(
                 https, headers, response.headers().allValues("set-cookie"), plainHttp, cors, trace, openRedirect);
     }

@@ -89,8 +89,10 @@ public final class LoopbackHttpServer implements AutoCloseable {
             String[] requestLine = lines[0].split(" ", 3);
             String method = requestLine.length > 0 ? requestLine[0] : "GET";
             String path = requestLine.length > 1 ? requestLine[1] : "/";
+            String queryString = "";
             int query = path.indexOf('?');
             if (query >= 0) {
+                queryString = path.substring(query + 1);
                 path = path.substring(0, query);
             }
             Map<String, List<String>> headers = new LinkedHashMap<>();
@@ -123,7 +125,7 @@ public final class LoopbackHttpServer implements AutoCloseable {
             }
             host = host.toLowerCase(Locale.ROOT);
             HttpResponses.Response response =
-                    router.route(tls, new HttpResponses.Request(method, path, host, headers, raw));
+                    router.route(tls, new HttpResponses.Request(method, path, queryString, host, headers, raw));
             write(socket.getOutputStream(), response);
         } catch (Exception ignored) {
             // The client closed, or the handshake failed. One connection is not the suite.
