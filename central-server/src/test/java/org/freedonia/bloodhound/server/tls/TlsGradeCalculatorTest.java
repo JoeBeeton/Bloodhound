@@ -9,6 +9,23 @@ import org.junit.jupiter.api.Test;
 class TlsGradeCalculatorTest {
 
     @Test
+    void twoLegacyProtocols_factorsNameEachProtocolInsteadOfRepeatingTheSameLabel() {
+        TlsGradeCalculator.Result result = TlsGradeCalculator.calculate(List.of(
+                new TlsFindingRow("TLS_WEAK_PROTOCOL_SUPPORTED", "Legacy TLS protocol supported", "TLSv1", null),
+                new TlsFindingRow("TLS_WEAK_PROTOCOL_SUPPORTED", "Legacy TLS protocol supported", "TLSv1.1", null),
+                new TlsFindingRow("TLS_WEAK_CIPHER_SUITE", "Weak TLS cipher suite accepted", null, "TLS_RSA_WITH_RC4_128_SHA"),
+                new TlsFindingRow("TLS_HSTS_SHORT_MAX_AGE", "Weak HSTS policy", null, null)));
+
+        assertThat(result.factors())
+                .extracting(TlsGradeCalculator.Factor::title)
+                .containsExactly(
+                        "Legacy TLS protocol supported (TLSv1)",
+                        "Legacy TLS protocol supported (TLSv1.1)",
+                        "Weak TLS cipher suite accepted (TLS_RSA_WITH_RC4_128_SHA)",
+                        "Weak HSTS policy");
+    }
+
+    @Test
     void noFindings_notScanned() {
         TlsGradeCalculator.Result result = TlsGradeCalculator.calculate(List.of());
         assertThat(result.grade()).isNull();

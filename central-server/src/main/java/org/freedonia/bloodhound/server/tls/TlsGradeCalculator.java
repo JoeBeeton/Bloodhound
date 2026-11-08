@@ -96,7 +96,7 @@ public final class TlsGradeCalculator {
                 rank = cap;
             }
             if (cap != null) {
-                factors.add(new Factor(f.ruleId(), f.title(), "Caps grade at " + GRADE_SCALE.get(cap)));
+                factors.add(new Factor(f.ruleId(), qualifiedTitle(f), "Caps grade at " + GRADE_SCALE.get(cap)));
             }
             if (A_PLUS_DISQUALIFYING_RULES.contains(f.ruleId())) {
                 disqualifiedFromAPlus = true;
@@ -114,6 +114,20 @@ public final class TlsGradeCalculator {
             rank = RANK_A;
         }
         return new Result(GRADE_SCALE.get(rank), factors);
+    }
+
+    /**
+     * The weak-protocol and weak-cipher rules emit one finding per protocol/suite under one shared
+     * title, so a host accepting TLS 1.0 and 1.1 listed "Legacy TLS protocol supported" twice with
+     * nothing telling the two apart. Name the specific protocol/suite in the factor.
+     */
+    private static String qualifiedTitle(TlsFindingRow f) {
+        String qualifier = switch (f.ruleId()) {
+            case "TLS_WEAK_PROTOCOL_SUPPORTED" -> f.protocol();
+            case "TLS_WEAK_CIPHER_SUITE" -> f.cipherSuite();
+            default -> null;
+        };
+        return qualifier == null || qualifier.isBlank() ? f.title() : f.title() + " (" + qualifier + ")";
     }
 
     /**
