@@ -130,7 +130,15 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
   // below instead of raw JSON, since "which findings is this based on" is the whole point
   // of a compound finding, not incidental evidence.
   const contributingFindings = finding.evidence?.contributingFindings as
-    | Array<{ findingId: string; ruleId: string; severity: string; affectedAsset: string }>
+    | Array<{
+        findingId: string;
+        ruleId: string;
+        severity: string;
+        affectedAsset: string;
+        // Absent on compound findings written before these were recorded.
+        title?: string;
+        displayId?: string;
+      }>
     | undefined;
   // VulnerabilityCorrelationScheduler embeds real CVE descriptions (from osv.dev) here for
   // TECH_KNOWN_CVE/TECH_KNOWN_EXPLOITED_VULNERABILITY findings - rendered as readable prose
@@ -262,11 +270,19 @@ export function FindingDetailModal({ finding, onClose }: { finding: Finding | Or
           </p>
           <div className="space-y-1.5">
             {contributingFindings.map((cf) => (
-              <div key={cf.findingId} className="flex flex-wrap items-center gap-2 font-mono text-xs">
-                <span className={SEVERITY_TEXT[cf.severity as Severity] ?? "text-slate-300"}>{cf.severity}</span>
-                <span className="text-slate-200">{cf.ruleId}</span>
-                <span className="text-slate-500">on</span>
-                <span className="break-all text-slate-400">{cf.affectedAsset}</span>
+              <div key={cf.findingId} className="font-mono text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={SEVERITY_TEXT[cf.severity as Severity] ?? "text-slate-300"}>{cf.severity}</span>
+                  <span className="text-slate-200">{cf.title ?? cf.ruleId}</span>
+                  <span className="text-slate-500">on</span>
+                  <span className="break-all text-slate-400">{cf.affectedAsset}</span>
+                </div>
+                {cf.title && (
+                  <div className="mt-0.5 text-[10px] text-slate-500">
+                    {cf.ruleId}
+                    {cf.displayId && ` · ${cf.displayId}`}
+                  </div>
+                )}
               </div>
             ))}
           </div>

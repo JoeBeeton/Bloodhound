@@ -51,7 +51,15 @@ public class CompoundRiskAnalysisService {
                 .map(f -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("findingId", f.id().toString());
+                    if (f.displayId() != null) {
+                        m.put("displayId", f.displayId());
+                    }
                     m.put("ruleId", f.ruleId());
+                    // The title is what says *which* issue it is ("Actively exploited
+                    // vulnerability in jQuery 1.11") - the rule ID alone doesn't.
+                    if (f.title() != null) {
+                        m.put("title", f.title());
+                    }
                     m.put("severity", f.severity());
                     m.put("affectedAsset", f.affectedAsset());
                     return (Map<String, Object>) m;

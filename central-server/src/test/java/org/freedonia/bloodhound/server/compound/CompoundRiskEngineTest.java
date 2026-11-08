@@ -95,6 +95,19 @@ class CompoundRiskEngineTest {
         assertThat(CompoundRiskEngine.evaluate(findings)).isEmpty();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {"TECH_EOL_SOFTWARE_DETECTED", "TECH_EOL_APPROACHING", "TECH_KNOWN_CVE"})
+    void activelyExploitedExposure_otherFingerprintFindingsAreNotASeparateExposure(String sameFingerprintRule) {
+        // Prod shape: "Actively exploited vulnerability in jQuery 1.11" + "End-of-life jQuery 1.11"
+        // on one host is one old library, not a KEV CVE on an already-exposed host.
+        List<Finding> findings = List.of(
+                finding("TECH_KNOWN_EXPLOITED_VULNERABILITY", "CRITICAL", "EXPOSURE", "host.example.com"),
+                finding(sameFingerprintRule, "MEDIUM", "EXPOSURE", "host.example.com"));
+
+        assertThat(CompoundRiskEngine.evaluate(findings)).isEmpty();
+    }
+
     @Test
     void activelyExploitedExposure_firesWithKevFindingPlusSeparateExposureFinding() {
         List<Finding> findings = List.of(

@@ -119,11 +119,15 @@ public final class CompoundRiskEngine {
                             new TriggerGroup(
                                     "actively-exploited CVE (CISA KEV)",
                                     ruleIdIn("TECH_KNOWN_EXPLOITED_VULNERABILITY")),
+                            // Every TECH_* rule (KEV, known CVE, EOL, EOL-approaching) is derived
+                            // from the same version fingerprint as the KEV finding and shares its
+                            // EXPOSURE category, so without the prefix exclusion "End-of-life
+                            // jQuery 1.11" satisfied this group for "KEV CVE in jQuery 1.11" -
+                            // one old library counted twice and reported as a CRITICAL chain.
+                            // That was every open instance of this rule in prod.
                             new TriggerGroup(
                                     "separate exposure finding on the same asset",
-                                    f -> "EXPOSURE".equals(f.category())
-                                            && !"TECH_KNOWN_EXPLOITED_VULNERABILITY".equals(f.ruleId())
-                                            && !"TECH_KNOWN_CVE".equals(f.ruleId())))),
+                                    f -> "EXPOSURE".equals(f.category()) && !f.ruleId().startsWith("TECH_")))),
             new CompoundPattern(
                     "COMPOUND_SOURCE_AND_CREDENTIAL_EXPOSURE",
                     "CRITICAL",
