@@ -122,7 +122,7 @@ export function seriesPoints(
   s: CompareSeries,
   mode: CompareScoreMode,
 ): SeriesPoint[] {
-  return s.history.map((h) => ({
+  return s.points.map((h) => ({
     computedAtMs: new Date(h.computedAt).getTime(),
     score:
       mode === "tier1"
@@ -233,9 +233,9 @@ export function summarizeComparison(
   mode: CompareScoreMode,
 ): string {
   const clauses = series
-    .filter((s) => s.history.length > 0)
+    .filter((s) => s.points.length > 0)
     .map((s) => {
-      const latest = s.history[s.history.length - 1];
+      const latest = s.points[s.points.length - 1];
       const score =
         mode === "tier1"
           ? (latest.tier1OverallScore ?? latest.overallScore)
@@ -277,7 +277,7 @@ export function CompareTrendChart({
       </p>
     );
   }
-  if (!series.some((s) => s.history.length > 0)) {
+  if (!series.some((s) => s.points.length > 0)) {
     return (
       <p className="font-mono text-sm text-slate-400">
         No scan history yet for the selected targets — run a scan to start the

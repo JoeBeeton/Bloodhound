@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { CompareScoreMode } from "../components/CompareTrendChart";
 import { CompareTrendChart } from "../components/CompareTrendChart";
 import { CompareCategoryChart } from "../components/CompareCategoryChart";
@@ -23,10 +23,8 @@ const VIEW_MODE_LABELS: Record<ViewMode, string> = {
 };
 
 // A competitor-UX review (UpGuard, which lets a comparison span the past month/quarter/year)
-// found this page had no equivalent at all - every view always plotted a target's ENTIRE
-// available history, with no way to zoom to a recent window. "all" (the default) preserves the
-// page's prior behavior exactly, so existing shared/bookmarked URLs keep showing what they always
-// showed; the filter is purely additive.
+// found this page had no way to zoom to a recent window. Applied server-side (the compare
+// endpoint's range param bounds each series' daily points); "all" is the default.
 const RANGES = ["30d", "90d", "1y", "all"] as const;
 type RangeFilter = (typeof RANGES)[number];
 const RANGE_LABELS: Record<RangeFilter, string> = {
@@ -35,29 +33,6 @@ const RANGE_LABELS: Record<RangeFilter, string> = {
   "1y": "1y",
   all: "All time",
 };
-const RANGE_DAYS: Record<Exclude<RangeFilter, "all">, number> = {
-  "30d": 30,
-  "90d": 90,
-  "1y": 365,
-};
-
-/** Only Trend (which plots every point) and Leaderboard's "change since" delta (which anchors on
- * the window's own first point) are actually affected by the range - Categories/Findings always
- * read just the latest snapshot regardless, so filtering history before it reaches any view keeps
- * that correct for free rather than needing each view to know about ranges itself. */
-function applyRange(
-  series: CompareSeries[],
-  range: RangeFilter,
-): CompareSeries[] {
-  if (range === "all") return series;
-  const cutoffMs = Date.now() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000;
-  return series.map((s) => ({
-    ...s,
-    history: s.history.filter(
-      (h) => new Date(h.computedAt).getTime() >= cutoffMs,
-    ),
-  }));
-}
 
 async function fetchTargets(): Promise<Target[]> {
   const res = await apiFetch("/api/v1/targets");
@@ -75,8 +50,9 @@ async function fetchPortfolios(): Promise<Portfolio[]> {
 async function fetchCompare(
   targetIds: string[],
   portfolioIds: string[],
+  range: RangeFilter,
 ): Promise<CompareSeries[]> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ range });
   if (targetIds.length > 0) params.set("targetIds", targetIds.join(","));
   if (portfolioIds.length > 0)
     params.set("portfolioIds", portfolioIds.join(","));
@@ -161,9 +137,12 @@ export function ComparePage() {
       "compare",
       targetIds.sort().join(","),
       portfolioIds.sort().join(","),
+      range,
     ],
-    queryFn: () => fetchCompare(targetIds, portfolioIds),
+    queryFn: () => fetchCompare(targetIds, portfolioIds, range),
     enabled: targetIds.length > 0 || portfolioIds.length > 0,
+    // Keep showing the current chart while a changed selection loads, rather than blanking it.
+    placeholderData: keepPreviousData,
   });
 
   function toggle(id: string) {
@@ -423,11 +402,6 @@ export function ComparePage() {
                 targetIds.length > 0 || portfolioIds.length > 0
                   ? (compareQuery.data ?? [])
                   : [];
-              // Categories/Findings always read just the latest snapshot regardless of range (see
-              // the range control's own conditional above) - ranging their input could otherwise
-              // wrongly show "no history" when the most recent real scan simply predates the
-              // selected window, rather than not existing at all.
-              const rangedSeries = applyRange(activeSeries, range);
               switch (viewMode) {
                 case "categories":
                   return (
@@ -441,13 +415,13 @@ export function ComparePage() {
                 case "leaderboard":
                   return (
                     <CompareLeaderboard
-                      series={rangedSeries}
+                      series={activeSeries}
                       mode={scoreMode}
                     />
                   );
                 default:
                   return (
-                    <CompareTrendChart series={rangedSeries} mode={scoreMode} />
+                    <CompareTrendChart series={activeSeries} mode={scoreMode} />
                   );
               }
             })()}

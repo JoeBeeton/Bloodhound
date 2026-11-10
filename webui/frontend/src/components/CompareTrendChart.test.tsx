@@ -22,7 +22,17 @@ function snapshot(
 }
 
 function series(hostname: string, targetType: TargetType, history: ScoreSnapshot[]): CompareSeries {
-  return { targetId: hostname, hostname, targetType, history };
+  return {
+    targetId: hostname,
+    hostname,
+    targetType,
+    points: history.map(({ computedAt, overallScore, tier1OverallScore }) => ({
+      computedAt,
+      overallScore,
+      tier1OverallScore,
+    })),
+    latest: history.length > 0 ? history[history.length - 1] : null,
+  };
 }
 
 describe("summarizeComparison", () => {

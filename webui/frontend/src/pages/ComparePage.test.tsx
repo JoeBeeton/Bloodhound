@@ -118,6 +118,26 @@ describe("ComparePage URL-persisted selection", () => {
     await waitFor(() => expect(capturedUrl).toContain("targetIds=t1%2Ct2"));
   });
 
+  it("sends the selected range to the server rather than filtering history in the browser", async () => {
+    const user = userEvent.setup();
+    mockedApiFetch.mockImplementation(async (url) => {
+      if (url.toString().includes("/compare")) return jsonResponse([]);
+      return jsonResponse([target("t1", "own.example.com", "OWN")]);
+    });
+
+    renderAt("/compare");
+    await screen.findByText("own.example.com");
+    await waitFor(() =>
+      expect(mockedApiFetch.mock.calls.map(([u]) => u.toString())).toContainEqual(expect.stringMatching(/\/compare\?range=all&targetIds=t1/)),
+    );
+
+    await user.click(screen.getByRole("button", { name: "30d" }));
+
+    await waitFor(() =>
+      expect(mockedApiFetch.mock.calls.map(([u]) => u.toString())).toContainEqual(expect.stringMatching(/\/compare\?range=30d&targetIds=t1/)),
+    );
+  });
+
   it("switching to Full picture mode persists mode=full in the URL", async () => {
     const user = userEvent.setup();
     mockedApiFetch.mockImplementation(async (url) => {

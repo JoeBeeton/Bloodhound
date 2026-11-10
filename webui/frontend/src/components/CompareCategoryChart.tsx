@@ -33,8 +33,8 @@ function latestCategoryScores(
   s: CompareSeries,
   mode: CompareScoreMode,
 ): Record<ScoreCategory, number> | null {
-  if (s.history.length === 0) return null;
-  const latest = s.history[s.history.length - 1];
+  const latest = s.latest;
+  if (!latest) return null;
   if (mode === "tier1")
     return latest.tier1CategoryScores ?? latest.categoryScores;
   return latest.categoryScores;
@@ -79,7 +79,7 @@ export function CompareCategoryChart({
       </p>
     );
   }
-  const withHistory = series.filter((s) => s.history.length > 0);
+  const withHistory = series.filter((s) => s.latest !== null);
   if (withHistory.length === 0) {
     return (
       <p className="font-mono text-sm text-slate-400">

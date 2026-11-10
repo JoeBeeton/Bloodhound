@@ -2,7 +2,6 @@ package org.freedonia.bloodhound.server.portfolio;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -83,10 +82,18 @@ class PortfolioServiceTest {
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID portfolioId = UUID.randomUUID();
-    private final Instant t0 = Instant.now();
-    private final Instant t1 = t0.plus(1, ChronoUnit.HOURS);
-    private final Instant t2 = t0.plus(2, ChronoUnit.HOURS);
-    private final Instant t3 = t0.plus(3, ChronoUnit.HOURS);
+    // A day apart: the blend reports one point per UTC day, so same-day instants would collapse.
+    private final Instant t0 = Instant.parse("2026-11-01T12:00:00Z");
+    private final Instant t1 = t0.plus(1, ChronoUnit.DAYS);
+    private final Instant t2 = t0.plus(2, ChronoUnit.DAYS);
+    private final Instant t3 = t0.plus(3, ChronoUnit.DAYS);
+
+    private final Map<UUID, List<ScoreSnapshot>> daily = new java.util.HashMap<>();
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubDailyHistory() {
+        when(scoreSnapshotRepository.findDailyHistory(any(), any(), any())).thenReturn(daily);
+    }
 
     private Target target(String hostname) {
         return new Target(UUID.randomUUID(), orgId, hostname, "OWN", "AUTHORIZED", 86400, Instant.now(), true, Instant.now(), null);
@@ -135,10 +142,8 @@ class PortfolioServiceTest {
         when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a, b));
 
         // A has snapshots at t1 and t3; B only joins at t2 - change points are the union: t1,t2,t3.
-        when(scoreSnapshotRepository.findHistory(eq(a.id()), any(), any()))
-                .thenReturn(List.of(snapshot(t1, "90", 2, null), snapshot(t3, "80", 5, null)));
-        when(scoreSnapshotRepository.findHistory(eq(b.id()), any(), any()))
-                .thenReturn(List.of(snapshot(t2, "60", 10, null)));
+        daily.put(a.id(), List.of(snapshot(t1, "90", 2, null), snapshot(t3, "80", 5, null)));
+        daily.put(b.id(), List.of(snapshot(t2, "60", 10, null)));
 
         List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, t0, t3);
 
@@ -162,8 +167,7 @@ class PortfolioServiceTest {
         // No tier1 score on this snapshot (pre-tier1-feature, or a Tier 2-only host) - the blend's
         // tier1 value should fall back to the full overallScore, same as CompareTrendChart.tsx
         // already does per-point for a real target's own history.
-        when(scoreSnapshotRepository.findHistory(eq(a.id()), any(), any()))
-                .thenReturn(List.of(snapshot(t1, "77", 3, null)));
+        daily.put(a.id(), List.of(snapshot(t1, "77", 3, null)));
 
         List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, t0, t3);
 
@@ -183,11 +187,9 @@ class PortfolioServiceTest {
         Target a = target("a.example.com");
         Target b = target("b.example.com");
         when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a, b));
-        when(scoreSnapshotRepository.findHistory(eq(a.id()), any(), any()))
-                .thenReturn(List.of(snapshotWithBreakdown(
+        daily.put(a.id(), List.of(snapshotWithBreakdown(
                         t1, "90", Map.of("TLS", "90", "DNS", "80"), Map.of("HIGH", 1L, "CRITICAL", 0L))));
-        when(scoreSnapshotRepository.findHistory(eq(b.id()), any(), any()))
-                .thenReturn(List.of(snapshotWithBreakdown(
+        daily.put(b.id(), List.of(snapshotWithBreakdown(
                         t1, "50", Map.of("TLS", "70", "DNS", "60"), Map.of("HIGH", 3L, "CRITICAL", 1L))));
 
         List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, t0, t3);
@@ -210,10 +212,55 @@ class PortfolioServiceTest {
         Portfolio portfolio = new Portfolio(portfolioId, orgId, "no-history", Instant.now());
         Target a = target("a.example.com");
         when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a));
-        when(scoreSnapshotRepository.findHistory(eq(a.id()), any(), any())).thenReturn(List.of());
+        daily.put(a.id(), List.of());
 
         List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, t0, t3);
 
         assertThat(history).isEmpty();
+    }
+
+    @Test
+    void computeBlendedHistory_membersChangingOnTheSameDay_reportOnePointForThatDay_theEndOfDayBlend() {
+        Portfolio portfolio = new Portfolio(portfolioId, orgId, "same-day", Instant.now());
+        Target a = target("a.example.com");
+        Target b = target("b.example.com");
+        when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a, b));
+        Instant morning = Instant.parse("2026-11-05T08:00:00Z");
+        Instant evening = Instant.parse("2026-11-05T20:00:00Z");
+        daily.put(a.id(), List.of(snapshot(morning, "90", 2, null)));
+        daily.put(b.id(), List.of(snapshot(evening, "60", 10, null)));
+
+        List<ScoreSnapshotSummary> history = service.computeBlendedHistory(portfolio, null, evening);
+
+        // Not a morning point (A alone, 90) then an evening one - one point, both members known.
+        assertThat(history).hasSize(1);
+        assertThat(history.get(0).computedAt()).isEqualTo(evening);
+        assertThat(history.get(0).overallScore()).isEqualByComparingTo("65.00");
+    }
+
+    @Test
+    void computeBlendedLatest_blendsEachMembersMostRecentSnapshot() {
+        Portfolio portfolio = new Portfolio(portfolioId, orgId, "latest", Instant.now());
+        Target a = target("a.example.com");
+        Target b = target("b.example.com");
+        when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a, b));
+        when(scoreSnapshotRepository.findLatestForTargets(List.of(a.id(), b.id())))
+                .thenReturn(Map.of(a.id(), snapshot(t1, "90", 2, null), b.id(), snapshot(t3, "60", 10, null)));
+
+        ScoreSnapshotSummary latest = service.computeBlendedLatest(portfolio);
+
+        assertThat(latest.computedAt()).isEqualTo(t3);
+        assertThat(latest.overallScore()).isEqualByComparingTo("65.00");
+        assertThat(latest.findingCounts()).containsEntry("HIGH", 12L);
+    }
+
+    @Test
+    void computeBlendedLatest_noMemberScoredYet_null() {
+        Portfolio portfolio = new Portfolio(portfolioId, orgId, "unscored", Instant.now());
+        Target a = target("a.example.com");
+        when(targetRepository.findByPortfolio(portfolioId)).thenReturn(List.of(a));
+        when(scoreSnapshotRepository.findLatestForTargets(List.of(a.id()))).thenReturn(Map.of());
+
+        assertThat(service.computeBlendedLatest(portfolio)).isNull();
     }
 }

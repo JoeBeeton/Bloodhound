@@ -15,9 +15,8 @@ import { SEVERITIES, type CompareSeries } from "../lib/types";
  * the current open-finding count regardless of score mode, so this view has no mode prop at all. */
 function buildRows(series: CompareSeries[]) {
   return series
-    .filter((s) => s.history.length > 0)
-    .map((s) => {
-      const latest = s.history[s.history.length - 1];
+    .flatMap((s) => (s.latest ? [{ s, latest: s.latest }] : []))
+    .map(({ s, latest }) => {
       const row: Record<string, number | string> = {
         target: `${s.hostname} (${s.targetType})`,
       };

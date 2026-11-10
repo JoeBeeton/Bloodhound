@@ -335,11 +335,24 @@ export interface Finding {
 }
 
 /** One series in the multi-line compare chart, as returned by /api/v1/compare - either a single target's own score history, or (targetType "PORTFOLIO") a portfolio's blended history across its member targets. */
+/** One point on a Compare trend line - the server sends one per UTC day, trend fields only. */
+export interface TrendPoint {
+  computedAt: string;
+  overallScore: number;
+  /** Null on snapshots from before the fair-comparison score existed. */
+  tier1OverallScore: number | null;
+}
+
+/**
+ * points: one per day within the selected range (Trend, and Leaderboard's change column).
+ * latest: most recent snapshot regardless of range, null if never scored (every "as of now" view).
+ */
 export interface CompareSeries {
   targetId: string;
   hostname: string;
   targetType: TargetType | "PORTFOLIO";
-  history: ScoreSnapshot[];
+  points: TrendPoint[];
+  latest: ScoreSnapshot | null;
 }
 
 export interface SeverityChange {

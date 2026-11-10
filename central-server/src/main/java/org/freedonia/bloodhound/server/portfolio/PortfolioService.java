@@ -3,7 +3,10 @@ package org.freedonia.bloodhound.server.portfolio;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,20 +92,21 @@ public class PortfolioService {
      */
     public List<ScoreSnapshotSummary> computeBlendedHistory(Portfolio portfolio, Instant from, Instant to) {
         List<Target> members = targetRepository.findByPortfolio(portfolio.id());
-        Map<UUID, List<ScoreSnapshot>> historyByMember = new HashMap<>();
+        // Members' daily history (last snapshot per UTC day) in one query rather than every raw
+        // snapshot per member - the walk below then has at most members x days change points.
+        Map<UUID, List<ScoreSnapshot>> historyByMember = scoreSnapshotRepository.findDailyHistory(
+                members.stream().map(Target::id).toList(), from, to);
         TreeSet<Instant> changePoints = new TreeSet<>();
-        for (Target target : members) {
-            List<ScoreSnapshot> history = scoreSnapshotRepository.findHistory(target.id(), from, to);
-            historyByMember.put(target.id(), history);
-            history.forEach(s -> changePoints.add(s.computedAt()));
-        }
+        historyByMember.values().forEach(history -> history.forEach(s -> changePoints.add(s.computedAt())));
 
         Map<UUID, Integer> cursor = new HashMap<>();
         Map<UUID, ScoreSnapshot> current = new HashMap<>();
-        List<ScoreSnapshotSummary> result = new ArrayList<>();
+        // Keyed by UTC day, so a later change point the same day replaces an earlier one - the
+        // blend is reported at the same one-point-per-day resolution as each target's own series.
+        Map<LocalDate, ScoreSnapshotSummary> byDay = new LinkedHashMap<>();
         for (Instant point : changePoints) {
             for (Target target : members) {
-                List<ScoreSnapshot> history = historyByMember.get(target.id());
+                List<ScoreSnapshot> history = historyByMember.getOrDefault(target.id(), List.of());
                 int idx = cursor.getOrDefault(target.id(), 0);
                 while (idx < history.size() && !history.get(idx).computedAt().isAfter(point)) {
                     current.put(target.id(), history.get(idx));
@@ -110,52 +114,74 @@ public class PortfolioService {
                 }
                 cursor.put(target.id(), idx);
             }
-            if (current.isEmpty()) {
-                continue;
+            if (!current.isEmpty()) {
+                byDay.put(LocalDate.ofInstant(point, ZoneOffset.UTC), blend(point, current.values()));
             }
-            List<BigDecimal> fullScores = new ArrayList<>();
-            List<BigDecimal> tier1Scores = new ArrayList<>();
-            List<Long> weights = new ArrayList<>();
-            Map<String, List<BigDecimal>> categoryScoresByCategory = new LinkedHashMap<>();
-            Map<String, List<BigDecimal>> tier1CategoryScoresByCategory = new LinkedHashMap<>();
-            Map<String, Long> findingCountTotals = new LinkedHashMap<>();
-            for (ScoreSnapshot snapshot : current.values()) {
-                fullScores.add(snapshot.overallScore());
-                tier1Scores.add(snapshot.tier1OverallScore() != null ? snapshot.tier1OverallScore() : snapshot.overallScore());
-                weights.add(snapshot.findingCounts().values().stream()
-                        .mapToLong(Long::longValue)
-                        .sum());
-                snapshot.categoryScores()
-                        .forEach((category, score) ->
-                                categoryScoresByCategory.computeIfAbsent(category, k -> new ArrayList<>()).add(score));
-                Map<String, BigDecimal> tier1Categories =
-                        snapshot.tier1CategoryScores() != null ? snapshot.tier1CategoryScores() : snapshot.categoryScores();
-                tier1Categories.forEach((category, score) -> tier1CategoryScoresByCategory
-                        .computeIfAbsent(category, k -> new ArrayList<>())
-                        .add(score));
-                snapshot.findingCounts().forEach((severity, count) -> findingCountTotals.merge(severity, count, Long::sum));
-            }
-            BigDecimal blendedFull = weightedAverage(fullScores, weights);
-            BigDecimal blendedTier1 = weightedAverage(tier1Scores, weights);
-            Map<String, BigDecimal> blendedCategoryScores = new LinkedHashMap<>();
-            categoryScoresByCategory.forEach(
-                    (category, scores) -> blendedCategoryScores.put(category, weightedAverage(scores, weights)));
-            Map<String, BigDecimal> blendedTier1CategoryScores = new LinkedHashMap<>();
-            tier1CategoryScoresByCategory.forEach(
-                    (category, scores) -> blendedTier1CategoryScores.put(category, weightedAverage(scores, weights)));
-            result.add(new ScoreSnapshotSummary(
-                    UUID.randomUUID(),
-                    null,
-                    point,
-                    blendedFull,
-                    ScoringEngine.gradeFor(blendedFull),
-                    blendedCategoryScores,
-                    findingCountTotals,
-                    blendedTier1,
-                    ScoringEngine.gradeFor(blendedTier1),
-                    blendedTier1CategoryScores));
         }
-        return result;
+        return new ArrayList<>(byDay.values());
+    }
+
+    /**
+     * The portfolio's blend as of each member's most recent snapshot, regardless of any time
+     * window - what the Categories/Findings/Leaderboard views show as "now". Null when no member
+     * has been scored yet.
+     */
+    public ScoreSnapshotSummary computeBlendedLatest(Portfolio portfolio) {
+        List<Target> members = targetRepository.findByPortfolio(portfolio.id());
+        Map<UUID, ScoreSnapshot> latest =
+                scoreSnapshotRepository.findLatestForTargets(members.stream().map(Target::id).toList());
+        if (latest.isEmpty()) {
+            return null;
+        }
+        Instant asOf = latest.values().stream()
+                .map(ScoreSnapshot::computedAt)
+                .max(Instant::compareTo)
+                .orElseThrow();
+        return blend(asOf, latest.values());
+    }
+
+    private static ScoreSnapshotSummary blend(Instant point, Collection<ScoreSnapshot> current) {
+        List<BigDecimal> fullScores = new ArrayList<>();
+        List<BigDecimal> tier1Scores = new ArrayList<>();
+        List<Long> weights = new ArrayList<>();
+        Map<String, List<BigDecimal>> categoryScoresByCategory = new LinkedHashMap<>();
+        Map<String, List<BigDecimal>> tier1CategoryScoresByCategory = new LinkedHashMap<>();
+        Map<String, Long> findingCountTotals = new LinkedHashMap<>();
+        for (ScoreSnapshot snapshot : current) {
+            fullScores.add(snapshot.overallScore());
+            tier1Scores.add(snapshot.tier1OverallScore() != null ? snapshot.tier1OverallScore() : snapshot.overallScore());
+            weights.add(snapshot.findingCounts().values().stream()
+                    .mapToLong(Long::longValue)
+                    .sum());
+            snapshot.categoryScores()
+                    .forEach((category, score) ->
+                            categoryScoresByCategory.computeIfAbsent(category, k -> new ArrayList<>()).add(score));
+            Map<String, BigDecimal> tier1Categories =
+                    snapshot.tier1CategoryScores() != null ? snapshot.tier1CategoryScores() : snapshot.categoryScores();
+            tier1Categories.forEach((category, score) -> tier1CategoryScoresByCategory
+                    .computeIfAbsent(category, k -> new ArrayList<>())
+                    .add(score));
+            snapshot.findingCounts().forEach((severity, count) -> findingCountTotals.merge(severity, count, Long::sum));
+        }
+        BigDecimal blendedFull = weightedAverage(fullScores, weights);
+        BigDecimal blendedTier1 = weightedAverage(tier1Scores, weights);
+        Map<String, BigDecimal> blendedCategoryScores = new LinkedHashMap<>();
+        categoryScoresByCategory.forEach(
+                (category, scores) -> blendedCategoryScores.put(category, weightedAverage(scores, weights)));
+        Map<String, BigDecimal> blendedTier1CategoryScores = new LinkedHashMap<>();
+        tier1CategoryScoresByCategory.forEach(
+                (category, scores) -> blendedTier1CategoryScores.put(category, weightedAverage(scores, weights)));
+        return new ScoreSnapshotSummary(
+                UUID.randomUUID(),
+                null,
+                point,
+                blendedFull,
+                ScoringEngine.gradeFor(blendedFull),
+                blendedCategoryScores,
+                findingCountTotals,
+                blendedTier1,
+                ScoringEngine.gradeFor(blendedTier1),
+                blendedTier1CategoryScores);
     }
 
     /**

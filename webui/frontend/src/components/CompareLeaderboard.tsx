@@ -1,16 +1,16 @@
 import { GradeBadge } from "./GradeBadge";
 import { TargetTypeBadge } from "./TargetTypeBadge";
 import type { CompareScoreMode } from "./CompareTrendChart";
-import type { CompareSeries } from "../lib/types";
+import type { CompareSeries, Grade, ScoreSnapshot, TrendPoint } from "../lib/types";
 
 interface Row {
   series: CompareSeries;
   score: number;
-  grade: CompareSeries["history"][number]["grade"];
+  grade: Grade;
   deltaSinceFirst: number | null;
 }
 
-function scoreAndGrade(mode: CompareScoreMode, snapshot: CompareSeries["history"][number]) {
+function scoreAndGrade(mode: CompareScoreMode, snapshot: ScoreSnapshot) {
   if (mode === "tier1") {
     return {
       score: snapshot.tier1OverallScore ?? snapshot.overallScore,
@@ -20,19 +20,22 @@ function scoreAndGrade(mode: CompareScoreMode, snapshot: CompareSeries["history"
   return { score: snapshot.overallScore, grade: snapshot.grade };
 }
 
+function pointScore(mode: CompareScoreMode, point: TrendPoint) {
+  return mode === "tier1" ? (point.tier1OverallScore ?? point.overallScore) : point.overallScore;
+}
+
+/** Score and grade are the latest snapshot's; "change" anchors on the first daily point in the
+ * selected range, so it reads as "since the start of this window". */
 function buildRows(series: CompareSeries[], mode: CompareScoreMode): Row[] {
   return series
-    .filter((s) => s.history.length > 0)
-    .map((s) => {
-      const first = s.history[0];
-      const latest = s.history[s.history.length - 1];
+    .flatMap((s) => (s.latest ? [{ s, latest: s.latest }] : []))
+    .map(({ s, latest }) => {
       const { score, grade } = scoreAndGrade(mode, latest);
-      const firstScore = scoreAndGrade(mode, first).score;
       return {
         series: s,
         score,
         grade,
-        deltaSinceFirst: s.history.length > 1 ? score - firstScore : null,
+        deltaSinceFirst: s.points.length > 1 ? score - pointScore(mode, s.points[0]) : null,
       };
     })
     .sort((a, b) => b.score - a.score);

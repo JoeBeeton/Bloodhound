@@ -107,6 +107,33 @@ public class ScoreSnapshotRepository {
         return rows.stream().collect(Collectors.toMap(ScoreSnapshot::targetId, s -> s));
     }
 
+    /**
+     * Each target's last snapshot of every UTC day in the window, oldest first, for all
+     * {@code targetIds} in one query. A snapshot is written per scan run - tens a day for a busy
+     * target, 2,600+ in 90 days for one prod target - which is far more than a trend line a few
+     * hundred pixels wide can show, and shipping every one made the Compare page download several
+     * MB per click. {@code from} null means no lower bound ("all time").
+     */
+    public Map<UUID, List<ScoreSnapshot>> findDailyHistory(List<UUID> targetIds, Instant from, Instant to) {
+        if (targetIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = targetIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        List<Object> args = new java.util.ArrayList<>(targetIds);
+        String sql = "SELECT * FROM (SELECT DISTINCT ON (target_id, (computed_at AT TIME ZONE 'UTC')::date) * "
+                + "FROM score_snapshots WHERE target_id IN (" + placeholders + ") AND computed_at <= ?"
+                + (from != null ? " AND computed_at >= ?" : "")
+                + " ORDER BY target_id, (computed_at AT TIME ZONE 'UTC')::date, computed_at DESC) daily "
+                + "ORDER BY target_id, computed_at ASC";
+        args.add(java.sql.Timestamp.from(to));
+        if (from != null) {
+            args.add(java.sql.Timestamp.from(from));
+        }
+        return jdbc.query(sql, rowMapper, args.toArray()).stream()
+                .collect(Collectors.groupingBy(
+                        ScoreSnapshot::targetId, java.util.LinkedHashMap::new, Collectors.toList()));
+    }
+
     private <T> T readMap(String json, TypeReference<T> type) {
         try {
             return objectMapper.readValue(json, type);
